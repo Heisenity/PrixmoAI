@@ -3,6 +3,8 @@ import helmet from "helmet";
 import cors from "cors";
 import { errorHandler } from "./middleware/errorHandler.middleware";
 import authRouter from "./routes/auth.routes";
+import analyticsRouter from "./routes/analytics.routes";
+import contentRouter from "./routes/content.routes";
 import { version } from '../package.json';
 
 
@@ -33,6 +35,8 @@ app.get('/health', (req, res) => {
 });
 
 app.use('/api/auth', authRouter);
+app.use('/api/analytics', analyticsRouter);
+app.use('/api/content', contentRouter);
 
 app.use((req, _res, next) => {
   const error = new Error(`Route not found: ${req.originalUrl}`) as Error & {
