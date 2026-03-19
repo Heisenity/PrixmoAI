@@ -1,0 +1,24 @@
+-- Reference schema for the backend.
+-- The migration files in server/src/db/migrations are the source of truth.
+-- Tables created by the current schema:
+-- 1. brand_profiles
+-- 2. generated_content
+-- 3. generated_images
+-- 4. social_accounts
+-- 5. scheduled_posts
+-- 6. analytics
+-- 7. subscriptions
+-- 8. usage_tracking
+--
+-- Core principles:
+-- - every user-owned table uses auth.users(id) as the foreign key
+-- - every user-owned table enables Row Level Security
+-- - every user-owned table has policies so users can only access their own rows
+-- - content and image history is stored in JSON-friendly tables for AI results
+--
+-- See:
+-- - 001_init.sql for profile setup
+-- - 002_content.sql for content and image storage
+-- - 003_scheduler.sql for social accounts and scheduled posts
+-- - 004_analytics.sql for performance data
+-- - 005_billing.sql for subscription and usage tracking

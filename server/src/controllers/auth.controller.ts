@@ -1,92 +1,90 @@
-import { User } from '@supabase/supabase-js';
+import type { User } from '@supabase/supabase-js';
 import { Request, Response } from 'express';
-import { supabase } from '../db/supabase';
+import {
+  getBrandProfileByUserId,
+  upsertBrandProfile,
+} from '../db/queries/brandProfiles';
+import { requireUserClient } from '../db/supabase';
 import { AuthProfileInput } from '../schemas/user.schema';
+import type { BrandProfileInput } from '../types';
 
-type AuthenticatedRequest = Request & {
-  user: User;
+type AuthenticatedRequest<
+  Params = Record<string, string>,
+  ResBody = unknown,
+  ReqBody = unknown,
+  ReqQuery = Record<string, unknown>
+> = Request<Params, ResBody, ReqBody, ReqQuery> & {
+  user?: User;
+  accessToken?: string;
 };
 
-const toBrandProfileResponse = (profile: Record<string, unknown> | null) => {
-  if (!profile) {
-    return null;
-  }
-
-  return {
-    id: profile.id ?? null,
-    userId: profile.user_id ?? null,
-    fullName: profile.full_name ?? null,
-    username: profile.username ?? null,
-    avatarUrl: profile.avatar_url ?? null,
-    createdAt: profile.created_at ?? null,
-    updatedAt: profile.updated_at ?? null,
-  };
-};
+const toBrandProfileInput = (body: AuthProfileInput): BrandProfileInput => ({
+  fullName: body.fullName,
+  username: body.username ?? null,
+  avatarUrl: body.avatarUrl ?? null,
+  industry: body.industry ?? null,
+  targetAudience: body.targetAudience ?? null,
+  brandVoice: body.brandVoice ?? null,
+  description: body.description ?? null,
+});
 
 export const saveProfile = async (
-  req: Request<{}, {}, AuthProfileInput>,
+  req: AuthenticatedRequest<{}, unknown, AuthProfileInput>,
   res: Response
 ) => {
-  if (!supabase) {
-    return res.status(503).json({
-      status: 'error',
-      message: 'Supabase is not configured',
+  if (!req.user?.id) {
+    return res.status(401).json({
+      status: 'fail',
+      message: 'Unauthorized',
     });
   }
 
-  const { user } = req as AuthenticatedRequest;
-  const payload = {
-    user_id: user.id,
-    full_name: req.body.fullName,
-    username: req.body.username ?? null,
-    avatar_url: req.body.avatarUrl ?? null,
-  };
+  try {
+    const client = requireUserClient(req.accessToken);
+    const profile = await upsertBrandProfile(
+      client,
+      req.user.id,
+      toBrandProfileInput(req.body)
+    );
 
-  const { data: profile, error } = await supabase
-    .from('brand_profiles')
-    .upsert(payload, { onConflict: 'user_id' })
-    .select()
-    .single();
-
-  if (error) {
+    return res.status(200).json({
+      status: 'success',
+      message: 'Brand profile saved successfully',
+      profile,
+    });
+  } catch (error) {
     return res.status(500).json({
       status: 'error',
-      message: error.message || 'Failed to save brand profile',
+      message:
+        error instanceof Error
+          ? error.message
+          : 'Failed to save brand profile',
     });
   }
-
-  return res.status(200).json({
-    status: 'success',
-    message: 'Brand profile saved successfully',
-    profile: toBrandProfileResponse(profile as Record<string, unknown>),
-  });
 };
 
-export const getMe = async (req: Request, res: Response) => {
-  if (!supabase) {
-    return res.status(503).json({
-      status: 'error',
-      message: 'Supabase is not configured',
+export const getMe = async (req: AuthenticatedRequest, res: Response) => {
+  if (!req.user?.id) {
+    return res.status(401).json({
+      status: 'fail',
+      message: 'Unauthorized',
     });
   }
 
-  const { user } = req as AuthenticatedRequest;
-  const { data: profile, error } = await supabase
-    .from('brand_profiles')
-    .select('*')
-    .eq('user_id', user.id)
-    .maybeSingle();
+  try {
+    const client = requireUserClient(req.accessToken);
+    const profile = await getBrandProfileByUserId(client, req.user.id);
 
-  if (error) {
+    return res.status(200).json({
+      status: 'success',
+      user: req.user,
+      profile,
+    });
+  } catch (error) {
     return res.status(500).json({
       status: 'error',
-      message: error.message || 'Failed to load current user',
+      message:
+        error instanceof Error ? error.message : 'Failed to load current user',
     });
   }
-
-  return res.status(200).json({
-    status: 'success',
-    user,
-    profile: toBrandProfileResponse(profile as Record<string, unknown> | null),
-  });
 };

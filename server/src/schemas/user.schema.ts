@@ -9,9 +9,29 @@ export const createUserSchema = z.object({
 export type CreateUserInput = z.infer<typeof createUserSchema>;
 
 export const authProfileSchema = z.object({
-  fullName: z.string().min(1, 'Full name is required'),
-  username: z.string().min(3, 'Username must be at least 3 characters').optional(),
+  fullName: z.string().trim().min(1, 'Full name is required'),
+  username: z
+    .string()
+    .trim()
+    .min(3, 'Username must be at least 3 characters')
+    .optional(),
   avatarUrl: z.url({ error: 'Invalid avatar URL' }).optional(),
+  industry: z.string().trim().min(1, 'Industry must not be empty').optional(),
+  targetAudience: z
+    .string()
+    .trim()
+    .min(1, 'Target audience must not be empty')
+    .optional(),
+  brandVoice: z
+    .string()
+    .trim()
+    .min(1, 'Brand voice must not be empty')
+    .optional(),
+  description: z
+    .string()
+    .trim()
+    .max(500, 'Description must be 500 characters or fewer')
+    .optional(),
 });
 
 export type AuthProfileInput = z.infer<typeof authProfileSchema>;

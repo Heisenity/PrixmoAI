@@ -3,11 +3,14 @@ import helmet from "helmet";
 import cors from "cors";
 import { errorHandler } from "./middleware/errorHandler.middleware";
 import authRouter from "./routes/auth.routes";
+import contentRouter from "./routes/content.routes";
+import imageRouter from "./routes/image.routes";
+import { APP_PORT } from "./config/constants";
 import { version } from '../package.json';
 
 
 const app = express();
-const PORT = process.env.PORT || 5000;
+const PORT = APP_PORT;
 
 // 1. Security Headers
 app.use(helmet());
@@ -33,6 +36,8 @@ app.get('/health', (req, res) => {
 });
 
 app.use('/api/auth', authRouter);
+app.use('/api/content', contentRouter);
+app.use('/api/images', imageRouter);
 
 app.use((req, _res, next) => {
   const error = new Error(`Route not found: ${req.originalUrl}`) as Error & {
