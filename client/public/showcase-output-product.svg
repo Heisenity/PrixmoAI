@@ -1,0 +1,46 @@
+<svg width="1200" height="1200" viewBox="0 0 1200 1200" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bgOutput" x1="92" y1="96" x2="1084" y2="1100" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#758A9D"/>
+      <stop offset="0.36" stop-color="#536475"/>
+      <stop offset="0.72" stop-color="#263241"/>
+      <stop offset="1" stop-color="#151B23"/>
+    </linearGradient>
+    <radialGradient id="mintGlow" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(920 820) rotate(145) scale(300 260)">
+      <stop stop-color="#8CF0E4" stop-opacity="0.32"/>
+      <stop offset="1" stop-color="#8CF0E4" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="silverGlow" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(310 240) rotate(41) scale(360 320)">
+      <stop stop-color="#FFFFFF" stop-opacity="0.34"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="hoodieOutput" x1="600" y1="290" x2="600" y2="924" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#151B24"/>
+      <stop offset="0.5" stop-color="#090D14"/>
+      <stop offset="1" stop-color="#03060B"/>
+    </linearGradient>
+    <radialGradient id="outputHighlight" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(520 468) rotate(50) scale(136 140)">
+      <stop stop-color="#96A1AD" stop-opacity="0.46"/>
+      <stop offset="1" stop-color="#96A1AD" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="floorGlowOutput" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(620 930) rotate(90) scale(84 310)">
+      <stop stop-color="#000000" stop-opacity="0.42"/>
+      <stop offset="1" stop-color="#000000" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="1200" height="1200" rx="72" fill="url(#bgOutput)"/>
+  <circle cx="920" cy="820" r="314" fill="url(#mintGlow)"/>
+  <circle cx="310" cy="240" r="360" fill="url(#silverGlow)"/>
+  <rect x="168" y="166" width="864" height="708" rx="54" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.12)" stroke-width="8"/>
+  <rect x="266" y="304" width="668" height="516" rx="60" fill="rgba(255,255,255,0.05)" stroke="rgba(255,255,255,0.10)" stroke-width="8"/>
+  <circle cx="620" cy="934" r="310" fill="url(#floorGlowOutput)"/>
+  <path d="M600 238C654 238 714 270 758 314L692 382C669 360 638 348 600 348C562 348 531 360 508 382L442 314C486 270 546 238 600 238Z" fill="#05080D"/>
+  <path d="M438 344C485 326 544 316 600 316C656 316 715 326 762 344L840 450C876 499 896 557 896 620V760C896 853 820 930 726 930H474C380 930 304 853 304 760V620C304 557 324 499 360 450L438 344Z" fill="url(#hoodieOutput)"/>
+  <rect x="214" y="458" width="142" height="344" rx="71" transform="rotate(18 214 458)" fill="#080C12"/>
+  <rect x="844" y="506" width="142" height="344" rx="71" transform="rotate(-18 844 506)" fill="#080C12"/>
+  <circle cx="522" cy="474" r="144" fill="url(#outputHighlight)"/>
+  <ellipse cx="600" cy="282" rx="126" ry="72" fill="#070A10"/>
+  <rect x="462" y="264" width="276" height="128" rx="64" fill="#0A0E15"/>
+  <path d="M538 336C556 320 577 312 600 312C623 312 644 320 662 336V404H538V336Z" fill="#0C121B"/>
+  <ellipse cx="600" cy="914" rx="208" ry="34" fill="rgba(0,0,0,0.34)"/>
+</svg>

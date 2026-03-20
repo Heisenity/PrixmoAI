@@ -1,10 +1,21 @@
+import {
+  FEATURE_KEYS,
+  SCHEDULED_POST_STATUSES,
+} from '../../config/constants';
 import type {
   AnalyticsData,
   AnalyticsSummary,
+  AnalyticsTrendItem,
   CreateAnalyticsInput,
+  DeveloperResearchSummary,
+  GenerationOverview,
+  PaginatedResult,
+  ScheduledPostStatus,
+  UsageTrackingEvent,
   WeeklyAnalyticsComparison,
 } from '../../types';
 import type { AppSupabaseClient } from '../supabase';
+import { getMonthlyUsageCount } from './subscriptions';
 
 type AnalyticsRow = {
   id: string;
@@ -25,10 +36,38 @@ type AnalyticsRow = {
   updated_at: string;
 };
 
+type GeneratedContentInsightRow = {
+  platform: string | null;
+  goal: string | null;
+  tone: string | null;
+  audience: string | null;
+  keywords: unknown;
+};
+
+type ScheduledPostStatusRow = {
+  status: ScheduledPostStatus;
+};
+
+type UsageTrackingRow = {
+  id: string;
+  user_id: string;
+  feature_key: string;
+  used_at: string;
+  metadata: Record<string, unknown> | null;
+};
+
 type DateRangeOptions = {
   start?: string;
   end?: string;
 };
+
+type PaginationOptions = DateRangeOptions & {
+  page?: number;
+  limit?: number;
+};
+
+const DEFAULT_PAGE = 1;
+const DEFAULT_LIMIT = 20;
 
 const toNumber = (value: unknown): number =>
   typeof value === 'number'
@@ -36,6 +75,62 @@ const toNumber = (value: unknown): number =>
     : typeof value === 'string'
       ? Number(value) || 0
       : 0;
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  !!value && typeof value === 'object' && !Array.isArray(value);
+
+const toRecord = (value: unknown): Record<string, unknown> =>
+  isRecord(value) ? value : {};
+
+const toStringArray = (value: unknown): string[] =>
+  Array.isArray(value)
+    ? value
+        .filter((entry): entry is string => typeof entry === 'string')
+        .map((entry) => entry.trim())
+        .filter(Boolean)
+    : [];
+
+const incrementCounter = (
+  map: Map<string, number>,
+  rawValue: unknown,
+  normalizer?: (value: string) => string
+) => {
+  if (typeof rawValue !== 'string') {
+    return;
+  }
+
+  const trimmed = rawValue.trim();
+  if (!trimmed) {
+    return;
+  }
+
+  const finalValue = normalizer ? normalizer(trimmed) : trimmed;
+  map.set(finalValue, (map.get(finalValue) ?? 0) + 1);
+};
+
+const topItemsFromMap = (
+  map: Map<string, number>,
+  limit = 5
+): AnalyticsTrendItem[] =>
+  [...map.entries()]
+    .sort((left, right) => {
+      if (right[1] !== left[1]) {
+        return right[1] - left[1];
+      }
+
+      return left[0].localeCompare(right[0]);
+    })
+    .slice(0, limit)
+    .map(([value, count]) => ({
+      value,
+      count,
+    }));
+
+const normalizePage = (page?: number) =>
+  Number.isFinite(page) && page && page > 0 ? page : DEFAULT_PAGE;
+
+const normalizeLimit = (limit?: number) =>
+  Number.isFinite(limit) && limit && limit > 0 ? limit : DEFAULT_LIMIT;
 
 const getEngagementScore = (item: AnalyticsData) =>
   item.likes + item.comments + item.shares + item.saves;
@@ -56,7 +151,11 @@ const getCurrentWeekWindow = () => {
   const currentDay = now.getUTCDay();
   const daysSinceMonday = (currentDay + 6) % 7;
   const start = new Date(
-    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - daysSinceMonday)
+    Date.UTC(
+      now.getUTCFullYear(),
+      now.getUTCMonth(),
+      now.getUTCDate() - daysSinceMonday
+    )
   );
   const end = new Date(start);
   end.setUTCDate(end.getUTCDate() + 7);
@@ -98,6 +197,49 @@ const toAnalyticsData = (row: AnalyticsRow): AnalyticsData => ({
   createdAt: row.created_at,
   updatedAt: row.updated_at,
 });
+
+const toUsageTrackingEvent = (row: UsageTrackingRow): UsageTrackingEvent => ({
+  id: row.id,
+  userId: row.user_id,
+  featureKey: row.feature_key,
+  usedAt: row.used_at,
+  metadata: toRecord(row.metadata),
+});
+
+const applyDateRange = <TQuery extends { gte: Function; lt: Function }>(
+  query: TQuery,
+  column: string,
+  options: DateRangeOptions
+): TQuery => {
+  let nextQuery = query;
+
+  if (options.start) {
+    nextQuery = nextQuery.gte(column, options.start);
+  }
+
+  if (options.end) {
+    nextQuery = nextQuery.lt(column, options.end);
+  }
+
+  return nextQuery;
+};
+
+const getTableCount = async (
+  client: AppSupabaseClient,
+  table: string,
+  userId: string
+): Promise<number> => {
+  const { count, error } = await client
+    .from(table)
+    .select('*', { count: 'exact', head: true })
+    .eq('user_id', userId);
+
+  if (error) {
+    throw new Error(error.message || `Failed to count records in ${table}`);
+  }
+
+  return count ?? 0;
+};
 
 export const saveAnalyticsData = async (
   client: AppSupabaseClient,
@@ -142,13 +284,7 @@ export const getAnalyticsByUserId = async (
     .eq('user_id', userId)
     .order('recorded_at', { ascending: false });
 
-  if (options.start) {
-    query = query.gte('recorded_at', options.start);
-  }
-
-  if (options.end) {
-    query = query.lt('recorded_at', options.end);
-  }
+  query = applyDateRange(query, 'recorded_at', options);
 
   const { data, error } = await query;
 
@@ -157,6 +293,41 @@ export const getAnalyticsByUserId = async (
   }
 
   return (data ?? []).map((row) => toAnalyticsData(row as AnalyticsRow));
+};
+
+export const getAnalyticsHistory = async (
+  client: AppSupabaseClient,
+  userId: string,
+  options: PaginationOptions = {}
+): Promise<PaginatedResult<AnalyticsData>> => {
+  const page = normalizePage(options.page);
+  const limit = normalizeLimit(options.limit);
+  const from = (page - 1) * limit;
+  const to = from + limit - 1;
+
+  let query = client
+    .from('analytics')
+    .select('*', { count: 'exact' })
+    .eq('user_id', userId)
+    .order('recorded_at', { ascending: false });
+
+  query = applyDateRange(query, 'recorded_at', options).range(from, to);
+
+  const { data, count, error } = await query;
+
+  if (error) {
+    throw new Error(error.message || 'Failed to fetch analytics history');
+  }
+
+  const total = count ?? 0;
+
+  return {
+    items: (data ?? []).map((row) => toAnalyticsData(row as AnalyticsRow)),
+    page,
+    limit,
+    total,
+    totalPages: total > 0 ? Math.ceil(total / limit) : 0,
+  };
 };
 
 export const getAnalyticsSummary = async (
@@ -264,5 +435,212 @@ export const getWeeklyAnalyticsComparison = async (
         : currentWeekScore < previousWeekScore
           ? 'down'
           : 'flat',
+  };
+};
+
+export const getGenerationOverview = async (
+  client: AppSupabaseClient,
+  userId: string
+): Promise<GenerationOverview> => {
+  const { start, end } = getCurrentMonthWindow();
+
+  const [
+    totalGeneratedContent,
+    totalGeneratedImages,
+    totalScheduledPosts,
+    contentGenerationsThisMonth,
+    imageGenerationsThisMonth,
+    scheduledStatusesResult,
+    generatedContentInsightsResult,
+    analyticsRecordsThisMonthResult,
+  ] = await Promise.all([
+    getTableCount(client, 'generated_content', userId),
+    getTableCount(client, 'generated_images', userId),
+    getTableCount(client, 'scheduled_posts', userId),
+    getMonthlyUsageCount(client, userId, FEATURE_KEYS.contentGeneration),
+    getMonthlyUsageCount(client, userId, FEATURE_KEYS.imageGeneration),
+    client.from('scheduled_posts').select('status').eq('user_id', userId),
+    client
+      .from('generated_content')
+      .select('platform, goal, tone, audience, keywords')
+      .eq('user_id', userId),
+    client
+      .from('analytics')
+      .select('*', { count: 'exact', head: true })
+      .eq('user_id', userId)
+      .gte('recorded_at', start)
+      .lt('recorded_at', end),
+  ]);
+
+  if (scheduledStatusesResult.error) {
+    throw new Error(
+      scheduledStatusesResult.error.message ||
+        'Failed to fetch scheduled post statuses'
+    );
+  }
+
+  if (generatedContentInsightsResult.error) {
+    throw new Error(
+      generatedContentInsightsResult.error.message ||
+        'Failed to fetch generated content insights'
+    );
+  }
+
+  if (analyticsRecordsThisMonthResult.error) {
+    throw new Error(
+      analyticsRecordsThisMonthResult.error.message ||
+        'Failed to fetch analytics record count'
+    );
+  }
+
+  const scheduledPostStatusBreakdown = SCHEDULED_POST_STATUSES.reduce<
+    Record<ScheduledPostStatus, number>
+  >(
+    (accumulator, status) => ({
+      ...accumulator,
+      [status]: 0,
+    }),
+    {} as Record<ScheduledPostStatus, number>
+  );
+
+  for (const row of
+    (scheduledStatusesResult.data ?? []) as ScheduledPostStatusRow[]) {
+    scheduledPostStatusBreakdown[row.status] =
+      (scheduledPostStatusBreakdown[row.status] ?? 0) + 1;
+  }
+
+  const platformCounts = new Map<string, number>();
+  const goalCounts = new Map<string, number>();
+  const toneCounts = new Map<string, number>();
+  const audienceCounts = new Map<string, number>();
+  const keywordCounts = new Map<string, number>();
+
+  for (const row of
+    (generatedContentInsightsResult.data ?? []) as GeneratedContentInsightRow[]) {
+    incrementCounter(platformCounts, row.platform);
+    incrementCounter(goalCounts, row.goal);
+    incrementCounter(toneCounts, row.tone);
+    incrementCounter(audienceCounts, row.audience);
+
+    for (const keyword of toStringArray(row.keywords)) {
+      incrementCounter(keywordCounts, keyword.toLowerCase());
+    }
+  }
+
+  return {
+    totalGeneratedContent,
+    totalGeneratedImages,
+    totalScheduledPosts,
+    scheduledPostStatusBreakdown,
+    contentGenerationsThisMonth,
+    imageGenerationsThisMonth,
+    analyticsRecordsThisMonth: analyticsRecordsThisMonthResult.count ?? 0,
+    topPlatforms: topItemsFromMap(platformCounts),
+    topGoals: topItemsFromMap(goalCounts),
+    topTones: topItemsFromMap(toneCounts),
+    topAudiences: topItemsFromMap(audienceCounts),
+    topKeywords: topItemsFromMap(keywordCounts),
+  };
+};
+
+export const getDeveloperResearchSummary = async (
+  adminClient: AppSupabaseClient,
+  options: DateRangeOptions = {}
+): Promise<DeveloperResearchSummary> => {
+  let query = adminClient
+    .from('usage_tracking')
+    .select('user_id, feature_key, metadata, used_at')
+    .order('used_at', { ascending: false });
+
+  query = applyDateRange(query, 'used_at', options);
+
+  const { data, error } = await query;
+
+  if (error) {
+    throw new Error(error.message || 'Failed to fetch developer research data');
+  }
+
+  const rows = (data ?? []) as UsageTrackingRow[];
+  const uniqueUsers = new Set<string>();
+  const featureCounts = new Map<string, number>();
+  const providerCounts = new Map<string, number>();
+  const platformCounts = new Map<string, number>();
+  const goalCounts = new Map<string, number>();
+  const toneCounts = new Map<string, number>();
+  const audienceCounts = new Map<string, number>();
+  const keywordCounts = new Map<string, number>();
+  const productCounts = new Map<string, number>();
+
+  for (const row of rows) {
+    uniqueUsers.add(row.user_id);
+    incrementCounter(featureCounts, row.feature_key);
+
+    const metadata = toRecord(row.metadata);
+    incrementCounter(providerCounts, metadata.provider);
+    incrementCounter(platformCounts, metadata.platform);
+    incrementCounter(goalCounts, metadata.goal);
+    incrementCounter(toneCounts, metadata.tone);
+    incrementCounter(audienceCounts, metadata.audience);
+    incrementCounter(productCounts, metadata.productName);
+
+    for (const keyword of toStringArray(metadata.keywords)) {
+      incrementCounter(keywordCounts, keyword.toLowerCase());
+    }
+  }
+
+  return {
+    totalUsers: uniqueUsers.size,
+    totalUsageEvents: rows.length,
+    totalContentGenerations: rows.filter(
+      (row) => row.feature_key === FEATURE_KEYS.contentGeneration
+    ).length,
+    totalImageGenerations: rows.filter(
+      (row) => row.feature_key === FEATURE_KEYS.imageGeneration
+    ).length,
+    featureBreakdown: topItemsFromMap(featureCounts, 10),
+    providerBreakdown: topItemsFromMap(providerCounts, 10),
+    topPlatforms: topItemsFromMap(platformCounts, 10),
+    topGoals: topItemsFromMap(goalCounts, 10),
+    topTones: topItemsFromMap(toneCounts, 10),
+    topAudiences: topItemsFromMap(audienceCounts, 10),
+    topKeywords: topItemsFromMap(keywordCounts, 10),
+    topProducts: topItemsFromMap(productCounts, 10),
+  };
+};
+
+export const getDeveloperResearchEvents = async (
+  adminClient: AppSupabaseClient,
+  options: PaginationOptions & { featureKey?: string } = {}
+): Promise<PaginatedResult<UsageTrackingEvent>> => {
+  const page = normalizePage(options.page);
+  const limit = normalizeLimit(options.limit);
+  const from = (page - 1) * limit;
+  const to = from + limit - 1;
+
+  let query = adminClient
+    .from('usage_tracking')
+    .select('*', { count: 'exact' })
+    .order('used_at', { ascending: false });
+
+  query = applyDateRange(query, 'used_at', options);
+
+  if (options.featureKey) {
+    query = query.eq('feature_key', options.featureKey);
+  }
+
+  const { data, count, error } = await query.range(from, to);
+
+  if (error) {
+    throw new Error(error.message || 'Failed to fetch developer research events');
+  }
+
+  const total = count ?? 0;
+
+  return {
+    items: (data ?? []).map((row) => toUsageTrackingEvent(row as UsageTrackingRow)),
+    page,
+    limit,
+    total,
+    totalPages: total > 0 ? Math.ceil(total / limit) : 0,
   };
 };

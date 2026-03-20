@@ -1,0 +1,18 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+const express_1 = require("express");
+const auth_middleware_1 = require("../middleware/auth.middleware");
+const scheduler_controller_1 = require("../controllers/scheduler.controller");
+const validate_middleware_1 = require("../middleware/validate.middleware");
+const scheduler_schema_1 = require("../schemas/scheduler.schema");
+const router = (0, express_1.Router)();
+router.post('/accounts', auth_middleware_1.authMiddleware, (0, validate_middleware_1.validate)(scheduler_schema_1.createSocialAccountSchema), scheduler_controller_1.createConnectedSocialAccount);
+router.get('/accounts', auth_middleware_1.authMiddleware, scheduler_controller_1.listConnectedSocialAccounts);
+router.patch('/accounts/:id', auth_middleware_1.authMiddleware, (0, validate_middleware_1.validate)(scheduler_schema_1.updateSocialAccountSchema), scheduler_controller_1.updateConnectedSocialAccount);
+router.delete('/accounts/:id', auth_middleware_1.authMiddleware, scheduler_controller_1.removeConnectedSocialAccount);
+router.post('/posts', auth_middleware_1.authMiddleware, (0, validate_middleware_1.validate)(scheduler_schema_1.createScheduledPostSchema), scheduler_controller_1.createPostSchedule);
+router.get('/posts', auth_middleware_1.authMiddleware, scheduler_controller_1.listScheduledPosts);
+router.patch('/posts/:id', auth_middleware_1.authMiddleware, (0, validate_middleware_1.validate)(scheduler_schema_1.updateScheduledPostSchema), scheduler_controller_1.updatePostSchedule);
+router.patch('/posts/:id/status', auth_middleware_1.authMiddleware, (0, validate_middleware_1.validate)(scheduler_schema_1.updateScheduledPostStatusSchema), scheduler_controller_1.updatePostScheduleStatus);
+router.delete('/posts/:id', auth_middleware_1.authMiddleware, scheduler_controller_1.deletePostSchedule);
+exports.default = router;

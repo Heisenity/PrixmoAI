@@ -1,0 +1,12 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+const express_1 = require("express");
+const image_controller_1 = require("../controllers/image.controller");
+const auth_middleware_1 = require("../middleware/auth.middleware");
+const planLimit_middleware_1 = require("../middleware/planLimit.middleware");
+const validate_middleware_1 = require("../middleware/validate.middleware");
+const image_schema_1 = require("../schemas/image.schema");
+const router = (0, express_1.Router)();
+router.post('/generate', auth_middleware_1.authMiddleware, planLimit_middleware_1.imagePlanLimitMiddleware, (0, validate_middleware_1.validate)(image_schema_1.generateImageSchema), image_controller_1.generateImage);
+router.get('/history', auth_middleware_1.authMiddleware, image_controller_1.getImageHistory);
+exports.default = router;

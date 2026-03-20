@@ -1,0 +1,40 @@
+<svg width="1200" height="1200" viewBox="0 0 1200 1200" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bgInput" x1="140" y1="120" x2="1030" y2="1080" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#505861"/>
+      <stop offset="0.5" stop-color="#343B44"/>
+      <stop offset="1" stop-color="#1B2027"/>
+    </linearGradient>
+    <radialGradient id="lightInput" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(360 260) rotate(54.7) scale(320 270)">
+      <stop stop-color="#C0C8D0" stop-opacity="0.36"/>
+      <stop offset="1" stop-color="#C0C8D0" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="floorGlow" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(600 920) rotate(90) scale(90 280)">
+      <stop stop-color="#000000" stop-opacity="0.42"/>
+      <stop offset="1" stop-color="#000000" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="hoodieInput" x1="600" y1="300" x2="600" y2="920" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#141922"/>
+      <stop offset="0.55" stop-color="#090D14"/>
+      <stop offset="1" stop-color="#04070C"/>
+    </linearGradient>
+    <radialGradient id="hoodieHighlight" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(515 470) rotate(58.3) scale(118 122)">
+      <stop stop-color="#67707A" stop-opacity="0.42"/>
+      <stop offset="1" stop-color="#67707A" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="1200" height="1200" rx="72" fill="url(#bgInput)"/>
+  <rect x="164" y="160" width="872" height="736" rx="56" stroke="rgba(255,255,255,0.12)" stroke-width="10"/>
+  <rect x="286" y="332" width="628" height="496" rx="48" fill="rgba(255,255,255,0.03)" stroke="rgba(255,255,255,0.10)" stroke-width="8"/>
+  <circle cx="600" cy="950" r="280" fill="url(#floorGlow)"/>
+  <circle cx="360" cy="260" r="330" fill="url(#lightInput)"/>
+  <path d="M600 250C649 250 706 276 748 312L684 380C663 360 634 348 600 348C566 348 537 360 516 380L452 312C494 276 551 250 600 250Z" fill="#05080D"/>
+  <path d="M448 346C493 328 548 318 600 318C652 318 707 328 752 346L822 444C854 488 872 540 872 594V744C872 835 798 910 706 910H494C402 910 328 835 328 744V594C328 540 346 488 378 444L448 346Z" fill="url(#hoodieInput)"/>
+  <rect x="230" y="470" width="134" height="332" rx="67" transform="rotate(18 230 470)" fill="#080C12"/>
+  <rect x="836" y="512" width="134" height="332" rx="67" transform="rotate(-18 836 512)" fill="#080C12"/>
+  <circle cx="506" cy="492" r="126" fill="url(#hoodieHighlight)"/>
+  <ellipse cx="600" cy="292" rx="122" ry="70" fill="#070A10"/>
+  <rect x="468" y="274" width="264" height="122" rx="60" fill="#090D13"/>
+  <path d="M540 340C556 326 576 318 600 318C624 318 644 326 660 340V404H540V340Z" fill="#0B1018"/>
+  <ellipse cx="600" cy="902" rx="188" ry="34" fill="rgba(0,0,0,0.32)"/>
+</svg>

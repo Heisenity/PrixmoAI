@@ -1,0 +1,26 @@
+import { Navigate, Outlet, useLocation } from 'react-router-dom';
+import { useAuth } from '../../hooks/useAuth';
+import { LoadingSpinner } from './LoadingSpinner';
+
+export const ProtectedRoute = () => {
+  const { session, profile, isInitializing } = useAuth();
+  const location = useLocation();
+
+  if (isInitializing) {
+    return (
+      <div className="screen-center">
+        <LoadingSpinner label="Syncing workspace" />
+      </div>
+    );
+  }
+
+  if (!session) {
+    return <Navigate to="/login" replace state={{ from: location.pathname }} />;
+  }
+
+  if (!profile && location.pathname !== '/onboarding') {
+    return <Navigate to="/onboarding" replace />;
+  }
+
+  return <Outlet />;
+};

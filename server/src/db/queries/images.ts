@@ -1,9 +1,14 @@
+import { FEATURE_KEYS } from '../../config/constants';
 import type {
   CreateGeneratedImageInput,
   GeneratedImage,
   PaginatedResult,
 } from '../../types';
 import type { AppSupabaseClient } from '../supabase';
+import {
+  getMonthlyUsageCount,
+  recordUsageEvent,
+} from './subscriptions';
 
 type GeneratedImageRow = {
   id: string;
@@ -134,3 +139,16 @@ export const deleteGeneratedImage = async (
     throw new Error(error.message || 'Failed to delete generated image');
   }
 };
+
+export const getImageMonthlyUsageCount = async (
+  client: AppSupabaseClient,
+  userId: string
+): Promise<number> =>
+  getMonthlyUsageCount(client, userId, FEATURE_KEYS.imageGeneration);
+
+export const trackImageGenerationUsage = async (
+  client: AppSupabaseClient,
+  userId: string,
+  metadata: Record<string, unknown> = {}
+) =>
+  recordUsageEvent(client, userId, FEATURE_KEYS.imageGeneration, metadata);

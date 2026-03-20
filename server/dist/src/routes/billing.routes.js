@@ -1,0 +1,14 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+const express_1 = require("express");
+const auth_middleware_1 = require("../middleware/auth.middleware");
+const validate_middleware_1 = require("../middleware/validate.middleware");
+const billing_controller_1 = require("../controllers/billing.controller");
+const billing_schema_1 = require("../schemas/billing.schema");
+const router = (0, express_1.Router)();
+router.get('/plans', auth_middleware_1.authMiddleware, billing_controller_1.getBillingPlanCatalog);
+router.get('/subscription', auth_middleware_1.authMiddleware, billing_controller_1.getCurrentBillingSubscription);
+router.post('/checkout', auth_middleware_1.authMiddleware, (0, validate_middleware_1.validate)(billing_schema_1.createBillingCheckoutSchema), billing_controller_1.createBillingCheckout);
+router.post('/sync', auth_middleware_1.authMiddleware, (0, validate_middleware_1.validate)(billing_schema_1.syncSubscriptionSchema), billing_controller_1.syncBillingSubscription);
+router.post('/cancel', auth_middleware_1.authMiddleware, (0, validate_middleware_1.validate)(billing_schema_1.cancelSubscriptionSchema), billing_controller_1.cancelBillingSubscriptionController);
+exports.default = router;

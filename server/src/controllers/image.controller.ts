@@ -4,6 +4,7 @@ import { generateProductImage } from '../ai/imageGen';
 import {
   getGeneratedImageHistory,
   saveGeneratedImage,
+  trackImageGenerationUsage,
 } from '../db/queries/images';
 import { requireUserClient } from '../db/supabase';
 import type { GenerateImageInput } from '../schemas/image.schema';
@@ -49,6 +50,17 @@ export const generateImage = async (
       prompt: result.promptUsed,
     });
 
+    await trackImageGenerationUsage(client, req.user.id, {
+      imageId: image.id,
+      provider: result.provider,
+      contentId: req.body.contentId ?? null,
+      productName: req.body.productName,
+      productDescription: req.body.productDescription ?? null,
+      backgroundStyle: req.body.backgroundStyle ?? null,
+      prompt: result.promptUsed,
+      sourceImageUrl: req.body.sourceImageUrl ?? null,
+    });
+
     return res.status(200).json({
       status: 'success',
       message: `Image generated successfully using ${result.provider}`,
@@ -61,17 +73,7 @@ export const generateImage = async (
     const message =
       error instanceof Error ? error.message : 'Failed to generate image';
 
-    if (
-      typeof message === 'string' &&
-      message.startsWith('Image generation is currently disabled.')
-    ) {
-      return res.status(503).json({
-        status: 'fail',
-        message,
-      });
-    }
-
-    return res.status(500).json({
+    return res.status(502).json({
       status: 'error',
       message,
     });

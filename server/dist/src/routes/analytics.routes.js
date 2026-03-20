@@ -1,0 +1,18 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+const express_1 = require("express");
+const analytics_controller_1 = require("../controllers/analytics.controller");
+const auth_middleware_1 = require("../middleware/auth.middleware");
+const developerAnalytics_middleware_1 = require("../middleware/developerAnalytics.middleware");
+const validate_middleware_1 = require("../middleware/validate.middleware");
+const analytics_schema_1 = require("../schemas/analytics.schema");
+const router = (0, express_1.Router)();
+router.post('/record', auth_middleware_1.authMiddleware, (0, validate_middleware_1.validate)(analytics_schema_1.recordAnalyticsSchema), analytics_controller_1.recordAnalytics);
+router.get('/overview', auth_middleware_1.authMiddleware, analytics_controller_1.getOverview);
+router.get('/summary', auth_middleware_1.authMiddleware, analytics_controller_1.getSummary);
+router.get('/weekly-comparison', auth_middleware_1.authMiddleware, analytics_controller_1.getWeeklyComparison);
+router.get('/best-post', auth_middleware_1.authMiddleware, analytics_controller_1.getBestPost);
+router.get('/history', auth_middleware_1.authMiddleware, analytics_controller_1.getHistory);
+router.get('/internal/research/summary', developerAnalytics_middleware_1.developerAnalyticsMiddleware, analytics_controller_1.getInternalResearchSummary);
+router.get('/internal/research/events', developerAnalytics_middleware_1.developerAnalyticsMiddleware, analytics_controller_1.getInternalResearchEvents);
+exports.default = router;

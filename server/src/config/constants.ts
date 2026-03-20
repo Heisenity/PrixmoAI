@@ -1,5 +1,5 @@
 import dotenv from 'dotenv';
-import type { PlanType } from '../types';
+import type { BillingPlan, PlanType } from '../types';
 
 dotenv.config();
 
@@ -21,6 +21,45 @@ export const PLAN_LIMITS: Record<PlanType, number | null> = {
   free: 8,
   basic: 30,
   pro: null,
+};
+
+export const BILLING_PLAN_CATALOG: Record<PlanType, BillingPlan> = {
+  free: {
+    id: 'free',
+    displayName: 'Free',
+    description: 'Starter plan for trying content and image generation',
+    amountInPaise: 0,
+    currency: 'INR',
+    interval: 1,
+    period: 'monthly',
+    monthlyLimit: PLAN_LIMITS.free,
+    isFree: true,
+    checkoutEnabled: false,
+  },
+  basic: {
+    id: 'basic',
+    displayName: 'Basic',
+    description: 'Monthly plan for growing creators and small brands',
+    amountInPaise: Number(process.env.RAZORPAY_BASIC_PRICE_PAISE || 49900),
+    currency: 'INR',
+    interval: 1,
+    period: 'monthly',
+    monthlyLimit: PLAN_LIMITS.basic,
+    isFree: false,
+    checkoutEnabled: Boolean(process.env.RAZORPAY_PLAN_ID_BASIC),
+  },
+  pro: {
+    id: 'pro',
+    displayName: 'Pro',
+    description: 'Advanced monthly plan for teams and higher usage',
+    amountInPaise: Number(process.env.RAZORPAY_PRO_PRICE_PAISE || 149900),
+    currency: 'INR',
+    interval: 1,
+    period: 'monthly',
+    monthlyLimit: PLAN_LIMITS.pro,
+    isFree: false,
+    checkoutEnabled: Boolean(process.env.RAZORPAY_PLAN_ID_PRO),
+  },
 };
 
 export const IMAGE_BUCKETS = {

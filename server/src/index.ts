@@ -2,9 +2,13 @@ import express from "express";
 import helmet from "helmet";
 import cors from "cors";
 import { errorHandler } from "./middleware/errorHandler.middleware";
+import { handleRazorpayWebhook } from "./controllers/billing.controller";
 import authRouter from "./routes/auth.routes";
+import analyticsRouter from "./routes/analytics.routes";
+import billingRouter from "./routes/billing.routes";
 import contentRouter from "./routes/content.routes";
 import imageRouter from "./routes/image.routes";
+import schedulerRouter from "./routes/scheduler.routes";
 import { APP_PORT } from "./config/constants";
 import { version } from '../package.json';
 
@@ -15,6 +19,11 @@ const PORT = APP_PORT;
 // 1. Security Headers
 app.use(helmet());
 app.use(cors());
+app.post(
+  '/api/billing/webhook',
+  express.raw({ type: 'application/json' }),
+  handleRazorpayWebhook
+);
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -36,8 +45,11 @@ app.get('/health', (req, res) => {
 });
 
 app.use('/api/auth', authRouter);
+app.use('/api/analytics', analyticsRouter);
+app.use('/api/billing', billingRouter);
 app.use('/api/content', contentRouter);
 app.use('/api/images', imageRouter);
+app.use('/api/scheduler', schedulerRouter);
 
 app.use((req, _res, next) => {
   const error = new Error(`Route not found: ${req.originalUrl}`) as Error & {

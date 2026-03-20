@@ -55,8 +55,15 @@ export const generateContent = async (
 
     await trackContentGenerationUsage(client, req.user.id, {
       contentId: content.id,
+      provider: 'gemini',
+      brandProfileId: brandProfile?.id ?? null,
       platform: req.body.platform ?? null,
+      goal: req.body.goal ?? null,
+      tone: req.body.tone ?? null,
+      audience: req.body.audience ?? null,
       productName: req.body.productName,
+      productDescription: req.body.productDescription ?? null,
+      keywords: req.body.keywords ?? [],
     });
 
     return res.status(200).json({

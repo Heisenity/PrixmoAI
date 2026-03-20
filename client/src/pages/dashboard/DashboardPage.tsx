@@ -1,0 +1,156 @@
+import { Link } from 'react-router-dom';
+import { BestPostWidget } from '../../components/analytics/BestPostWidget';
+import { StatsCard } from '../../components/analytics/StatsCard';
+import { WeeklyScoreCard } from '../../components/analytics/WeeklyScoreCard';
+import { CurrentPlanBadge } from '../../components/billing/CurrentPlanBadge';
+import { EmptyState } from '../../components/shared/EmptyState';
+import { UsageMeter } from '../../components/shared/UsageMeter';
+import { Card } from '../../components/ui/card';
+import { useAnalytics } from '../../hooks/useAnalytics';
+import { useBilling } from '../../hooks/useBilling';
+import { useContent } from '../../hooks/useContent';
+import { useImages } from '../../hooks/useImages';
+import { useScheduler } from '../../hooks/useScheduler';
+import { formatCompactNumber, formatDateTime } from '../../lib/utils';
+
+export const DashboardPage = () => {
+  const { overview } = useAnalytics();
+  const { catalog } = useBilling();
+  const { history: contentHistory } = useContent();
+  const { history: imageHistory } = useImages();
+  const { posts } = useScheduler();
+
+  const subscription = catalog?.currentSubscription;
+  const monthlyLimit = subscription?.monthlyLimit ?? null;
+
+  return (
+    <div className="page-stack">
+      <div className="stats-grid">
+        <StatsCard
+          label="Generated content"
+          value={formatCompactNumber(overview?.generation.totalGeneratedContent || 0)}
+          hint="All-time content packs"
+        />
+        <StatsCard
+          label="Generated images"
+          value={formatCompactNumber(overview?.generation.totalGeneratedImages || 0)}
+          hint="All-time image outputs"
+        />
+        <StatsCard
+          label="Scheduled posts"
+          value={formatCompactNumber(overview?.generation.totalScheduledPosts || 0)}
+          hint="Queued in the scheduler"
+        />
+        {overview?.weeklyComparison ? (
+          <WeeklyScoreCard comparison={overview.weeklyComparison} />
+        ) : (
+          <StatsCard label="Weekly movement" value="0%" hint="Waiting for analytics records" />
+        )}
+      </div>
+
+      <div className="dashboard-grid">
+        <Card className="dashboard-panel">
+          <div className="dashboard-panel__header">
+            <div>
+              <p className="section-eyebrow">Subscription state</p>
+              <h3>Plan and monthly allowance</h3>
+            </div>
+            {subscription ? <CurrentPlanBadge plan={subscription.plan} /> : null}
+          </div>
+          <div className="dashboard-panel__body">
+            <UsageMeter
+              label="Content generations this month"
+              value={overview?.generation.contentGenerationsThisMonth || 0}
+              limit={monthlyLimit}
+            />
+            <UsageMeter
+              label="Image generations this month"
+              value={overview?.generation.imageGenerationsThisMonth || 0}
+              limit={monthlyLimit}
+            />
+          </div>
+        </Card>
+
+        <BestPostWidget post={overview?.bestPostThisWeek || null} />
+      </div>
+
+      <div className="dashboard-grid">
+        <Card className="dashboard-panel">
+          <div className="dashboard-panel__header">
+            <div>
+              <p className="section-eyebrow">Recent content</p>
+              <h3>Latest generated copy packs</h3>
+            </div>
+            <Link to="/app/generate">Open lab</Link>
+          </div>
+          {contentHistory?.items.length ? (
+            <div className="stack-list">
+              {contentHistory.items.slice(0, 3).map((item) => (
+                <div key={item.id} className="stack-list__item">
+                  <strong>{item.productName}</strong>
+                  <span>{item.platform || 'Platform not set'}</span>
+                  <small>{formatDateTime(item.createdAt)}</small>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <EmptyState
+              title="No content yet"
+              description="Generate your first caption pack and it will appear here."
+            />
+          )}
+        </Card>
+
+        <Card className="dashboard-panel">
+          <div className="dashboard-panel__header">
+            <div>
+              <p className="section-eyebrow">Recent images</p>
+              <h3>Latest visual outputs</h3>
+            </div>
+            <Link to="/app/generate">Generate</Link>
+          </div>
+          {imageHistory?.items.length ? (
+            <div className="image-strip">
+              {imageHistory.items.slice(0, 3).map((item) => (
+                <a key={item.id} href={item.generatedImageUrl} target="_blank" rel="noreferrer">
+                  <img src={item.generatedImageUrl} alt={item.prompt || item.id} />
+                </a>
+              ))}
+            </div>
+          ) : (
+            <EmptyState
+              title="No images yet"
+              description="Once the first generation lands, the gallery will populate here."
+            />
+          )}
+        </Card>
+      </div>
+
+      <Card className="dashboard-panel">
+        <div className="dashboard-panel__header">
+          <div>
+            <p className="section-eyebrow">Scheduler queue</p>
+            <h3>Upcoming posts</h3>
+          </div>
+          <Link to="/app/scheduler">Manage queue</Link>
+        </div>
+        {posts?.items.length ? (
+          <div className="stack-list">
+            {posts.items.slice(0, 4).map((post) => (
+              <div key={post.id} className="stack-list__item">
+                <strong>{post.caption || 'Untitled post'}</strong>
+                <span>{post.status}</span>
+                <small>{formatDateTime(post.scheduledFor)}</small>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <EmptyState
+            title="No posts queued"
+            description="Connect a social account and create the first scheduled post."
+          />
+        )}
+      </Card>
+    </div>
+  );
+};

@@ -109,6 +109,34 @@ export interface CreateGeneratedImageInput {
   prompt?: string | null;
 }
 
+export interface SocialAccount {
+  id: string;
+  userId: string;
+  platform: string;
+  accountId: string;
+  accountName: string | null;
+  accessToken: string | null;
+  refreshToken: string | null;
+  tokenExpiresAt: string | null;
+  metadata: Record<string, unknown>;
+  connectedAt: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateSocialAccountInput {
+  platform: string;
+  accountId: string;
+  accountName?: string | null;
+  accessToken?: string | null;
+  refreshToken?: string | null;
+  tokenExpiresAt?: string | null;
+  metadata?: Record<string, unknown>;
+}
+
+export interface UpdateSocialAccountInput
+  extends Partial<CreateSocialAccountInput> {}
+
 export interface ScheduledPost {
   id: string;
   userId: string;
@@ -133,6 +161,17 @@ export interface CreateScheduledPostInput {
   caption?: string | null;
   mediaUrl?: string | null;
   scheduledFor: string;
+  status?: ScheduledPostStatus;
+}
+
+export interface UpdateScheduledPostRequestInput {
+  socialAccountId?: string;
+  contentId?: string | null;
+  generatedImageId?: string | null;
+  platform?: string | null;
+  caption?: string | null;
+  mediaUrl?: string | null;
+  scheduledFor?: string;
   status?: ScheduledPostStatus;
 }
 
@@ -188,6 +227,26 @@ export interface WeeklyAnalyticsComparison {
   direction: WeeklyDirection;
 }
 
+export interface AnalyticsTrendItem {
+  value: string;
+  count: number;
+}
+
+export interface GenerationOverview {
+  totalGeneratedContent: number;
+  totalGeneratedImages: number;
+  totalScheduledPosts: number;
+  scheduledPostStatusBreakdown: Record<ScheduledPostStatus, number>;
+  contentGenerationsThisMonth: number;
+  imageGenerationsThisMonth: number;
+  analyticsRecordsThisMonth: number;
+  topPlatforms: AnalyticsTrendItem[];
+  topGoals: AnalyticsTrendItem[];
+  topTones: AnalyticsTrendItem[];
+  topAudiences: AnalyticsTrendItem[];
+  topKeywords: AnalyticsTrendItem[];
+}
+
 export interface Subscription {
   id: string;
   userId: string;
@@ -200,6 +259,19 @@ export interface Subscription {
   metadata: Record<string, unknown>;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface BillingPlan {
+  id: PlanType;
+  displayName: string;
+  description: string;
+  amountInPaise: number;
+  currency: string;
+  interval: number;
+  period: 'monthly' | 'yearly';
+  monthlyLimit: number | null;
+  isFree: boolean;
+  checkoutEnabled: boolean;
 }
 
 export interface CreateSubscriptionInput {
@@ -219,6 +291,21 @@ export interface UsageTrackingEvent {
   featureKey: string;
   usedAt: string;
   metadata: Record<string, unknown>;
+}
+
+export interface DeveloperResearchSummary {
+  totalUsers: number;
+  totalUsageEvents: number;
+  totalContentGenerations: number;
+  totalImageGenerations: number;
+  featureBreakdown: AnalyticsTrendItem[];
+  providerBreakdown: AnalyticsTrendItem[];
+  topPlatforms: AnalyticsTrendItem[];
+  topGoals: AnalyticsTrendItem[];
+  topTones: AnalyticsTrendItem[];
+  topAudiences: AnalyticsTrendItem[];
+  topKeywords: AnalyticsTrendItem[];
+  topProducts: AnalyticsTrendItem[];
 }
 
 export interface PaginatedResult<T> {

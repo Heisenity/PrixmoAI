@@ -119,6 +119,25 @@ export const getScheduledPostsByUser = async (
   };
 };
 
+export const getScheduledPostById = async (
+  client: AppSupabaseClient,
+  userId: string,
+  scheduledPostId: string
+): Promise<ScheduledPost | null> => {
+  const { data, error } = await client
+    .from('scheduled_posts')
+    .select('*')
+    .eq('id', scheduledPostId)
+    .eq('user_id', userId)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(error.message || 'Failed to fetch scheduled post');
+  }
+
+  return data ? toScheduledPost(data as ScheduledPostRow) : null;
+};
+
 export const updateScheduledPost = async (
   client: AppSupabaseClient,
   userId: string,
