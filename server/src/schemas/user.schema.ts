@@ -10,6 +10,11 @@ export type CreateUserInput = z.infer<typeof createUserSchema>;
 
 export const authProfileSchema = z.object({
   fullName: z.string().trim().min(1, 'Full name is required'),
+  phoneNumber: z
+    .string()
+    .trim()
+    .regex(/^[0-9+()\-\s]{10,20}$/, 'Enter a valid phone number')
+    .optional(),
   username: z
     .string()
     .trim()

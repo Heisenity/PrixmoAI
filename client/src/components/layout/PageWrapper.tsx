@@ -1,5 +1,7 @@
 import { Outlet, useLocation } from 'react-router-dom';
 import { Sidebar } from './Sidebar';
+import { Button } from '../ui/button';
+import { useAuth } from '../../hooks/useAuth';
 
 const pageMeta: Record<string, { eyebrow: string; title: string; subtitle: string }> = {
   '/app/dashboard': {
@@ -42,7 +44,9 @@ const pageMeta: Record<string, { eyebrow: string; title: string; subtitle: strin
 
 export const PageWrapper = () => {
   const location = useLocation();
+  const { signOut } = useAuth();
   const meta = pageMeta[location.pathname] ?? pageMeta['/app/dashboard'];
+  const authNotice = (location.state as { authNotice?: string } | null)?.authNotice;
 
   return (
     <div className="workspace-shell">
@@ -55,9 +59,20 @@ export const PageWrapper = () => {
               <h1>{meta.title}</h1>
               <p>{meta.subtitle}</p>
             </div>
+            <Button
+              variant="secondary"
+              size="md"
+              className="workspace-header__action"
+              onClick={() => {
+                void signOut();
+              }}
+            >
+              Log out
+            </Button>
           </div>
         </header>
         <main className="workspace-content">
+          {authNotice ? <div className="message workspace-content__notice">{authNotice}</div> : null}
           <Outlet />
         </main>
       </div>

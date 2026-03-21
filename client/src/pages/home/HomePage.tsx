@@ -22,6 +22,7 @@ import {
 import { useRef, useState, type PropsWithChildren } from 'react';
 import { Link } from 'react-router-dom';
 import '../../styles/home.css';
+import { ProviderLogo } from '../../components/auth/ProviderLogo';
 import { BlackHoleCanvas } from '../../components/home/BlackHoleCanvas';
 import { Footer } from '../../components/layout/Footer';
 import { Navbar } from '../../components/layout/Navbar';
@@ -32,7 +33,7 @@ import { useAuth } from '../../hooks/useAuth';
 import { APP_NAME } from '../../lib/constants';
 import { cn } from '../../lib/utils';
 
-type OAuthProvider = 'google' | 'github' | 'apple';
+type OAuthProvider = 'google' | 'github' | 'facebook';
 
 const socialProofItems = [
   'Clothing Brands',
@@ -292,51 +293,6 @@ const comparisonRows = {
     'Scheduled at peak time',
   ],
 } as const;
-
-const ProviderLogo = ({ provider }: { provider: OAuthProvider }) => {
-  if (provider === 'github') {
-    return (
-      <span className="provider-logo provider-logo--github" aria-hidden="true">
-        <svg viewBox="0 0 24 24" fill="currentColor">
-          <path d="M12 .5a11.5 11.5 0 0 0-3.637 22.41c.575.108.786-.248.786-.552v-2.14c-3.198.696-3.873-1.357-3.873-1.357-.523-1.328-1.276-1.681-1.276-1.681-1.043-.713.079-.699.079-.699 1.153.08 1.76 1.184 1.76 1.184 1.025 1.757 2.689 1.25 3.344.956.104-.742.401-1.25.73-1.537-2.553-.29-5.237-1.277-5.237-5.686 0-1.256.449-2.283 1.184-3.088-.12-.29-.513-1.458.112-3.04 0 0 .966-.309 3.166 1.18A10.94 10.94 0 0 1 12 6.043c.973.004 1.953.131 2.868.385 2.2-1.489 3.164-1.18 3.164-1.18.627 1.582.234 2.75.115 3.04.737.805 1.183 1.832 1.183 3.088 0 4.42-2.688 5.393-5.25 5.678.412.354.779 1.052.779 2.12v3.144c0 .307.208.665.792.551A11.5 11.5 0 0 0 12 .5Z" />
-        </svg>
-      </span>
-    );
-  }
-
-  if (provider === 'apple') {
-    return (
-      <span className="provider-logo provider-logo--apple" aria-hidden="true">
-        <svg viewBox="0 0 20 20" fill="currentColor">
-          <path d="M16.193 15.102c-.242.559-.356.808-.668 1.306-.436.695-1.048 1.56-1.81 1.566-.676.007-.85-.441-1.77-.437-.919.006-1.11.445-1.786.439-.762-.007-1.344-.786-1.779-1.481-1.22-1.943-1.347-4.223-.596-5.396.534-.833 1.379-1.319 2.173-1.319.81 0 1.32.445 1.988.445.648 0 1.045-.446 1.982-.446.708 0 1.46.386 1.992 1.053-1.75.959-1.466 3.474.274 4.27Zm-3.22-9c.338-.434.596-1.048.503-1.651-.552.038-1.2.379-1.577.838-.34.413-.623 1.026-.512 1.606.605.019 1.228-.327 1.586-.793Z" />
-        </svg>
-      </span>
-    );
-  }
-
-  return (
-    <span className="provider-logo provider-logo--google" aria-hidden="true">
-      <svg viewBox="0 0 24 24">
-        <path
-          fill="#EA4335"
-          d="M12 10.2v3.9h5.5c-.2 1.3-1.5 3.8-5.5 3.8-3.3 0-6-2.7-6-6s2.7-6 6-6c1.9 0 3.2.8 3.9 1.5l2.7-2.6C16.9 3.2 14.7 2.2 12 2.2 6.6 2.2 2.2 6.6 2.2 12S6.6 21.8 12 21.8c6.9 0 9.1-4.8 9.1-7.3 0-.5-.1-.9-.1-1.3H12Z"
-        />
-        <path
-          fill="#34A853"
-          d="M2.2 7.4 5.4 9.7C6.3 7.3 8.9 5.7 12 5.7c1.9 0 3.2.8 3.9 1.5l2.7-2.6C16.9 3.2 14.7 2.2 12 2.2 8.2 2.2 4.9 4.4 3.3 7.6Z"
-        />
-        <path
-          fill="#FBBC05"
-          d="M12 21.8c2.6 0 4.8-.9 6.4-2.5l-3-2.5c-.8.6-1.9 1.1-3.4 1.1-3.8 0-5.2-2.4-5.5-3.7l-3.2 2.5c1.6 3.2 4.9 5.1 8.7 5.1Z"
-        />
-        <path
-          fill="#4285F4"
-          d="M21.1 14.5c0-.5-.1-.9-.1-1.3H12v3.9h5.5c-.3 1.2-1.1 2.1-2.1 2.8l3 2.5c1.8-1.6 2.7-4 2.7-6.9Z"
-        />
-      </svg>
-    </span>
-  );
-};
 
 const ScrollScrub = ({
   children,
@@ -606,11 +562,11 @@ export const HomePage = () => {
                 className="landing-auth-panel__oauth"
                 disabled={authPending !== null}
                 onClick={() => {
-                  void handleOAuth('apple');
+                  void handleOAuth('facebook');
                 }}
               >
-                <ProviderLogo provider="apple" />
-                <span>{authPending === 'apple' ? 'Connecting...' : 'Apple'}</span>
+                <ProviderLogo provider="facebook" />
+                <span>{authPending === 'facebook' ? 'Connecting...' : 'Facebook'}</span>
               </button>
 
               {authError ? (

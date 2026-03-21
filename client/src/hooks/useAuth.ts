@@ -22,7 +22,7 @@ type AuthContextValue = {
   isProfileLoading: boolean;
   signIn: (email: string, password: string) => Promise<void>;
   signUp: (email: string, password: string) => Promise<void>;
-  signInWithOAuth: (provider: 'google' | 'github' | 'apple') => Promise<void>;
+  signInWithOAuth: (provider: 'google' | 'github' | 'facebook') => Promise<void>;
   signOut: () => Promise<void>;
   refreshProfile: () => Promise<void>;
   saveProfile: (input: SaveProfileInput) => Promise<BrandProfile>;
@@ -40,6 +40,8 @@ const useAuthBootstrap = () => {
   const hydrateProfile = async (accessToken: string | null) => {
     if (!accessToken) {
       setProfile(null);
+      setIsProfileLoading(false);
+      setIsInitializing(false);
       return;
     }
 
@@ -105,6 +107,10 @@ const useAuthBootstrap = () => {
   }, []);
 
   const signIn = async (email: string, password: string) => {
+    if (session) {
+      throw new Error("You're already signed in. Open your workspace or log out first.");
+    }
+
     if (!supabase) {
       throw new Error('Supabase client env is missing on the frontend.');
     }
@@ -120,6 +126,10 @@ const useAuthBootstrap = () => {
   };
 
   const signUp = async (email: string, password: string) => {
+    if (session) {
+      throw new Error("You're already signed in. Open your workspace or log out first.");
+    }
+
     if (!supabase) {
       throw new Error('Supabase client env is missing on the frontend.');
     }
@@ -134,7 +144,11 @@ const useAuthBootstrap = () => {
     }
   };
 
-  const signInWithOAuth = async (provider: 'google' | 'github' | 'apple') => {
+  const signInWithOAuth = async (provider: 'google' | 'github' | 'facebook') => {
+    if (session) {
+      throw new Error("You're already signed in. Open your workspace or log out first.");
+    }
+
     if (!supabase) {
       throw new Error('Supabase client env is missing on the frontend.');
     }

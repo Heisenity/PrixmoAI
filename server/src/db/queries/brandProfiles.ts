@@ -5,6 +5,7 @@ type BrandProfileRow = {
   id: string;
   user_id: string;
   full_name: string;
+  phone_number: string | null;
   username: string | null;
   avatar_url: string | null;
   industry: string | null;
@@ -24,6 +25,7 @@ const toBrandProfile = (row: BrandProfileRow): BrandProfile => ({
   id: row.id,
   userId: row.user_id,
   fullName: row.full_name,
+  phoneNumber: row.phone_number,
   username: row.username,
   avatarUrl: row.avatar_url,
   industry: row.industry,
@@ -38,6 +40,7 @@ const toBrandProfilePayload = (userId: string, input: BrandProfileInput) =>
   compactObject({
     user_id: userId,
     full_name: input.fullName,
+    phone_number: input.phoneNumber ?? null,
     username: input.username ?? null,
     avatar_url: input.avatarUrl ?? null,
     industry: input.industry ?? null,
@@ -49,6 +52,7 @@ const toBrandProfilePayload = (userId: string, input: BrandProfileInput) =>
 const toBrandProfileUpdatePayload = (input: Partial<BrandProfileInput>) =>
   compactObject({
     full_name: input.fullName,
+    phone_number: input.phoneNumber,
     username: input.username,
     avatar_url: input.avatarUrl,
     industry: input.industry,

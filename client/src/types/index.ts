@@ -38,6 +38,7 @@ export interface BrandProfile {
   id: string;
   userId: string;
   fullName: string;
+  phoneNumber: string | null;
   username: string | null;
   avatarUrl: string | null;
   industry: string | null;
@@ -58,6 +59,7 @@ export interface AuthMeResponse {
 
 export interface SaveProfileInput {
   fullName: string;
+  phoneNumber?: string;
   username?: string;
   avatarUrl?: string;
   industry?: string;

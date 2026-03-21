@@ -1,3 +1,4 @@
+import { Sparkles, WandSparkles, ImagePlus } from 'lucide-react';
 import { useState } from 'react';
 import { BackgroundSelector } from '../../components/generate/BackgroundSelector';
 import { CaptionList } from '../../components/generate/CaptionList';
@@ -61,8 +62,41 @@ export const GeneratePage = () => {
     });
   };
 
+  const recentContent = content.history?.items.slice(0, 3) ?? [];
+  const recentImages = images.history?.items.slice(0, 3) ?? [];
+  const totalContent = content.history?.total ?? 0;
+  const totalImages = images.history?.total ?? 0;
+
   return (
     <div className="page-stack">
+      <Card className="app-hero-card">
+        <div className="app-hero-card__copy">
+          <p className="section-eyebrow">Creative pipeline</p>
+          <h2>Generate copy packs and product visuals from one shared brief.</h2>
+          <p>
+            Build the caption, hashtag, reel, and image flow in one pass, then use the
+            strongest output immediately across the rest of the workspace.
+          </p>
+        </div>
+        <div className="app-hero-card__stats">
+          <div className="app-hero-card__metric">
+            <span>Content packs</span>
+            <strong>{totalContent}</strong>
+            <small>Generated so far</small>
+          </div>
+          <div className="app-hero-card__metric">
+            <span>Images</span>
+            <strong>{totalImages}</strong>
+            <small>Latest visual history</small>
+          </div>
+          <div className="app-hero-card__metric">
+            <span>Workspace mode</span>
+            <strong>{content.activeContent || images.activeImage ? 'Live' : 'Ready'}</strong>
+            <small>Waiting for your next brief</small>
+          </div>
+        </div>
+      </Card>
+
       <div className="generate-grid">
         <div className="page-stack">
           <ProductUploadForm
@@ -245,6 +279,71 @@ export const GeneratePage = () => {
               />
             </label>
           </ProductUploadForm>
+
+          <Card className="dashboard-panel activity-panel">
+            <div className="dashboard-panel__header">
+              <div>
+                <p className="section-eyebrow">Recent generation activity</p>
+                <h3>What is already available in this workspace</h3>
+              </div>
+            </div>
+            <div className="activity-panel__grid">
+              <div className="activity-panel__column">
+                <div className="activity-panel__heading">
+                  <Sparkles size={16} />
+                  <strong>Content history</strong>
+                </div>
+                {recentContent.length ? (
+                  <div className="stack-list">
+                    {recentContent.map((item) => (
+                      <button
+                        key={item.id}
+                        type="button"
+                        className="stack-list__item stack-list__item--interactive"
+                        onClick={() => content.setActiveContent(item)}
+                      >
+                        <strong>{item.productName}</strong>
+                        <span>{item.platform || 'Unspecified platform'}</span>
+                        <small>{item.captions.length} captions ready</small>
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <EmptyState
+                    title="No content history yet"
+                    description="Generate your first caption pack and it will appear here for quick reuse."
+                  />
+                )}
+              </div>
+
+              <div className="activity-panel__column">
+                <div className="activity-panel__heading">
+                  <ImagePlus size={16} />
+                  <strong>Image history</strong>
+                </div>
+                {recentImages.length ? (
+                  <div className="image-strip">
+                    {recentImages.map((item) => (
+                      <button
+                        key={item.id}
+                        type="button"
+                        className="image-strip__item"
+                        onClick={() => images.setActiveImage(item)}
+                      >
+                        <img src={item.generatedImageUrl} alt={item.backgroundStyle || item.id} />
+                        <span>{item.provider || 'image'}</span>
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <EmptyState
+                    title="No images generated yet"
+                    description="Once you create product visuals, the latest image set will appear here."
+                  />
+                )}
+              </div>
+            </div>
+          </Card>
         </div>
 
         <div className="page-stack">
@@ -287,6 +386,29 @@ export const GeneratePage = () => {
                 description="Run the image generator and the latest visual will show up here with a direct preview."
               />
             )}
+          </Card>
+
+          <Card className="dashboard-panel output-note-panel">
+            <div className="dashboard-panel__header">
+              <div>
+                <p className="section-eyebrow">Operational notes</p>
+                <h3>What this page is optimised for</h3>
+              </div>
+            </div>
+            <div className="stack-list">
+              <div className="stack-list__item">
+                <strong>Fast input</strong>
+                <span>Brief once, then reuse the active content pack and image directly across the app.</span>
+              </div>
+              <div className="stack-list__item">
+                <strong>Memory alignment</strong>
+                <span>Your onboarding profile still shapes the tone, audience fit, and content framing here.</span>
+              </div>
+              <div className="stack-list__item">
+                <strong>Best next step</strong>
+                <span>After generation, move straight into Scheduler or Billing depending on your workflow stage.</span>
+              </div>
+            </div>
           </Card>
         </div>
       </div>

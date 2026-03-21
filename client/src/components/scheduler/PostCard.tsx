@@ -29,7 +29,8 @@ export const PostCard = ({
     <p className="post-card__date">Scheduled for {formatDateTime(post.scheduledFor)}</p>
     {post.mediaUrl ? (
       <a className="post-card__media" href={post.mediaUrl} target="_blank" rel="noreferrer">
-        {post.mediaUrl}
+        <img src={post.mediaUrl} alt={post.caption || post.id} />
+        <span>{post.mediaUrl}</span>
       </a>
     ) : null}
     <div className="post-card__actions">

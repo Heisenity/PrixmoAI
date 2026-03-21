@@ -20,6 +20,7 @@ type AuthenticatedRequest<
 
 const toBrandProfileInput = (body: AuthProfileInput): BrandProfileInput => ({
   fullName: body.fullName,
+  phoneNumber: body.phoneNumber ?? null,
   username: body.username ?? null,
   avatarUrl: body.avatarUrl ?? null,
   industry: body.industry ?? null,

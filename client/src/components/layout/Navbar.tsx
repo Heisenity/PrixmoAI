@@ -2,10 +2,12 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { Menu, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { useAuth } from '../../hooks/useAuth';
 import { APP_NAME, PRIMARY_NAV_ITEMS } from '../../lib/constants';
 import { buttonClassName } from '../ui/button';
 
 export const Navbar = () => {
+  const { session, signOut } = useAuth();
   const [isScrolled, setIsScrolled] = useState(false);
   const [isOpen, setIsOpen] = useState(false);
 
@@ -39,15 +41,34 @@ export const Navbar = () => {
           ))}
         </nav>
         <div className="topbar__actions">
-          <Link to="/login" className="topbar__plain-link">
-            Login
-          </Link>
-          <Link
-            className={buttonClassName('primary', 'md', 'topbar__cta')}
-            to="/signup"
-          >
-            Get Started Free
-          </Link>
+          {session ? (
+            <>
+              <Link to="/app/dashboard" className="topbar__plain-link">
+                Workspace
+              </Link>
+              <button
+                type="button"
+                className={buttonClassName('secondary', 'md', 'topbar__cta')}
+                onClick={() => {
+                  void signOut();
+                }}
+              >
+                Log out
+              </button>
+            </>
+          ) : (
+            <>
+              <Link to="/login" className="topbar__plain-link">
+                Login
+              </Link>
+              <Link
+                className={buttonClassName('primary', 'md', 'topbar__cta')}
+                to="/signup"
+              >
+                Get Started Free
+              </Link>
+            </>
+          )}
           <button
             className="topbar__menu-button"
             onClick={() => setIsOpen((value) => !value)}
@@ -95,12 +116,32 @@ export const Navbar = () => {
                 ))}
               </nav>
               <div className="mobile-sheet__footer">
-                <Link to="/login" onClick={() => setIsOpen(false)}>
-                  Login
-                </Link>
-                <Link to="/signup" onClick={() => setIsOpen(false)}>
-                  Get Started Free
-                </Link>
+                {session ? (
+                  <>
+                    <Link to="/app/dashboard" onClick={() => setIsOpen(false)}>
+                      Workspace
+                    </Link>
+                    <button
+                      type="button"
+                      className="mobile-sheet__footer-button"
+                      onClick={() => {
+                        setIsOpen(false);
+                        void signOut();
+                      }}
+                    >
+                      Log out
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <Link to="/login" onClick={() => setIsOpen(false)}>
+                      Login
+                    </Link>
+                    <Link to="/signup" onClick={() => setIsOpen(false)}>
+                      Get Started Free
+                    </Link>
+                  </>
+                )}
               </div>
             </div>
           </motion.div>

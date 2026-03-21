@@ -13,6 +13,7 @@ export const useBilling = () => {
   const [catalog, setCatalog] = useState<BillingCatalogResponse | null>(null);
   const [subscription, setSubscription] = useState<Subscription | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [isCheckingOut, setIsCheckingOut] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const refresh = async () => {
@@ -49,16 +50,28 @@ export const useBilling = () => {
       throw new Error('Sign in again to continue.');
     }
 
-    const result = await apiRequest<CheckoutResponse>('/api/billing/checkout', {
-      method: 'POST',
-      token,
-      body: { plan },
-    });
+    setError(null);
+    setIsCheckingOut(true);
 
-    await refresh();
+    try {
+      const result = await apiRequest<CheckoutResponse>('/api/billing/checkout', {
+        method: 'POST',
+        token,
+        body: { plan },
+      });
 
-    if (result.checkoutUrl) {
-      window.open(result.checkoutUrl, '_blank', 'noopener,noreferrer');
+      await refresh();
+
+      if (result.checkoutUrl) {
+        window.open(result.checkoutUrl, '_blank', 'noopener,noreferrer');
+      }
+    } catch (checkoutError) {
+      const message =
+        checkoutError instanceof Error ? checkoutError.message : 'Failed to start checkout';
+      setError(message);
+      throw new Error(message);
+    } finally {
+      setIsCheckingOut(false);
     }
   };
 
@@ -66,6 +79,7 @@ export const useBilling = () => {
     catalog,
     subscription,
     isLoading,
+    isCheckingOut,
     error,
     refresh,
     startCheckout,

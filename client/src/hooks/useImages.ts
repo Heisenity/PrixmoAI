@@ -24,6 +24,8 @@ export const useImages = () => {
         { token }
       );
       setHistory(nextHistory);
+      setActiveImage((current) => current ?? nextHistory.items[0] ?? null);
+      setError(null);
     } catch (historyError) {
       setError(historyError instanceof Error ? historyError.message : 'Failed to load image history');
     } finally {

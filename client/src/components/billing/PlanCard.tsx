@@ -8,10 +8,12 @@ import type { BillingPlan, PlanType } from '../../types';
 export const PlanCard = ({
   plan,
   currentPlan,
+  isCheckingOut,
   onCheckout,
 }: {
   plan: BillingPlan;
   currentPlan: PlanType;
+  isCheckingOut?: boolean;
   onCheckout: (plan: Exclude<PlanType, 'free'>) => void;
 }) => {
   const features = [
@@ -36,6 +38,7 @@ export const PlanCard = ({
         </div>
         {currentPlan === plan.id ? <span className="status-pill">Current</span> : null}
       </div>
+      {plan.id === 'basic' ? <span className="plan-card__badge">Most popular</span> : null}
       <p>{plan.description}</p>
       <ul className="plan-card__list">
         {features.map((feature) => (
@@ -56,10 +59,14 @@ export const PlanCard = ({
       ) : (
         <Button
           variant={currentPlan === plan.id ? 'secondary' : 'primary'}
-          disabled={!plan.checkoutEnabled}
+          disabled={!plan.checkoutEnabled || isCheckingOut}
           onClick={() => onCheckout(plan.id as Exclude<PlanType, 'free'>)}
         >
-          {currentPlan === plan.id ? 'Current plan' : `Choose ${plan.displayName}`}
+          {isCheckingOut
+            ? 'Opening checkout...'
+            : currentPlan === plan.id
+              ? 'Current plan'
+              : `Choose ${plan.displayName}`}
         </Button>
       )}
     </Card>

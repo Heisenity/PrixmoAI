@@ -295,16 +295,23 @@
 }
 
 .provider-logo--github,
-.provider-logo--apple {
+.provider-logo--facebook {
   background: rgba(255, 255, 255, 0.08);
   color: var(--text);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
 }
 
-.provider-logo--apple svg {
-  width: 20px;
-  height: 20px;
-  transform: translateY(-0.5px);
+.provider-logo--facebook {
+  background: rgba(24, 119, 242, 0.18);
+  color: #8dc1ff;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 10px 24px rgba(24, 119, 242, 0.16);
+}
+
+.provider-logo--facebook svg {
+  width: 18px;
+  height: 18px;
 }
 
 .landing-showcase-section {

@@ -7,6 +7,7 @@ import type { BrandProfile, SaveProfileInput } from '../../types';
 
 type ProfileFormPanelProps = {
   profile: BrandProfile | null;
+  defaults?: Partial<SaveProfileInput>;
   heading: string;
   subheading: string;
   submitLabel: string;
@@ -15,18 +16,20 @@ type ProfileFormPanelProps = {
 
 export const ProfileFormPanel = ({
   profile,
+  defaults,
   heading,
   subheading,
   submitLabel,
   onSubmit,
 }: ProfileFormPanelProps) => {
   const [form, setForm] = useState<SaveProfileInput>({
-    fullName: profile?.fullName || '',
-    username: profile?.username || '',
-    industry: profile?.industry || '',
-    targetAudience: profile?.targetAudience || '',
-    brandVoice: profile?.brandVoice || '',
-    description: profile?.description || '',
+    fullName: profile?.fullName || defaults?.fullName || '',
+    phoneNumber: profile?.phoneNumber || defaults?.phoneNumber || '',
+    username: profile?.username || defaults?.username || '',
+    industry: profile?.industry || defaults?.industry || '',
+    targetAudience: profile?.targetAudience || defaults?.targetAudience || '',
+    brandVoice: profile?.brandVoice || defaults?.brandVoice || '',
+    description: profile?.description || defaults?.description || '',
   });
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -46,7 +49,19 @@ export const ProfileFormPanel = ({
     setIsSubmitting(true);
 
     try {
-      await onSubmit(form);
+      const payload: SaveProfileInput = {
+        fullName: form.fullName.trim(),
+        phoneNumber: form.phoneNumber?.trim(),
+        ...(form.username?.trim() ? { username: form.username.trim() } : {}),
+        ...(form.industry?.trim() ? { industry: form.industry.trim() } : {}),
+        ...(form.targetAudience?.trim()
+          ? { targetAudience: form.targetAudience.trim() }
+          : {}),
+        ...(form.brandVoice?.trim() ? { brandVoice: form.brandVoice.trim() } : {}),
+        ...(form.description?.trim() ? { description: form.description.trim() } : {}),
+      };
+
+      await onSubmit(payload);
       setSuccess('Brand profile saved successfully.');
     } catch (submitError) {
       setError(submitError instanceof Error ? submitError.message : 'Failed to save profile');
@@ -68,27 +83,41 @@ export const ProfileFormPanel = ({
           label="Full name"
           value={form.fullName || ''}
           onChange={(event) => updateField('fullName', event.target.value)}
+          placeholder="Sayantan Sen"
+          required
+        />
+        <Input
+          label="Phone number"
+          type="tel"
+          value={form.phoneNumber || ''}
+          onChange={(event) => updateField('phoneNumber', event.target.value)}
+          placeholder="+91 98765 43210"
+          hint="Required to finish account setup and keep your workspace recoverable."
           required
         />
         <Input
           label="Username"
           value={form.username || ''}
           onChange={(event) => updateField('username', event.target.value)}
+          placeholder="@prixmoai"
         />
         <Input
           label="Industry"
           value={form.industry || ''}
           onChange={(event) => updateField('industry', event.target.value)}
+          placeholder="Fashion, Beauty, Food, Fitness..."
         />
         <Input
           label="Target audience"
           value={form.targetAudience || ''}
           onChange={(event) => updateField('targetAudience', event.target.value)}
+          placeholder="Young professionals, boutique shoppers, local customers"
         />
         <Input
           label="Brand voice"
           value={form.brandVoice || ''}
           onChange={(event) => updateField('brandVoice', event.target.value)}
+          placeholder="Minimal, warm, premium, witty..."
         />
         <label className="field field--full">
           <span className="field__label">Brand description</span>
@@ -97,6 +126,7 @@ export const ProfileFormPanel = ({
             value={form.description || ''}
             onChange={(event) => updateField('description', event.target.value)}
             rows={5}
+            placeholder="Tell PrixmoAI what you sell, how you want to sound, and what kind of customers you want to attract."
           />
         </label>
 

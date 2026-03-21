@@ -30,6 +30,7 @@ export interface BrandProfile {
   id: string;
   userId: string;
   fullName: string;
+  phoneNumber: string | null;
   username: string | null;
   avatarUrl: string | null;
   industry: string | null;
@@ -42,6 +43,7 @@ export interface BrandProfile {
 
 export interface BrandProfileInput {
   fullName: string;
+  phoneNumber?: string | null;
   username?: string | null;
   avatarUrl?: string | null;
   industry?: string | null;
