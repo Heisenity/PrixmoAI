@@ -7,6 +7,8 @@ import { PageWrapper } from './components/layout/PageWrapper';
 import { HomePage } from './pages/home/HomePage';
 import { LoginPage } from './pages/auth/LoginPage';
 import { SignupPage } from './pages/auth/SignupPage';
+import { ForgotPasswordPage } from './pages/auth/ForgotPasswordPage';
+import { ResetPasswordPage } from './pages/auth/ResetPasswordPage';
 import { OnboardingPage } from './pages/onboarding/OnboardingPage';
 import { DashboardPage } from './pages/dashboard/DashboardPage';
 import { GeneratePage } from './pages/generate/GeneratePage';
@@ -53,6 +55,8 @@ const RouterTree = () => (
       <Route path="/" element={<HomePage />} />
       <Route path="/login" element={<LoginPage />} />
       <Route path="/signup" element={<SignupPage />} />
+      <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+      <Route path="/reset-password" element={<ResetPasswordPage />} />
 
       <Route element={<ProtectedRoute />}>
         <Route path="/onboarding" element={<OnboardingPage />} />

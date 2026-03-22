@@ -737,6 +737,13 @@ img {
   gap: 1rem;
 }
 
+.auth-panel {
+  padding: 1rem;
+  border-radius: var(--radius-lg);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.02);
+}
+
 .form-grid {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
@@ -799,6 +806,38 @@ img {
 .auth-footer {
   color: var(--text-soft);
   text-align: center;
+}
+
+.auth-inline-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.85rem;
+}
+
+.auth-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.auth-row--end {
+  justify-content: flex-end;
+}
+
+.auth-row--between {
+  justify-content: space-between;
+}
+
+.auth-inline-link {
+  color: var(--tone-ice);
+  font-size: 0.94rem;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.auth-inline-link:hover {
+  color: var(--text);
 }
 
 .workspace-shell {

@@ -3,9 +3,13 @@ import { useAuth } from '../../hooks/useAuth';
 import { LoadingSpinner } from './LoadingSpinner';
 
 export const ProtectedRoute = () => {
-  const { session, profile, isInitializing } = useAuth();
+  const { session, user, profile, isInitializing } = useAuth();
   const location = useLocation();
   const isProfileComplete = Boolean(profile?.fullName && profile?.phoneNumber);
+  const isEmailVerified =
+    !user?.email ||
+    Boolean(user.email_confirmed_at) ||
+    ((user.app_metadata?.provider as string | undefined) ?? 'email') !== 'email';
 
   if (isInitializing) {
     return (
@@ -17,6 +21,20 @@ export const ProtectedRoute = () => {
 
   if (!session) {
     return <Navigate to="/login" replace state={{ from: location.pathname }} />;
+  }
+
+  if (!isEmailVerified) {
+    return (
+      <Navigate
+        to="/login"
+        replace
+        state={{
+          from: location.pathname,
+          authNotice:
+            'Verify your email first, then sign in again to unlock your workspace.',
+        }}
+      />
+    );
   }
 
   if ((!profile || !isProfileComplete) && location.pathname !== '/onboarding') {

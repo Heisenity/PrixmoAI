@@ -92,6 +92,7 @@ export const ProfileFormPanel = ({
           value={form.phoneNumber || ''}
           onChange={(event) => updateField('phoneNumber', event.target.value)}
           placeholder="+91 98765 43210"
+          pattern="[0-9+()\\-\\s]{10,20}"
           hint="Required to finish account setup and keep your workspace recoverable."
           required
         />

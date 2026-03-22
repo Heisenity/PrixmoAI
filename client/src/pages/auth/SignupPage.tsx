@@ -9,14 +9,28 @@ import { ErrorMessage } from '../../components/shared/ErrorMessage';
 import { LoadingSpinner } from '../../components/shared/LoadingSpinner';
 import { useAuth } from '../../hooks/useAuth';
 
+const PHONE_NUMBER_PATTERN = /^[0-9+()\-\s]{10,20}$/;
+
 export const SignupPage = () => {
   const location = useLocation();
-  const { session, profile, signUp, signInWithOAuth, isConfigured, isInitializing } = useAuth();
+  const {
+    session,
+    profile,
+    signUp,
+    resendSignupConfirmation,
+    signInWithOAuth,
+    isConfigured,
+    isInitializing,
+  } = useAuth();
+  const [fullName, setFullName] = useState('');
+  const [phoneNumber, setPhoneNumber] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isResendingVerification, setIsResendingVerification] = useState(false);
+  const [showVerificationActions, setShowVerificationActions] = useState(false);
   const [oauthPending, setOauthPending] = useState<'google' | 'github' | 'facebook' | null>(
     null
   );
@@ -40,15 +54,54 @@ export const SignupPage = () => {
     event.preventDefault();
     setError(null);
     setSuccess(null);
+    setShowVerificationActions(false);
     setIsSubmitting(true);
 
     try {
-      await signUp(email, password);
-      setSuccess('Account created. If email confirmation is enabled, confirm it before signing in.');
+      if (!PHONE_NUMBER_PATTERN.test(phoneNumber.trim())) {
+        throw new Error('Enter a valid phone number before creating your account.');
+      }
+
+      const result = await signUp({
+        email,
+        password,
+        fullName,
+        phoneNumber,
+      });
+      setShowVerificationActions(result.requiresEmailConfirmation);
+      setSuccess(
+        result.requiresEmailConfirmation
+          ? 'Account created. Check your inbox, verify your email, then sign in to continue.'
+          : 'Account created successfully. Finalizing your workspace...'
+      );
     } catch (submitError) {
       setError(submitError instanceof Error ? submitError.message : 'Failed to create account');
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const handleResendVerification = async () => {
+    if (!email.trim()) {
+      setError('Enter your email address first so we know where to resend the verification link.');
+      return;
+    }
+
+    setError(null);
+    setIsResendingVerification(true);
+
+    try {
+      await resendSignupConfirmation(email.trim());
+      setSuccess('Fresh verification link sent. Check your inbox and spam folder.');
+      setShowVerificationActions(true);
+    } catch (resendError) {
+      setError(
+        resendError instanceof Error
+          ? resendError.message
+          : 'Failed to resend verification email'
+      );
+    } finally {
+      setIsResendingVerification(false);
     }
   };
 
@@ -124,6 +177,26 @@ export const SignupPage = () => {
         <form className="form-stack" onSubmit={handleSubmit}>
         {notice ? <div className="message">{notice}</div> : null}
         <Input
+          label="Full name"
+          type="text"
+          value={fullName}
+          onChange={(event) => setFullName(event.target.value)}
+          placeholder="Name"
+          autoComplete="name"
+          required
+        />
+        <Input
+          label="Phone number"
+          type="tel"
+          value={phoneNumber}
+          onChange={(event) => setPhoneNumber(event.target.value)}
+          placeholder="+91 98765 XXXXX"
+          autoComplete="tel"
+          pattern="[0-9+()\\-\\s]{10,20}"
+          hint="Use a valid phone number format with country code. E.g., +91 98765 XXXXX"
+          required
+        />
+        <Input
           label="Email"
           type="email"
           value={email}
@@ -138,6 +211,7 @@ export const SignupPage = () => {
           onChange={(event) => setPassword(event.target.value)}
           placeholder="At least 8 characters"
           minLength={8}
+          autoComplete="new-password"
           required
         />
 
@@ -146,6 +220,24 @@ export const SignupPage = () => {
         ) : null}
         <ErrorMessage message={error} />
         {success ? <div className="message">{success}</div> : null}
+        {showVerificationActions ? (
+          <div className="auth-inline-actions">
+            <Button
+              type="button"
+              variant="secondary"
+              size="md"
+              disabled={isResendingVerification}
+              onClick={() => {
+                void handleResendVerification();
+              }}
+            >
+              {isResendingVerification ? 'Sending link...' : 'Resend verification email'}
+            </Button>
+            <Link className="auth-inline-link" to="/login">
+              I already verified my email
+            </Link>
+          </div>
+        ) : null}
 
         <Button type="submit" size="lg" disabled={!isConfigured || isSubmitting || isInitializing}>
           {isSubmitting ? 'Creating workspace...' : 'Create account'}

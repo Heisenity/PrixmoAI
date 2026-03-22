@@ -17,7 +17,12 @@ export const OnboardingPage = () => {
       profile?.fullName ||
       (typeof userMetadata.full_name === 'string' ? userMetadata.full_name : '') ||
       (typeof userMetadata.name === 'string' ? userMetadata.name : ''),
-    phoneNumber: profile?.phoneNumber || (user?.phone ?? ''),
+    phoneNumber:
+      profile?.phoneNumber ||
+      (typeof userMetadata.phone_number === 'string'
+        ? userMetadata.phone_number
+        : '') ||
+      (user?.phone ?? ''),
     username:
       profile?.username ||
       (user?.email ? user.email.split('@')[0] : '') ||

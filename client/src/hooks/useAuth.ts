@@ -12,6 +12,13 @@ import { apiRequest } from '../lib/axios';
 import { isSupabaseConfigured, supabase } from '../lib/supabase';
 import type { AuthMeResponse, BrandProfile, SaveProfileInput } from '../types';
 
+type SignUpInput = {
+  email: string;
+  password: string;
+  fullName: string;
+  phoneNumber: string;
+};
+
 type AuthContextValue = {
   session: Session | null;
   user: User | null;
@@ -21,7 +28,15 @@ type AuthContextValue = {
   isInitializing: boolean;
   isProfileLoading: boolean;
   signIn: (email: string, password: string) => Promise<void>;
-  signUp: (email: string, password: string) => Promise<void>;
+  requestEmailOtpSignIn: (email: string) => Promise<void>;
+  verifyEmailOtpSignIn: (email: string, token: string) => Promise<void>;
+  signUp: (
+    input: SignUpInput
+  ) => Promise<{ requiresEmailConfirmation: boolean }>;
+  resendSignupConfirmation: (email: string) => Promise<void>;
+  requestPasswordReset: (email: string) => Promise<void>;
+  verifyPasswordResetOtp: (email: string, token: string) => Promise<void>;
+  updatePassword: (password: string) => Promise<void>;
   signInWithOAuth: (provider: 'google' | 'github' | 'facebook') => Promise<void>;
   signOut: () => Promise<void>;
   refreshProfile: () => Promise<void>;
@@ -36,6 +51,23 @@ const useAuthBootstrap = () => {
   const [profile, setProfile] = useState<BrandProfile | null>(null);
   const [isInitializing, setIsInitializing] = useState(true);
   const [isProfileLoading, setIsProfileLoading] = useState(false);
+
+  const persistProfile = async (
+    accessToken: string,
+    input: SaveProfileInput
+  ) => {
+    const response = await apiRequest<{ profile: BrandProfile }>(
+      '/api/auth/profile',
+      {
+        method: 'POST',
+        token: accessToken,
+        body: input,
+      }
+    );
+
+    setProfile(response.profile);
+    return response.profile;
+  };
 
   const hydrateProfile = async (accessToken: string | null) => {
     if (!accessToken) {
@@ -125,7 +157,7 @@ const useAuthBootstrap = () => {
     }
   };
 
-  const signUp = async (email: string, password: string) => {
+  const requestEmailOtpSignIn = async (email: string) => {
     if (session) {
       throw new Error("You're already signed in. Open your workspace or log out first.");
     }
@@ -134,10 +166,143 @@ const useAuthBootstrap = () => {
       throw new Error('Supabase client env is missing on the frontend.');
     }
 
-    const { error } = await supabase.auth.signUp({
+    const { error } = await supabase.auth.signInWithOtp({
+      email,
+      options: {
+        shouldCreateUser: false,
+      },
+    });
+
+    if (error) {
+      throw new Error(error.message);
+    }
+  };
+
+  const verifyEmailOtpSignIn = async (email: string, token: string) => {
+    if (!supabase) {
+      throw new Error('Supabase client env is missing on the frontend.');
+    }
+
+    const { error } = await supabase.auth.verifyOtp({
+      email,
+      token,
+      type: 'email',
+    });
+
+    if (error) {
+      throw new Error(error.message);
+    }
+  };
+
+  const signUp = async ({
+    email,
+    password,
+    fullName,
+    phoneNumber,
+  }: SignUpInput) => {
+    if (session) {
+      throw new Error("You're already signed in. Open your workspace or log out first.");
+    }
+
+    if (!supabase) {
+      throw new Error('Supabase client env is missing on the frontend.');
+    }
+
+    const trimmedFullName = fullName.trim();
+    const trimmedPhoneNumber = phoneNumber.trim();
+
+    const { data, error } = await supabase.auth.signUp({
       email,
       password,
+      options: {
+        emailRedirectTo:
+          typeof window === 'undefined'
+            ? undefined
+            : `${window.location.origin}/login`,
+        data: {
+          full_name: trimmedFullName,
+          name: trimmedFullName,
+          phone_number: trimmedPhoneNumber,
+        },
+      },
     });
+
+    if (error) {
+      throw new Error(error.message);
+    }
+
+    if (data.session?.access_token) {
+      await persistProfile(data.session.access_token, {
+        fullName: trimmedFullName,
+        phoneNumber: trimmedPhoneNumber,
+      });
+    }
+
+    return {
+      requiresEmailConfirmation: !data.session,
+    };
+  };
+
+  const resendSignupConfirmation = async (email: string) => {
+    if (!supabase) {
+      throw new Error('Supabase client env is missing on the frontend.');
+    }
+
+    const { error } = await supabase.auth.resend({
+      type: 'signup',
+      email,
+      options: {
+        emailRedirectTo:
+          typeof window === 'undefined'
+            ? undefined
+            : `${window.location.origin}/login`,
+      },
+    });
+
+    if (error) {
+      throw new Error(error.message);
+    }
+  };
+
+  const requestPasswordReset = async (email: string) => {
+    if (!supabase) {
+      throw new Error('Supabase client env is missing on the frontend.');
+    }
+
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo:
+        typeof window === 'undefined'
+          ? undefined
+          : `${window.location.origin}/reset-password`,
+    });
+
+    if (error) {
+      throw new Error(error.message);
+    }
+  };
+
+  const verifyPasswordResetOtp = async (email: string, token: string) => {
+    if (!supabase) {
+      throw new Error('Supabase client env is missing on the frontend.');
+    }
+
+    const { error } = await supabase.auth.verifyOtp({
+      email,
+      token,
+      type: 'recovery',
+    });
+
+    if (error) {
+      throw new Error(error.message);
+    }
+  };
+
+  const updatePassword = async (password: string) => {
+    if (!supabase) {
+      throw new Error('Supabase client env is missing on the frontend.');
+    }
+
+    const { error } = await supabase.auth.updateUser({ password });
 
     if (error) {
       throw new Error(error.message);
@@ -189,17 +354,7 @@ const useAuthBootstrap = () => {
       throw new Error('Please sign in again to continue.');
     }
 
-    const response = await apiRequest<{ profile: BrandProfile }>(
-      '/api/auth/profile',
-      {
-        method: 'POST',
-        token: session.access_token,
-        body: input,
-      }
-    );
-
-    setProfile(response.profile);
-    return response.profile;
+    return persistProfile(session.access_token, input);
   };
 
   return {
@@ -211,7 +366,13 @@ const useAuthBootstrap = () => {
     isInitializing,
     isProfileLoading,
     signIn,
+    requestEmailOtpSignIn,
+    verifyEmailOtpSignIn,
     signUp,
+    resendSignupConfirmation,
+    requestPasswordReset,
+    verifyPasswordResetOtp,
+    updatePassword,
     signInWithOAuth,
     signOut,
     refreshProfile,

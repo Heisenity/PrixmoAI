@@ -13,8 +13,7 @@ export const authProfileSchema = z.object({
   phoneNumber: z
     .string()
     .trim()
-    .regex(/^[0-9+()\-\s]{10,20}$/, 'Enter a valid phone number')
-    .optional(),
+    .regex(/^[0-9+()\-\s]{10,20}$/, 'Enter a valid phone number'),
   username: z
     .string()
     .trim()
