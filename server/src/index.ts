@@ -11,6 +11,7 @@ import generateRouter from "./routes/generate.routes";
 import imageRouter from "./routes/image.routes";
 import schedulerRouter from "./routes/scheduler.routes";
 import { APP_PORT } from "./config/constants";
+import { getClientAppUrl } from "./db/supabase";
 import { version } from '../package.json';
 
 
@@ -19,7 +20,19 @@ const PORT = APP_PORT;
 
 // 1. Security Headers
 app.use(helmet());
-app.use(cors());
+app.set('trust proxy', 1);
+app.use(
+  cors({
+    origin: (_origin, callback) => {
+      try {
+        callback(null, getClientAppUrl());
+      } catch {
+        callback(null, true);
+      }
+    },
+    credentials: true,
+  })
+);
 app.post(
   '/api/billing/webhook',
   express.raw({ type: 'application/json' }),
