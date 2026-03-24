@@ -5,7 +5,11 @@ const formatList = (items: string[] | undefined) =>
 
 export const formatBrandContext = (brandProfile: BrandProfile | null): string => {
   if (!brandProfile) {
-    return 'Brand profile: none available. Create content that is modern, clear, and suitable for ecommerce.';
+    return [
+      'Brand profile: none available.',
+      'Create content that is modern, clear, reusable, and appropriate for the inferred business domain.',
+      'Do not assume ecommerce, fashion, or any other niche without support from the user input.',
+    ].join(' ');
   }
 
   return [
@@ -30,4 +34,6 @@ export const formatProductContext = (productInput: ProductInput): string =>
     `- Tone: ${productInput.tone ?? 'not provided'}`,
     `- Audience: ${productInput.audience ?? 'not provided'}`,
     `- Keywords: ${formatList(productInput.keywords)}`,
+    '- Important: infer the business domain from the product description, keywords, platform, audience, and brand profile.',
+    '- Do not assume fashion, ecommerce, or any other industry unless it is explicitly supported by the input.',
   ].join('\n');

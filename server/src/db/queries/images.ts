@@ -14,6 +14,7 @@ type GeneratedImageRow = {
   id: string;
   user_id: string;
   content_id: string | null;
+  conversation_id: string | null;
   source_image_url: string | null;
   generated_image_url: string;
   background_style: string | null;
@@ -34,6 +35,7 @@ const toGeneratedImage = (row: GeneratedImageRow): GeneratedImage => ({
   id: row.id,
   userId: row.user_id,
   contentId: row.content_id,
+  conversationId: row.conversation_id,
   sourceImageUrl: row.source_image_url,
   generatedImageUrl: row.generated_image_url,
   backgroundStyle: row.background_style,
@@ -52,6 +54,7 @@ export const saveGeneratedImage = async (
     .insert({
       user_id: userId,
       content_id: input.contentId ?? null,
+      conversation_id: input.conversationId ?? null,
       source_image_url: input.sourceImageUrl ?? null,
       generated_image_url: input.generatedImageUrl,
       background_style: input.backgroundStyle ?? null,

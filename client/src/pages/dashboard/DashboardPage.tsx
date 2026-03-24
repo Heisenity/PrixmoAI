@@ -1,4 +1,5 @@
-import { Link } from 'react-router-dom';
+import { useEffect, useMemo, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import { BestPostWidget } from '../../components/analytics/BestPostWidget';
 import { StatsCard } from '../../components/analytics/StatsCard';
 import { WeeklyScoreCard } from '../../components/analytics/WeeklyScoreCard';
@@ -7,21 +8,89 @@ import { EmptyState } from '../../components/shared/EmptyState';
 import { UsageMeter } from '../../components/shared/UsageMeter';
 import { Card } from '../../components/ui/card';
 import { useAnalytics } from '../../hooks/useAnalytics';
+import { useAuth } from '../../hooks/useAuth';
 import { useBilling } from '../../hooks/useBilling';
 import { useContent } from '../../hooks/useContent';
 import { useImages } from '../../hooks/useImages';
 import { useScheduler } from '../../hooks/useScheduler';
+import { apiRequest } from '../../lib/axios';
+import { setActiveGenerateConversationId } from '../../lib/generateWorkspace';
 import { formatCompactNumber, formatDateTime } from '../../lib/utils';
+import type { GenerateConversation } from '../../types';
 
 export const DashboardPage = () => {
+  const navigate = useNavigate();
+  const { token } = useAuth();
   const { overview } = useAnalytics();
   const { catalog } = useBilling();
-  const { history: contentHistory } = useContent();
+  const { history: contentHistory, refreshHistory } = useContent();
   const { history: imageHistory } = useImages();
   const { posts } = useScheduler();
+  const [conversations, setConversations] = useState<GenerateConversation[]>([]);
 
   const subscription = catalog?.currentSubscription;
   const monthlyLimit = subscription?.monthlyLimit ?? null;
+
+  useEffect(() => {
+    if (!token) {
+      setConversations([]);
+      return;
+    }
+
+    const refreshRecentData = async () => {
+      try {
+        const nextConversations = await apiRequest<GenerateConversation[]>(
+          '/api/generate/conversations',
+          { token }
+        );
+        setConversations(nextConversations);
+        await refreshHistory();
+      } catch {
+        return;
+      }
+    };
+
+    void refreshRecentData();
+
+    const intervalId = window.setInterval(() => {
+      void refreshRecentData();
+    }, 30000);
+
+    const handleFocus = () => {
+      void refreshRecentData();
+    };
+
+    window.addEventListener('focus', handleFocus);
+
+    return () => {
+      window.clearInterval(intervalId);
+      window.removeEventListener('focus', handleFocus);
+    };
+  }, [token, refreshHistory]);
+
+  const liveConversationMap = useMemo(
+    () => new Map(conversations.map((conversation) => [conversation.id, conversation])),
+    [conversations]
+  );
+
+  const recentThreadContent = useMemo(
+    () =>
+      (contentHistory?.items ?? [])
+        .filter(
+          (item) => item.conversationId && liveConversationMap.has(item.conversationId)
+        )
+        .slice(0, 3),
+    [contentHistory?.items, liveConversationMap]
+  );
+
+  const openRecentConversation = (conversationId: string | null) => {
+    if (!conversationId) {
+      return;
+    }
+
+    setActiveGenerateConversationId(conversationId);
+    navigate('/app/generate');
+  };
 
   return (
     <div className="page-stack">
@@ -83,20 +152,25 @@ export const DashboardPage = () => {
             </div>
             <Link to="/app/generate">Open lab</Link>
           </div>
-          {contentHistory?.items.length ? (
+          {recentThreadContent.length ? (
             <div className="stack-list">
-              {contentHistory.items.slice(0, 3).map((item) => (
-                <div key={item.id} className="stack-list__item">
+              {recentThreadContent.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  className="stack-list__item stack-list__item--interactive"
+                  onClick={() => openRecentConversation(item.conversationId)}
+                >
                   <strong>{item.productName}</strong>
                   <span>{item.platform || 'Platform not set'}</span>
                   <small>{formatDateTime(item.createdAt)}</small>
-                </div>
+                </button>
               ))}
             </div>
           ) : (
             <EmptyState
               title="No content yet"
-              description="Generate your first caption pack and it will appear here."
+              description="Generate your first conversation-backed copy pack and it will appear here."
             />
           )}
         </Card>

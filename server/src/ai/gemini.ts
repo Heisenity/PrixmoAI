@@ -7,6 +7,7 @@ import {
 } from '../config/constants';
 import type {
   BrandProfile,
+  CaptionVariant,
   GeneratedContentPack,
   ProductInput,
   ReelScript,
@@ -31,8 +32,17 @@ type GeminiResponse = {
   candidates?: GeminiCandidate[];
 };
 
+const captionVariantSchema = z.object({
+  hook: z.string().trim().min(1),
+  mainCopy: z.string().trim().min(1),
+  shortCaption: z.string().trim().min(1),
+  cta: z.string().trim().min(1),
+});
+
 const captionResponseSchema = z.object({
-  captions: z.array(z.string().trim().min(1)).min(CAPTION_VARIATION_COUNT),
+  captions: z
+    .array(captionVariantSchema)
+    .min(CAPTION_VARIATION_COUNT),
 });
 
 const hashtagResponseSchema = z.object({
@@ -138,15 +148,26 @@ const normalizeHashtag = (value: string): string => {
 export const generateCaptions = async (
   brandProfile: BrandProfile | null,
   productInput: ProductInput
-): Promise<string[]> => {
+): Promise<CaptionVariant[]> => {
   const response = await generateStructuredResponse(
     buildCaptionPrompt(brandProfile, productInput),
     captionResponseSchema
   );
 
   const captions = response.captions
-    .map((caption) => caption.trim())
-    .filter(Boolean)
+    .map((caption) => ({
+      hook: caption.hook.trim(),
+      mainCopy: caption.mainCopy.trim(),
+      shortCaption: caption.shortCaption.trim(),
+      cta: caption.cta.trim(),
+    }))
+    .filter(
+      (caption) =>
+        caption.hook &&
+        caption.mainCopy &&
+        caption.shortCaption &&
+        caption.cta
+    )
     .slice(0, CAPTION_VARIATION_COUNT);
 
   if (captions.length < CAPTION_VARIATION_COUNT) {

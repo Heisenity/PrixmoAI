@@ -5,6 +5,7 @@ const brandProfiles_1 = require("../db/queries/brandProfiles");
 const supabase_1 = require("../db/supabase");
 const toBrandProfileInput = (body) => ({
     fullName: body.fullName,
+    phoneNumber: body.phoneNumber ?? null,
     username: body.username ?? null,
     avatarUrl: body.avatarUrl ?? null,
     industry: body.industry ?? null,

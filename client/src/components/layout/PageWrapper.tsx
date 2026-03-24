@@ -1,7 +1,16 @@
 import { Outlet, useLocation } from 'react-router-dom';
+import { useEffect, useState } from 'react';
 import { Sidebar } from './Sidebar';
-import { Button } from '../ui/button';
-import { useAuth } from '../../hooks/useAuth';
+
+const WORKSPACE_SIDEBAR_STORAGE_KEY = 'prixmoai.workspace.sidebarCollapsed';
+
+const readStoredSidebarState = () => {
+  if (typeof window === 'undefined') {
+    return false;
+  }
+
+  return window.localStorage.getItem(WORKSPACE_SIDEBAR_STORAGE_KEY) === 'true';
+};
 
 const pageMeta: Record<string, { eyebrow: string; title: string; subtitle: string }> = {
   '/app/dashboard': {
@@ -44,34 +53,63 @@ const pageMeta: Record<string, { eyebrow: string; title: string; subtitle: strin
 
 export const PageWrapper = () => {
   const location = useLocation();
-  const { signOut } = useAuth();
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(
+    readStoredSidebarState
+  );
   const meta = pageMeta[location.pathname] ?? pageMeta['/app/dashboard'];
   const authNotice = (location.state as { authNotice?: string } | null)?.authNotice;
+  const isGenerateRoute = location.pathname === '/app/generate';
+  const showWorkspaceHeader = !isGenerateRoute;
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    window.localStorage.setItem(
+      WORKSPACE_SIDEBAR_STORAGE_KEY,
+      isSidebarCollapsed ? 'true' : 'false'
+    );
+  }, [isSidebarCollapsed]);
 
   return (
-    <div className="workspace-shell">
-      <Sidebar />
-      <div className="workspace-shell__main">
-        <header className="workspace-header">
-          <p className="section-eyebrow">{meta.eyebrow}</p>
-          <div className="workspace-header__row">
-            <div>
-              <h1>{meta.title}</h1>
-              <p>{meta.subtitle}</p>
+    <div
+      className={`workspace-shell ${
+        isSidebarCollapsed ? 'workspace-shell--sidebar-collapsed' : ''
+      } ${
+        isGenerateRoute ? 'workspace-shell--generate-only' : ''
+      }`}
+    >
+      {!isGenerateRoute ? (
+        <Sidebar
+          collapsed={isSidebarCollapsed}
+          onToggleCollapse={() => setIsSidebarCollapsed((current) => !current)}
+        />
+      ) : null}
+      <div
+        className={`workspace-shell__main ${
+          isGenerateRoute ? 'workspace-shell__main--generate' : ''
+        }`}
+      >
+        {showWorkspaceHeader ? (
+          <header className="workspace-header">
+            <p className="section-eyebrow">{meta.eyebrow}</p>
+            <div className="workspace-header__row">
+              <div>
+                <h1>{meta.title}</h1>
+                <p>{meta.subtitle}</p>
+              </div>
             </div>
-            <Button
-              variant="secondary"
-              size="md"
-              className="workspace-header__action"
-              onClick={() => {
-                void signOut();
-              }}
-            >
-              Log out
-            </Button>
-          </div>
-        </header>
-        <main className="workspace-content">
+          </header>
+        ) : null}
+        <main
+          className={`workspace-content ${
+            isGenerateRoute ? 'workspace-content--generate' : ''
+          }`}
+          data-lenis-prevent
+          data-lenis-prevent-wheel
+          data-lenis-prevent-touch
+        >
           {authNotice ? <div className="message workspace-content__notice">{authNotice}</div> : null}
           <Outlet />
         </main>

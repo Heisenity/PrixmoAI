@@ -1,5 +1,6 @@
 import { FEATURE_KEYS } from '../../config/constants';
 import type {
+  CaptionVariant,
   CreateGeneratedContentInput,
   GeneratedContent,
   PaginatedResult,
@@ -15,6 +16,7 @@ type GeneratedContentRow = {
   id: string;
   user_id: string;
   brand_profile_id: string | null;
+  conversation_id: string | null;
   product_name: string;
   product_description: string | null;
   product_image_url: string | null;
@@ -46,6 +48,56 @@ const toStringArray = (value: unknown): string[] =>
         .filter(Boolean)
     : [];
 
+const toCaptionVariants = (value: unknown): CaptionVariant[] => {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((entry): CaptionVariant | null => {
+      if (typeof entry === 'string') {
+        const normalized = entry.trim();
+
+        if (!normalized) {
+          return null;
+        }
+
+        return {
+          hook: normalized,
+          mainCopy: normalized,
+          shortCaption: normalized,
+          cta: 'Learn more.',
+        };
+      }
+
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+        return null;
+      }
+
+      const record = entry as Record<string, unknown>;
+      const hook = typeof record.hook === 'string' ? record.hook.trim() : '';
+      const mainCopy =
+        typeof record.mainCopy === 'string' ? record.mainCopy.trim() : '';
+      const shortCaption =
+        typeof record.shortCaption === 'string'
+          ? record.shortCaption.trim()
+          : '';
+      const cta = typeof record.cta === 'string' ? record.cta.trim() : '';
+
+      if (!hook || !mainCopy || !shortCaption || !cta) {
+        return null;
+      }
+
+      return {
+        hook,
+        mainCopy,
+        shortCaption,
+        cta,
+      };
+    })
+    .filter((entry): entry is CaptionVariant => Boolean(entry));
+};
+
 const toReelScript = (value: unknown): ReelScript => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return {
@@ -68,6 +120,7 @@ const toGeneratedContent = (row: GeneratedContentRow): GeneratedContent => ({
   id: row.id,
   userId: row.user_id,
   brandProfileId: row.brand_profile_id,
+  conversationId: row.conversation_id,
   productName: row.product_name,
   productDescription: row.product_description,
   productImageUrl: row.product_image_url,
@@ -76,7 +129,7 @@ const toGeneratedContent = (row: GeneratedContentRow): GeneratedContent => ({
   tone: row.tone,
   audience: row.audience,
   keywords: toStringArray(row.keywords),
-  captions: toStringArray(row.captions),
+  captions: toCaptionVariants(row.captions),
   hashtags: toStringArray(row.hashtags),
   reelScript: toReelScript(row.reel_script),
   createdAt: row.created_at,
@@ -99,6 +152,7 @@ export const saveGeneratedContent = async (
     .insert({
       user_id: userId,
       brand_profile_id: input.brandProfileId ?? null,
+      conversation_id: input.conversationId ?? null,
       product_name: input.productName,
       product_description: input.productDescription ?? null,
       product_image_url: input.productImageUrl ?? null,

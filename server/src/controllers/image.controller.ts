@@ -1,13 +1,19 @@
 import { Request, Response } from 'express';
 import type { User } from '@supabase/supabase-js';
 import { generateProductImage } from '../ai/imageGen';
+import { getBrandProfileByUserId } from '../db/queries/brandProfiles';
 import {
+  getGeneratedImageById,
   getGeneratedImageHistory,
   saveGeneratedImage,
   trackImageGenerationUsage,
 } from '../db/queries/images';
 import { requireUserClient } from '../db/supabase';
-import type { GenerateImageInput } from '../schemas/image.schema';
+import type {
+  GenerateImageInput,
+  UploadSourceImageInput,
+} from '../schemas/image.schema';
+import { uploadSourceImage as uploadSourceImageToStorage } from '../services/storage.service';
 
 type AuthenticatedRequest<
   Params = Record<string, string>,
@@ -28,6 +34,67 @@ const parsePositiveInt = (value: unknown, fallback: number): number => {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 };
 
+const escapeXml = (value: string) =>
+  value
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+
+const inferImageMimeType = (contentType: string | null, sourceUrl: string) => {
+  if (contentType) {
+    const normalized = contentType.split(';')[0]?.trim().toLowerCase();
+
+    if (normalized.startsWith('image/')) {
+      return normalized;
+    }
+  }
+
+  const pathname = sourceUrl.toLowerCase();
+
+  if (pathname.endsWith('.jpg') || pathname.endsWith('.jpeg')) {
+    return 'image/jpeg';
+  }
+
+  if (pathname.endsWith('.webp')) {
+    return 'image/webp';
+  }
+
+  if (pathname.endsWith('.gif')) {
+    return 'image/gif';
+  }
+
+  return 'image/png';
+};
+
+const buildWatermarkedSvg = (embeddedImageUrl: string) => `<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1200" viewBox="0 0 1200 1200">
+  <defs>
+    <linearGradient id="prixmoai-watermark-gradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#070a10" stop-opacity="0.92" />
+      <stop offset="100%" stop-color="#070a10" stop-opacity="0.78" />
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="1200" fill="#090c12" />
+  <image href="${embeddedImageUrl}" x="0" y="0" width="1200" height="1200" preserveAspectRatio="xMidYMid meet" />
+  <g transform="translate(0 0)">
+    <rect x="844" y="44" width="304" height="84" rx="30" fill="url(#prixmoai-watermark-gradient)" stroke="#ffffff" stroke-opacity="0.14" />
+    <text
+      x="1102"
+      y="96"
+      fill="#ffffff"
+      fill-opacity="0.96"
+      font-size="34"
+      font-family="Arial, Helvetica, sans-serif"
+      font-weight="700"
+      letter-spacing="6"
+      text-anchor="end"
+    >
+      PRIXMOAI
+    </text>
+  </g>
+</svg>`;
+
 export const generateImage = async (
   req: AuthenticatedRequest<{}, unknown, GenerateImageInput>,
   res: Response
@@ -41,7 +108,8 @@ export const generateImage = async (
 
   try {
     const client = requireUserClient(req.accessToken);
-    const result = await generateProductImage(req.body);
+    const brandProfile = await getBrandProfileByUserId(client, req.user.id);
+    const result = await generateProductImage(brandProfile, req.body);
     const image = await saveGeneratedImage(client, req.user.id, {
       contentId: req.body.contentId ?? null,
       sourceImageUrl: req.body.sourceImageUrl ?? null,
@@ -53,6 +121,7 @@ export const generateImage = async (
     await trackImageGenerationUsage(client, req.user.id, {
       imageId: image.id,
       provider: result.provider,
+      brandProfileId: brandProfile?.id ?? null,
       contentId: req.body.contentId ?? null,
       productName: req.body.productName,
       productDescription: req.body.productDescription ?? null,
@@ -116,6 +185,97 @@ export const getImageHistory = async (
         error instanceof Error
           ? error.message
           : 'Failed to fetch image history',
+    });
+  }
+};
+
+export const getWatermarkedImage = async (
+  req: AuthenticatedRequest<{ id: string }>,
+  res: Response
+) => {
+  if (!req.user?.id) {
+    return res.status(401).json({
+      status: 'fail',
+      message: 'Unauthorized',
+    });
+  }
+
+  try {
+    const client = requireUserClient(req.accessToken);
+    const image = await getGeneratedImageById(client, req.user.id, req.params.id);
+
+    if (!image) {
+      return res.status(404).json({
+        status: 'fail',
+        message: 'Generated image not found',
+      });
+    }
+
+    const upstreamResponse = await fetch(image.generatedImageUrl);
+
+    if (!upstreamResponse.ok) {
+      throw new Error('Unable to fetch the original generated image');
+    }
+
+    const mimeType = inferImageMimeType(
+      upstreamResponse.headers.get('content-type'),
+      image.generatedImageUrl
+    );
+    const binary = await upstreamResponse.arrayBuffer();
+    const base64 = Buffer.from(binary).toString('base64');
+    const dataUrl = `data:${mimeType};base64,${base64}`;
+    const svg = buildWatermarkedSvg(escapeXml(dataUrl));
+
+    res.setHeader('Content-Type', 'image/svg+xml');
+    res.setHeader('Cache-Control', 'private, max-age=300');
+    res.setHeader(
+      'Content-Disposition',
+      `inline; filename="prixmoai-watermarked-${image.id}.svg"`
+    );
+
+    return res.status(200).send(svg);
+  } catch (error) {
+    return res.status(502).json({
+      status: 'error',
+      message:
+        error instanceof Error
+          ? error.message
+          : 'Failed to prepare watermarked image',
+    });
+  }
+};
+
+export const uploadSourceImage = async (
+  req: AuthenticatedRequest<{}, unknown, UploadSourceImageInput>,
+  res: Response
+) => {
+  if (!req.user?.id) {
+    return res.status(401).json({
+      status: 'fail',
+      message: 'Unauthorized',
+    });
+  }
+
+  try {
+    const uploadedSourceImage = await uploadSourceImageToStorage(
+      req.user.id,
+      req.body
+    );
+
+    return res.status(200).json({
+      status: 'success',
+      message: 'Source image uploaded successfully',
+      data: {
+        sourceImageUrl: uploadedSourceImage.publicUrl,
+        bucket: uploadedSourceImage.bucket,
+        path: uploadedSourceImage.path,
+      },
+    });
+  } catch (error) {
+    return res.status(502).json({
+      status: 'error',
+      message:
+        error instanceof Error ? error.message : 'Failed to upload source image',
     });
   }
 };

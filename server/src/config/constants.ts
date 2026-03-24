@@ -67,6 +67,9 @@ export const IMAGE_BUCKETS = {
   generated: process.env.R2_GENERATED_BUCKET || 'generated-images',
 } as const;
 
+export const SUPABASE_SOURCE_IMAGE_BUCKET =
+  process.env.SUPABASE_SOURCE_IMAGE_BUCKET || 'source-images';
+
 export const SCHEDULED_POST_STATUSES = [
   'pending',
   'scheduled',

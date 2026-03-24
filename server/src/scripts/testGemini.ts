@@ -8,24 +8,24 @@ const sampleBrandProfile: BrandProfile = {
   phoneNumber: '+91 98765 43210',
   username: 'prixmoai',
   avatarUrl: null,
-  industry: 'Fashion',
-  targetAudience: 'Young adults shopping online',
-  brandVoice: 'Modern, confident, and friendly',
+  industry: 'Education technology',
+  targetAudience: 'Busy founders and small business teams',
+  brandVoice: 'Modern, confident, and practical',
   description:
-    'An AI-first fashion brand that helps people create stylish social media content fast.',
+    'An AI workspace that helps businesses create polished marketing content quickly.',
   createdAt: new Date().toISOString(),
   updatedAt: new Date().toISOString(),
 };
 
 const sampleProductInput: ProductInput = {
-  productName: 'Minimal Black Oversized Hoodie',
+  productName: 'AI onboarding workshop',
   productDescription:
-    'A soft premium cotton oversized hoodie for everyday streetwear looks.',
-  platform: 'Instagram',
-  goal: 'Drive product discovery and clicks',
-  tone: 'Trendy and persuasive',
-  audience: 'College students and young professionals',
-  keywords: ['streetwear', 'hoodie', 'minimal fashion'],
+    'A live training session that helps small teams learn how to use AI tools in daily operations.',
+  platform: 'LinkedIn',
+  goal: 'Build brand recall',
+  tone: 'Refined and modern',
+  audience: 'Operations leads and business owners',
+  keywords: ['AI training', 'team productivity', 'workflow automation'],
 };
 
 const main = async () => {

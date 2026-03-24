@@ -1,0 +1,375 @@
+import { useEffect, useState } from 'react';
+import { apiRequest } from '../lib/axios';
+import {
+  readActiveGenerateConversationId,
+  setActiveGenerateConversationId,
+} from '../lib/generateWorkspace';
+import { useAuth } from './useAuth';
+import type {
+  GenerateContentInput,
+  GenerateConversation,
+  GenerateConversationThread,
+  GenerateImageInput,
+  UploadedSourceImage,
+} from '../types';
+
+const readFileAsDataUrl = (file: File): Promise<string> =>
+  new Promise((resolve, reject) => {
+    const reader = new FileReader();
+
+    reader.onload = () => {
+      if (typeof reader.result === 'string') {
+        resolve(reader.result);
+        return;
+      }
+
+      reject(new Error('Failed to read image file'));
+    };
+
+    reader.onerror = () => {
+      reject(new Error('Failed to read image file'));
+    };
+
+    reader.readAsDataURL(file);
+  });
+
+export const useGenerateWorkspace = () => {
+  const { token } = useAuth();
+  const [conversations, setConversations] = useState<GenerateConversation[]>([]);
+  const [activeConversationId, setActiveConversationId] = useState<string | null>(
+    () => readActiveGenerateConversationId()
+  );
+  const [activeThread, setActiveThread] = useState<GenerateConversationThread | null>(
+    null
+  );
+  const [isLoadingConversations, setIsLoadingConversations] = useState(false);
+  const [isLoadingThread, setIsLoadingThread] = useState(false);
+  const [isGeneratingCopy, setIsGeneratingCopy] = useState(false);
+  const [isGeneratingImage, setIsGeneratingImage] = useState(false);
+  const [isUploadingSource, setIsUploadingSource] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const refreshConversations = async (preferredConversationId?: string | null) => {
+    if (!token) {
+      setConversations([]);
+      return [];
+    }
+
+    setIsLoadingConversations(true);
+
+    try {
+      const nextConversations = await apiRequest<GenerateConversation[]>(
+        '/api/generate/conversations',
+        { token }
+      );
+      setConversations(nextConversations);
+
+      const nextActiveConversationId =
+        preferredConversationId !== undefined
+          ? preferredConversationId
+          : activeConversationId;
+
+      if (
+        nextActiveConversationId &&
+        !nextConversations.some(
+          (conversation) => conversation.id === nextActiveConversationId
+        )
+      ) {
+        setActiveConversationId(null);
+        setActiveGenerateConversationId(null);
+      }
+
+      return nextConversations;
+    } catch (refreshError) {
+      setError(
+        refreshError instanceof Error
+          ? refreshError.message
+          : 'Failed to load conversations'
+      );
+      return [];
+    } finally {
+      setIsLoadingConversations(false);
+    }
+  };
+
+  const refreshThread = async (conversationId: string) => {
+    if (!token) {
+      return null;
+    }
+
+    setIsLoadingThread(true);
+
+    try {
+      const nextThread = await apiRequest<GenerateConversationThread>(
+        `/api/generate/conversations/${conversationId}`,
+        { token }
+      );
+      setActiveThread(nextThread);
+      setError(null);
+      return nextThread;
+    } catch (threadError) {
+      const message =
+        threadError instanceof Error
+          ? threadError.message
+          : 'Failed to load conversation thread';
+      setError(message);
+      throw new Error(message);
+    } finally {
+      setIsLoadingThread(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!token) {
+      setConversations([]);
+      setActiveThread(null);
+      setActiveConversationId(null);
+      setActiveGenerateConversationId(null);
+      return;
+    }
+
+    void refreshConversations();
+  }, [token]);
+
+  useEffect(() => {
+    setActiveGenerateConversationId(activeConversationId);
+
+    if (!token || !activeConversationId) {
+      setActiveThread(null);
+      return;
+    }
+
+    void refreshThread(activeConversationId);
+  }, [token, activeConversationId]);
+
+  const openConversation = (conversationId: string) => {
+    setActiveConversationId(conversationId);
+    setError(null);
+  };
+
+  const startNewChat = () => {
+    setActiveConversationId(null);
+    setActiveThread(null);
+    setError(null);
+    setActiveGenerateConversationId(null);
+  };
+
+  const createConversation = async (title?: string, type?: GenerateConversation['type']) => {
+    if (!token) {
+      throw new Error('Sign in again to create a conversation.');
+    }
+
+    const conversation = await apiRequest<GenerateConversation>(
+      '/api/generate/conversations',
+      {
+        method: 'POST',
+        token,
+        body: {
+          title,
+          type,
+        },
+      }
+    );
+
+    setActiveConversationId(conversation.id);
+    await refreshConversations(conversation.id);
+    return conversation;
+  };
+
+  const renameConversation = async (conversationId: string, title: string) => {
+    if (!token) {
+      throw new Error('Sign in again to rename the conversation.');
+    }
+
+    const trimmedTitle = title.trim();
+
+    if (!trimmedTitle) {
+      throw new Error('Conversation title cannot be empty.');
+    }
+
+    const updatedConversation = await apiRequest<GenerateConversation>(
+      `/api/generate/conversations/${conversationId}`,
+      {
+        method: 'PATCH',
+        token,
+        body: {
+          title: trimmedTitle,
+        },
+      }
+    );
+
+    setConversations((current) =>
+      current.map((conversation) =>
+        conversation.id === updatedConversation.id
+          ? updatedConversation
+          : conversation
+      )
+    );
+
+    setActiveThread((current) =>
+      current && current.conversation.id === updatedConversation.id
+        ? {
+            ...current,
+            conversation: updatedConversation,
+          }
+        : current
+    );
+  };
+
+  const deleteConversation = async (conversationId: string) => {
+    if (!token) {
+      throw new Error('Sign in again to delete the conversation.');
+    }
+
+    await apiRequest(`/api/generate/conversations/${conversationId}`, {
+      method: 'DELETE',
+      token,
+    });
+
+    setConversations((current) =>
+      current.filter((conversation) => conversation.id !== conversationId)
+    );
+
+    if (activeConversationId === conversationId) {
+      startNewChat();
+    }
+  };
+
+  const generateCopy = async (input: GenerateContentInput) => {
+    if (!token) {
+      throw new Error('Sign in again to generate copy.');
+    }
+
+    setError(null);
+    setIsGeneratingCopy(true);
+
+    try {
+      const nextThread = await apiRequest<GenerateConversationThread>(
+        '/api/generate/copy',
+        {
+          method: 'POST',
+          token,
+          body: {
+            conversationId: activeConversationId ?? undefined,
+            ...input,
+          },
+        }
+      );
+
+      setActiveConversationId(nextThread.conversation.id);
+      setActiveThread(nextThread);
+      await refreshConversations(nextThread.conversation.id);
+
+      return nextThread;
+    } catch (generationError) {
+      const message =
+        generationError instanceof Error
+          ? generationError.message
+          : 'Failed to generate copy';
+      setError(message);
+      throw new Error(message);
+    } finally {
+      setIsGeneratingCopy(false);
+    }
+  };
+
+  const generateImage = async (input: GenerateImageInput) => {
+    if (!token) {
+      throw new Error('Sign in again to generate images.');
+    }
+
+    setError(null);
+    setIsGeneratingImage(true);
+
+    try {
+      const nextThread = await apiRequest<GenerateConversationThread>(
+        '/api/generate/image',
+        {
+          method: 'POST',
+          token,
+          body: {
+            conversationId: activeConversationId ?? undefined,
+            ...input,
+          },
+        }
+      );
+
+      setActiveConversationId(nextThread.conversation.id);
+      setActiveThread(nextThread);
+      await refreshConversations(nextThread.conversation.id);
+
+      return nextThread;
+    } catch (generationError) {
+      const message =
+        generationError instanceof Error
+          ? generationError.message
+          : 'Failed to generate image';
+      setError(message);
+      throw new Error(message);
+    } finally {
+      setIsGeneratingImage(false);
+    }
+  };
+
+  const uploadSourceImage = async (file: File) => {
+    if (!token) {
+      throw new Error('Sign in again to upload source images.');
+    }
+
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
+      throw new Error('Only JPG, PNG, and WEBP images are supported.');
+    }
+
+    if (file.size > 6 * 1024 * 1024) {
+      throw new Error('Uploaded image must be 6MB or smaller.');
+    }
+
+    setError(null);
+    setIsUploadingSource(true);
+
+    try {
+      const dataUrl = await readFileAsDataUrl(file);
+      return await apiRequest<UploadedSourceImage>('/api/images/upload-source', {
+        method: 'POST',
+        token,
+        body: {
+          fileName: file.name,
+          contentType: file.type,
+          dataUrl,
+        },
+      });
+    } catch (uploadError) {
+      const message =
+        uploadError instanceof Error
+          ? uploadError.message
+          : 'Failed to upload source image';
+      setError(message);
+      throw new Error(message);
+    } finally {
+      setIsUploadingSource(false);
+    }
+  };
+
+  return {
+    conversations,
+    activeConversationId,
+    activeThread,
+    isLoadingConversations,
+    isLoadingThread,
+    isGeneratingCopy,
+    isGeneratingImage,
+    isUploadingSource,
+    error,
+    setError,
+    refreshConversations,
+    refreshThread,
+    openConversation,
+    startNewChat,
+    createConversation,
+    renameConversation,
+    deleteConversation,
+    generateCopy,
+    generateImage,
+    uploadSourceImage,
+  };
+};

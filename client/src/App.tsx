@@ -58,10 +58,10 @@ const RouterTree = () => (
       <Route path="/forgot-password" element={<ForgotPasswordPage />} />
       <Route path="/reset-password" element={<ResetPasswordPage />} />
 
-      <Route element={<ProtectedRoute />}>
+        <Route element={<ProtectedRoute />}>
         <Route path="/onboarding" element={<OnboardingPage />} />
         <Route path="/app" element={<PageWrapper />}>
-          <Route index element={<Navigate to="/app/dashboard" replace />} />
+          <Route index element={<Navigate to="/app/generate" replace />} />
           <Route path="dashboard" element={<DashboardPage />} />
           <Route path="generate" element={<GeneratePage />} />
           <Route path="analytics" element={<AnalyticsPage />} />

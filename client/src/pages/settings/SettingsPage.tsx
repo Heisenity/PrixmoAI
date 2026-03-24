@@ -7,8 +7,8 @@ export const SettingsPage = () => {
   return (
     <ProfileFormPanel
       profile={profile}
-      heading="Tune the profile your generators read from."
-      subheading="You can evolve the brand system here without touching the generation pages."
+      heading=""
+      subheading=""
       submitLabel="Save brand settings"
       onSubmit={async (input) => {
         await saveProfile(input);

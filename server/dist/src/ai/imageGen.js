@@ -20,7 +20,7 @@ const buildImagePrompt = (input) => {
         return input.prompt.trim();
     }
     const parts = [
-        `Create a polished ecommerce product image for ${input.productName}.`,
+        `Create a polished product image for ${input.productName}.`,
         input.productDescription
             ? `Product details: ${input.productDescription}.`
             : null,

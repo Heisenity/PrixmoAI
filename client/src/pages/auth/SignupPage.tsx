@@ -36,7 +36,7 @@ export const SignupPage = () => {
   );
 
   const notice = (location.state as { authNotice?: string } | null)?.authNotice;
-  const destination = profile?.fullName && profile?.phoneNumber ? '/app/dashboard' : '/onboarding';
+  const destination = profile?.fullName && profile?.phoneNumber ? '/app/generate' : '/onboarding';
 
   if (session) {
     return (

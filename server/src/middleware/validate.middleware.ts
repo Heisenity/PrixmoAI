@@ -1,5 +1,32 @@
 import { Request, Response, NextFunction } from 'express';
-import { ZodError, ZodType } from 'zod';
+import { ZodError, ZodIssue, ZodType } from 'zod';
+
+const humanizeField = (path: string) =>
+  path
+    .replace(/([A-Z])/g, ' $1')
+    .replace(/\./g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+
+const formatValidationIssue = (issue: ZodIssue) => {
+  const field = issue.path.join('.');
+  const readableField = field ? humanizeField(field) : 'this field';
+
+  if (issue.message === 'Required') {
+    return `Please fill in ${readableField}.`;
+  }
+
+  if (issue.code === 'too_small' && issue.message.includes('expected string')) {
+    return `Please fill in ${readableField}.`;
+  }
+
+  if (issue.code === 'invalid_type') {
+    return `Please fill in ${readableField}.`;
+  }
+
+  return issue.message;
+};
 
 export const validate = (schema: ZodType) => 
   async (req: Request, res: Response, next: NextFunction) => {
@@ -12,12 +39,15 @@ export const validate = (schema: ZodType) =>
     } catch (error) {
       // 2. Catch Zod errors and format them
       if (error instanceof ZodError) {
+        const errors = error.issues.map((err) => ({
+          field: err.path.join('.'),
+          message: formatValidationIssue(err),
+        }));
+
         return res.status(400).json({
           status: 'fail',
-          errors: error.issues.map((err) => ({
-            field: err.path.join('.'),
-            message: err.message,
-          })),
+          message: errors[0]?.message || 'Please review the form and try again.',
+          errors,
         });
       }
 

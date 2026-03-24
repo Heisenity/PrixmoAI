@@ -102,7 +102,7 @@ const resolveScheduledPostDefaults = async (
     platform: input.platform ?? socialAccount.platform,
     caption:
       input.caption === undefined
-        ? content?.captions?.[0] ?? null
+        ? content?.captions?.[0]?.mainCopy ?? null
         : input.caption,
     mediaUrl:
       input.mediaUrl === undefined

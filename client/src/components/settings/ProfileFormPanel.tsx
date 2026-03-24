@@ -26,6 +26,7 @@ export const ProfileFormPanel = ({
     fullName: profile?.fullName || defaults?.fullName || '',
     phoneNumber: profile?.phoneNumber || defaults?.phoneNumber || '',
     username: profile?.username || defaults?.username || '',
+    avatarUrl: profile?.avatarUrl || defaults?.avatarUrl || '',
     industry: profile?.industry || defaults?.industry || '',
     targetAudience: profile?.targetAudience || defaults?.targetAudience || '',
     brandVoice: profile?.brandVoice || defaults?.brandVoice || '',
@@ -53,6 +54,7 @@ export const ProfileFormPanel = ({
         fullName: form.fullName.trim(),
         phoneNumber: form.phoneNumber?.trim(),
         ...(form.username?.trim() ? { username: form.username.trim() } : {}),
+        ...(form.avatarUrl?.trim() ? { avatarUrl: form.avatarUrl.trim() } : {}),
         ...(form.industry?.trim() ? { industry: form.industry.trim() } : {}),
         ...(form.targetAudience?.trim()
           ? { targetAudience: form.targetAudience.trim() }

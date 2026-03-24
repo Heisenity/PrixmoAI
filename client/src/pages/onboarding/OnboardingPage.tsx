@@ -27,10 +27,17 @@ export const OnboardingPage = () => {
       profile?.username ||
       (user?.email ? user.email.split('@')[0] : '') ||
       undefined,
+    avatarUrl:
+      profile?.avatarUrl ||
+      (typeof userMetadata.avatar_url === 'string'
+        ? userMetadata.avatar_url
+        : '') ||
+      (typeof userMetadata.picture === 'string' ? userMetadata.picture : '') ||
+      undefined,
   };
 
   if (profile?.fullName && profile?.phoneNumber) {
-    return <Navigate to="/app/dashboard" replace />;
+    return <Navigate to="/app/generate" replace />;
   }
 
   return (
@@ -86,7 +93,7 @@ export const OnboardingPage = () => {
             submitLabel="Save profile and enter workspace"
             onSubmit={async (input) => {
               await saveProfile(input);
-              navigate('/app/dashboard', { replace: true });
+              navigate('/app/generate', { replace: true });
             }}
           />
         </div>

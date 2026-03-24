@@ -9,6 +9,10 @@ exports.createUserSchema = zod_1.z.object({
 });
 exports.authProfileSchema = zod_1.z.object({
     fullName: zod_1.z.string().trim().min(1, 'Full name is required'),
+    phoneNumber: zod_1.z
+        .string()
+        .trim()
+        .regex(/^[0-9+()\-\s]{10,20}$/, 'Enter a valid phone number'),
     username: zod_1.z
         .string()
         .trim()

@@ -43,7 +43,7 @@ export const Navbar = () => {
         <div className="topbar__actions">
           {session ? (
             <>
-              <Link to="/app/dashboard" className="topbar__plain-link">
+              <Link to="/app/generate" className="topbar__plain-link">
                 Workspace
               </Link>
               <button
@@ -118,7 +118,7 @@ export const Navbar = () => {
               <div className="mobile-sheet__footer">
                 {session ? (
                   <>
-                    <Link to="/app/dashboard" onClick={() => setIsOpen(false)}>
+                    <Link to="/app/generate" onClick={() => setIsOpen(false)}>
                       Workspace
                     </Link>
                     <button

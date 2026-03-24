@@ -42,7 +42,7 @@ export const LoginPage = () => {
   const notice = (location.state as { from?: string; authNotice?: string } | null)?.authNotice;
   const destination =
     (location.state as { from?: string } | null)?.from ||
-    (profile?.fullName && profile?.phoneNumber ? '/app/dashboard' : '/onboarding');
+    (profile?.fullName && profile?.phoneNumber ? '/app/generate' : '/onboarding');
 
   if (session) {
     return (

@@ -45,6 +45,47 @@ type AuthContextValue = {
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
+const readMetadataString = (
+  metadata: Record<string, unknown>,
+  keys: string[]
+) => {
+  for (const key of keys) {
+    const value = metadata[key];
+
+    if (typeof value === 'string' && value.trim()) {
+      return value.trim();
+    }
+  }
+
+  return null;
+};
+
+const getAuthProfileDefaults = (currentUser: User | null) => {
+  const metadata =
+    currentUser && currentUser.user_metadata && typeof currentUser.user_metadata === 'object'
+      ? (currentUser.user_metadata as Record<string, unknown>)
+      : {};
+
+  return {
+    fullName: readMetadataString(metadata, [
+      'full_name',
+      'name',
+      'user_name',
+      'preferred_username',
+    ]),
+    phoneNumber:
+      readMetadataString(metadata, ['phone_number', 'phone']) ||
+      currentUser?.phone ||
+      null,
+    avatarUrl: readMetadataString(metadata, [
+      'avatar_url',
+      'picture',
+      'picture_url',
+      'profile_image_url',
+    ]),
+  };
+};
+
 const useAuthBootstrap = () => {
   const [session, setSession] = useState<Session | null>(null);
   const [user, setUser] = useState<User | null>(null);
@@ -69,7 +110,10 @@ const useAuthBootstrap = () => {
     return response.profile;
   };
 
-  const hydrateProfile = async (accessToken: string | null) => {
+  const hydrateProfile = async (
+    accessToken: string | null,
+    currentUser: User | null = null
+  ) => {
     if (!accessToken) {
       setProfile(null);
       setIsProfileLoading(false);
@@ -83,7 +127,35 @@ const useAuthBootstrap = () => {
       const response = await apiRequest<AuthMeResponse>('/api/auth/me', {
         token: accessToken,
       });
-      setProfile(response.profile);
+      const nextProfile = response.profile;
+      const provider = currentUser?.app_metadata?.provider;
+      const authDefaults = getAuthProfileDefaults(currentUser);
+      const shouldSyncSocialAvatar =
+        provider &&
+        provider !== 'email' &&
+        authDefaults.avatarUrl &&
+        nextProfile?.fullName &&
+        nextProfile?.phoneNumber &&
+        nextProfile.avatarUrl !== authDefaults.avatarUrl;
+
+      if (shouldSyncSocialAvatar) {
+        const syncedProfile = await persistProfile(accessToken, {
+          fullName: nextProfile.fullName,
+          ...(nextProfile.phoneNumber ? { phoneNumber: nextProfile.phoneNumber } : {}),
+          ...(nextProfile.username ? { username: nextProfile.username } : {}),
+          ...(authDefaults.avatarUrl ? { avatarUrl: authDefaults.avatarUrl } : {}),
+          ...(nextProfile.industry ? { industry: nextProfile.industry } : {}),
+          ...(nextProfile.targetAudience
+            ? { targetAudience: nextProfile.targetAudience }
+            : {}),
+          ...(nextProfile.brandVoice ? { brandVoice: nextProfile.brandVoice } : {}),
+          ...(nextProfile.description ? { description: nextProfile.description } : {}),
+        });
+
+        setProfile(syncedProfile);
+      } else {
+        setProfile(nextProfile);
+      }
     } catch {
       setProfile(null);
     } finally {
@@ -112,7 +184,10 @@ const useAuthBootstrap = () => {
 
       setSession(initialSession);
       setUser(initialSession?.user ?? null);
-      await hydrateProfile(initialSession?.access_token ?? null);
+      await hydrateProfile(
+        initialSession?.access_token ?? null,
+        initialSession?.user ?? null
+      );
     };
 
     void bootstrap();
@@ -129,7 +204,7 @@ const useAuthBootstrap = () => {
         setUser(nextSession?.user ?? null);
       });
 
-      void hydrateProfile(nextSession?.access_token ?? null);
+      void hydrateProfile(nextSession?.access_token ?? null, nextSession?.user ?? null);
     });
 
     return () => {
@@ -321,7 +396,7 @@ const useAuthBootstrap = () => {
     const redirectTo =
       typeof window === 'undefined'
         ? undefined
-        : `${window.location.origin}/app/dashboard`;
+        : `${window.location.origin}/app/generate`;
 
     const { error } = await supabase.auth.signInWithOAuth({
       provider,

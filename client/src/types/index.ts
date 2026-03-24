@@ -1,5 +1,18 @@
 export type ApiStatus = 'success' | 'fail' | 'error';
 export type PlanType = 'free' | 'basic' | 'pro';
+export type GenerateConversationType = 'copy' | 'image' | 'mixed';
+export type GenerateConversationRole = 'user' | 'assistant' | 'system';
+export type GenerateConversationMessageType =
+  | 'text'
+  | 'copy'
+  | 'image'
+  | 'metadata';
+export type GeneratedAssetType =
+  | 'copy'
+  | 'hashtags'
+  | 'script'
+  | 'image'
+  | 'prompt';
 export type SubscriptionStatus =
   | 'trialing'
   | 'active'
@@ -74,10 +87,18 @@ export interface ReelScript {
   cta: string;
 }
 
+export interface CaptionVariant {
+  hook: string;
+  mainCopy: string;
+  shortCaption: string;
+  cta: string;
+}
+
 export interface GeneratedContent {
   id: string;
   userId: string;
   brandProfileId: string | null;
+  conversationId: string | null;
   productName: string;
   productDescription?: string | null;
   productImageUrl?: string | null;
@@ -86,7 +107,7 @@ export interface GeneratedContent {
   tone?: string | null;
   audience?: string | null;
   keywords?: string[];
-  captions: string[];
+  captions: CaptionVariant[];
   hashtags: string[];
   reelScript: ReelScript;
   createdAt: string;
@@ -108,6 +129,7 @@ export interface GeneratedImage {
   id: string;
   userId: string;
   contentId: string | null;
+  conversationId: string | null;
   sourceImageUrl: string | null;
   generatedImageUrl: string;
   backgroundStyle: string | null;
@@ -127,6 +149,52 @@ export interface GenerateImageInput {
   negativePrompt?: string;
   width?: number;
   height?: number;
+}
+
+export interface UploadedSourceImage {
+  sourceImageUrl: string;
+  bucket: string;
+  path: string;
+}
+
+export interface GenerateConversation {
+  id: string;
+  userId: string;
+  title: string;
+  lastMessagePreview: string | null;
+  type: GenerateConversationType;
+  isArchived: boolean;
+  isDeleted: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface GenerateConversationAsset {
+  id: string;
+  conversationId: string;
+  messageId: string;
+  userId: string;
+  assetType: GeneratedAssetType;
+  payload: Record<string, unknown>;
+  createdAt: string;
+}
+
+export interface GenerateConversationMessage {
+  id: string;
+  conversationId: string;
+  userId: string;
+  role: GenerateConversationRole;
+  content: string | null;
+  messageType: GenerateConversationMessageType;
+  metadata: Record<string, unknown>;
+  generationId: string | null;
+  createdAt: string;
+  assets: GenerateConversationAsset[];
+}
+
+export interface GenerateConversationThread {
+  conversation: GenerateConversation;
+  messages: GenerateConversationMessage[];
 }
 
 export interface AnalyticsTrendItem {

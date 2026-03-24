@@ -7,6 +7,7 @@ import authRouter from "./routes/auth.routes";
 import analyticsRouter from "./routes/analytics.routes";
 import billingRouter from "./routes/billing.routes";
 import contentRouter from "./routes/content.routes";
+import generateRouter from "./routes/generate.routes";
 import imageRouter from "./routes/image.routes";
 import schedulerRouter from "./routes/scheduler.routes";
 import { APP_PORT } from "./config/constants";
@@ -24,8 +25,8 @@ app.post(
   express.raw({ type: 'application/json' }),
   handleRazorpayWebhook
 );
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: '12mb' }));
+app.use(express.urlencoded({ extended: true, limit: '12mb' }));
 
 app.get('/', (req, res) => {
   res.status(200).json({
@@ -48,6 +49,7 @@ app.use('/api/auth', authRouter);
 app.use('/api/analytics', analyticsRouter);
 app.use('/api/billing', billingRouter);
 app.use('/api/content', contentRouter);
+app.use('/api/generate', generateRouter);
 app.use('/api/images', imageRouter);
 app.use('/api/scheduler', schedulerRouter);
 

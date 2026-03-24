@@ -5,6 +5,7 @@ const sampleBrandProfile = {
     id: 'sample-brand-profile',
     userId: 'sample-user',
     fullName: 'PrixmoAI',
+    phoneNumber: '+91 98765 43210',
     username: 'prixmoai',
     avatarUrl: null,
     industry: 'Fashion',

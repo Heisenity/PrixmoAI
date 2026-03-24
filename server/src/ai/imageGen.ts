@@ -1,6 +1,7 @@
 
 import dotenv from 'dotenv';
 import type { GenerateImageInput } from '../schemas/image.schema';
+import type { BrandProfile } from '../types';
 
 dotenv.config();
 
@@ -24,20 +25,47 @@ const IMAGE_VALIDATION_TIMEOUT_MS = 15_000;
 const PIXAZO_POLL_INTERVAL_MS = 3_000;
 const PIXAZO_MAX_POLLS = 20;
 
-const buildImagePrompt = (input: GenerateImageInput): string => {
-  if (input.prompt) {
-    return input.prompt.trim();
+const buildBrandDirection = (brandProfile: BrandProfile | null): string[] => {
+  if (!brandProfile) {
+    return [];
   }
 
+  return [
+    'Brand profile direction (use as soft visual art direction only, never as visible text inside the image):',
+    `- Industry: ${brandProfile.industry ?? 'not provided'}`,
+    `- Target audience: ${brandProfile.targetAudience ?? 'not provided'}`,
+    `- Brand voice: ${brandProfile.brandVoice ?? 'not provided'}`,
+    `- Brand description: ${brandProfile.description ?? 'not provided'}`,
+  ];
+};
+
+const buildImagePrompt = (
+  brandProfile: BrandProfile | null,
+  input: GenerateImageInput
+): string => {
   const parts = [
-    `Create a polished ecommerce product image for ${input.productName}.`,
+    `Create a polished, platform-ready marketing visual for ${input.productName}.`,
     input.productDescription
       ? `Product details: ${input.productDescription}.`
       : null,
+    input.prompt
+      ? `User creative direction: ${input.prompt.trim()}.`
+      : 'Creative direction: premium, modern, on-brand product creative shaped by the product brief and brand profile.',
+    input.sourceImageUrl
+      ? 'A source image is provided. Preserve the real subject identity, recognisable details, and key visual cues while improving composition, lighting, background, and polish.'
+      : 'No source image is provided. Create a fresh hero composition centered on the subject described in the brief.',
     input.backgroundStyle
       ? `Background style: ${input.backgroundStyle}.`
       : 'Background style: clean studio lighting with modern premium aesthetics.',
-    'Keep the product in focus and make the final image social-media ready.',
+    'Define a clear scene, lighting style, camera angle, mood, color palette, and product focus based on the brief.',
+    'Make those visual decisions feel on-brand, audience-aware, and appropriate for the inferred business domain.',
+    'Do not assume fashion, ecommerce, or any other niche unless the product input or brand profile supports it.',
+    'Do not add any visible text, typography, logos, brand names, usernames, watermarks, packaging copy, or poster-style wording unless the user explicitly asks for text inside the image.',
+    input.negativePrompt
+      ? `Avoid these elements: ${input.negativePrompt}.`
+      : 'Avoid extra products, distorted anatomy, wrong materials, warped text, clutter, and low-detail rendering.',
+    'Keep the main subject in sharp focus and make the final image social-media ready.',
+    ...buildBrandDirection(brandProfile),
   ];
 
   return parts.filter(Boolean).join(' ');
@@ -247,6 +275,9 @@ const generateWithPixazo = async (
       width,
       height,
       seed,
+      ...(input.sourceImageUrl
+        ? { image_urls: [input.sourceImageUrl] }
+        : {}),
     }),
     signal: createTimeoutSignal(PIXAZO_TIMEOUT_MS),
   });
@@ -380,60 +411,42 @@ const generateWithAimlApi = async (
 };
 
 export const generateProductImage = async (
+  brandProfile: BrandProfile | null,
   input: GenerateImageInput
 ): Promise<GeneratedImageResult> => {
-  const promptUsed = buildImagePrompt(input);
-
-  if (!input.sourceImageUrl) {
-    try {
-      const imageUrl = await generateWithPixazo(promptUsed, input);
-
-      return {
-        imageUrl,
-        provider: 'pixazo',
-        promptUsed,
-      };
-    } catch (pixazoError) {
-      const pixazoMessage = toErrorMessage(
-        pixazoError,
-        'Pixazo image generation failed'
-      );
-
-      try {
-        const imageUrl = await generateWithAimlApi(promptUsed, input);
-
-        return {
-          imageUrl,
-          provider: 'aimlapi',
-          promptUsed,
-        };
-      } catch (aimlError) {
-        const aimlMessage = toErrorMessage(
-          aimlError,
-          'AIMLAPI image generation failed'
-        );
-
-        throw new Error(
-          `Pixazo failed: ${pixazoMessage}. AIMLAPI fallback failed: ${aimlMessage}`
-        );
-      }
-    }
-  }
+  const promptUsed = buildImagePrompt(brandProfile, input);
 
   try {
-    const imageUrl = await generateWithAimlApi(promptUsed, input);
+    const imageUrl = await generateWithPixazo(promptUsed, input);
 
     return {
       imageUrl,
-      provider: 'aimlapi',
+      provider: 'pixazo',
       promptUsed,
     };
-  } catch (error) {
-    throw new Error(
-      `AIMLAPI image generation failed: ${toErrorMessage(
-        error,
-        'Unknown AIMLAPI error'
-      )}`
+  } catch (pixazoError) {
+    const pixazoMessage = toErrorMessage(
+      pixazoError,
+      'Pixazo image generation failed'
     );
+
+    try {
+      const imageUrl = await generateWithAimlApi(promptUsed, input);
+
+      return {
+        imageUrl,
+        provider: 'aimlapi',
+        promptUsed,
+      };
+    } catch (aimlError) {
+      const aimlMessage = toErrorMessage(
+        aimlError,
+        'AIMLAPI image generation failed'
+      );
+
+      throw new Error(
+        `Pixazo failed: ${pixazoMessage}. AIMLAPI fallback failed: ${aimlMessage}`
+      );
+    }
   }
 };

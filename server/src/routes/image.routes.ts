@@ -1,15 +1,26 @@
 import { Router } from 'express';
 import {
   generateImage,
+  getWatermarkedImage,
   getImageHistory,
+  uploadSourceImage,
 } from '../controllers/image.controller';
 import { authMiddleware } from '../middleware/auth.middleware';
 import { imagePlanLimitMiddleware } from '../middleware/planLimit.middleware';
 import { validate } from '../middleware/validate.middleware';
-import { generateImageSchema } from '../schemas/image.schema';
+import {
+  generateImageSchema,
+  uploadSourceImageSchema,
+} from '../schemas/image.schema';
 
 const router = Router();
 
+router.post(
+  '/upload-source',
+  authMiddleware,
+  validate(uploadSourceImageSchema),
+  uploadSourceImage
+);
 router.post(
   '/generate',
   authMiddleware,
@@ -18,5 +29,6 @@ router.post(
   generateImage
 );
 router.get('/history', authMiddleware, getImageHistory);
+router.get('/:id/watermarked', authMiddleware, getWatermarkedImage);
 
 export default router;

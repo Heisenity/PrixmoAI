@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { apiRequest } from '../lib/axios';
 import { useAuth } from './useAuth';
 import type { GenerateContentInput, GeneratedContent, PaginatedResult } from '../types';
@@ -11,7 +11,7 @@ export const useContent = () => {
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const refreshHistory = async () => {
+  const refreshHistory = useCallback(async () => {
     if (!token) {
       return;
     }
@@ -31,11 +31,11 @@ export const useContent = () => {
     } finally {
       setIsLoadingHistory(false);
     }
-  };
+  }, [token]);
 
   useEffect(() => {
     void refreshHistory();
-  }, [token]);
+  }, [refreshHistory]);
 
   const generate = async (input: GenerateContentInput) => {
     if (!token) {
