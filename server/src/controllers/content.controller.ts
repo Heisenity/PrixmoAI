@@ -11,6 +11,7 @@ import {
 } from '../db/queries/content';
 import { requireUserClient } from '../db/supabase';
 import type { GenerateContentInput } from '../schemas/content.schema';
+import type { BrandProfile } from '../types';
 
 type AuthenticatedRequest<
   Params = Record<string, string>,
@@ -31,6 +32,34 @@ const parsePositiveInt = (value: unknown, fallback: number): number => {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 };
 
+const resolveBrandPreference = (
+  brandProfile: BrandProfile | null,
+  useBrandName?: boolean
+) => {
+  const shouldUseBrandName =
+    useBrandName ?? Boolean(brandProfile?.brandName?.trim());
+
+  if (!shouldUseBrandName) {
+    return {
+      brandName: null,
+      useBrandName: false,
+    };
+  }
+
+  const brandName = brandProfile?.brandName?.trim();
+
+  if (!brandName) {
+    throw new Error(
+      'Add your brand name in Settings > Brand memory, or turn off Use brand name.'
+    );
+  }
+
+  return {
+    brandName,
+    useBrandName: true,
+  };
+};
+
 export const generateContent = async (
   req: AuthenticatedRequest<{}, unknown, GenerateContentInput>,
   res: Response
@@ -45,10 +74,14 @@ export const generateContent = async (
   try {
     const client = requireUserClient(req.accessToken);
     const brandProfile = await getBrandProfileByUserId(client, req.user.id);
-
-    const contentPack = await generateContentPack(brandProfile, req.body);
-    const content = await saveGeneratedContent(client, req.user.id, {
+    const generationInput = {
       ...req.body,
+      ...resolveBrandPreference(brandProfile, req.body.useBrandName),
+    };
+
+    const contentPack = await generateContentPack(brandProfile, generationInput);
+    const content = await saveGeneratedContent(client, req.user.id, {
+      ...generationInput,
       brandProfileId: brandProfile?.id ?? null,
       ...contentPack,
     });
@@ -57,13 +90,13 @@ export const generateContent = async (
       contentId: content.id,
       provider: 'gemini',
       brandProfileId: brandProfile?.id ?? null,
-      platform: req.body.platform ?? null,
-      goal: req.body.goal ?? null,
-      tone: req.body.tone ?? null,
-      audience: req.body.audience ?? null,
-      productName: req.body.productName,
-      productDescription: req.body.productDescription ?? null,
-      keywords: req.body.keywords ?? [],
+      platform: generationInput.platform ?? null,
+      goal: generationInput.goal ?? null,
+      tone: generationInput.tone ?? null,
+      audience: generationInput.audience ?? null,
+      productName: generationInput.productName,
+      productDescription: generationInput.productDescription ?? null,
+      keywords: generationInput.keywords ?? [],
     });
 
     return res.status(200).json({

@@ -1,0 +1,1 @@
+import{u as i}from"./index-z3YLS7xd.js";const t=()=>{const{profile:r,saveProfile:e,refreshProfile:o,isProfileLoading:s}=i();return{profile:r,saveProfile:e,refreshProfile:o,isProfileLoading:s}};export{t as u};

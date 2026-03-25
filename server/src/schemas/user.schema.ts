@@ -9,6 +9,7 @@ export const createUserSchema = z.object({
 export type CreateUserInput = z.infer<typeof createUserSchema>;
 
 export const authProfileSchema = z.object({
+  brandName: z.string().trim().min(1, 'Brand name is required'),
   fullName: z.string().trim().min(1, 'Full name is required'),
   phoneNumber: z
     .string()

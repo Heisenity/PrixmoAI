@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { apiRequest } from '../lib/axios';
 import { useAuth } from './useAuth';
 import type {
@@ -37,7 +37,7 @@ export const useImages = () => {
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const refreshHistory = async () => {
+  const refreshHistory = useCallback(async () => {
     if (!token) {
       return;
     }
@@ -57,11 +57,11 @@ export const useImages = () => {
     } finally {
       setIsLoadingHistory(false);
     }
-  };
+  }, [token]);
 
   useEffect(() => {
     void refreshHistory();
-  }, [token]);
+  }, [refreshHistory]);
 
   const generate = async (input: GenerateImageInput) => {
     if (!token) {

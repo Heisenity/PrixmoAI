@@ -17,6 +17,7 @@ const optionalTrimmedUrl = (message: string) =>
   );
 
 export const generateContentSchema = z.object({
+  useBrandName: z.boolean().optional(),
   productName: z.string().trim().min(1, 'Product name is required'),
   productDescription: optionalTrimmedString(),
   productImageUrl: optionalTrimmedUrl('Please enter a valid product image URL'),

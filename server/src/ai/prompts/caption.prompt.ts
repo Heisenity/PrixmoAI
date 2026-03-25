@@ -11,6 +11,7 @@ export const buildCaptionPrompt = (
     `Generate exactly ${CAPTION_VARIATION_COUNT} distinct structured copy variations for this product or offering.`,
     'Do not assume the product category or industry. Infer the domain only from the provided product description, keywords, audience, platform, and brand profile.',
     'Do not inject fashion-related language, ecommerce language, or any niche-specific terminology unless the user input clearly supports it.',
+    'Use the brand/business name only if this generation context provides one. Otherwise do not invent a brand name and do not use the workspace owner personal name in the copy.',
     'Adapt the writing style to the selected tone, audience, platform, and brand voice.',
     'Make the output platform-appropriate: for example, shorter and sharper for Instagram, more professional and context-rich for LinkedIn, and natural across other platforms.',
     'Each variation must include: hook, mainCopy, shortCaption, and cta.',

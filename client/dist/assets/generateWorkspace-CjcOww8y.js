@@ -1,0 +1,1 @@
+const e="prixmoai.generate.activeConversationId",n=()=>typeof window>"u"?null:window.localStorage.getItem(e),o=t=>{if(!(typeof window>"u")){if(t){window.localStorage.setItem(e,t);return}window.localStorage.removeItem(e)}};export{n as r,o as s};

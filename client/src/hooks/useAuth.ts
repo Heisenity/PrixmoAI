@@ -134,12 +134,14 @@ const useAuthBootstrap = () => {
         provider &&
         provider !== 'email' &&
         authDefaults.avatarUrl &&
+        nextProfile?.brandName &&
         nextProfile?.fullName &&
         nextProfile?.phoneNumber &&
         nextProfile.avatarUrl !== authDefaults.avatarUrl;
 
       if (shouldSyncSocialAvatar) {
         const syncedProfile = await persistProfile(accessToken, {
+          brandName: nextProfile.brandName!,
           fullName: nextProfile.fullName,
           ...(nextProfile.phoneNumber ? { phoneNumber: nextProfile.phoneNumber } : {}),
           ...(nextProfile.username ? { username: nextProfile.username } : {}),
@@ -304,13 +306,6 @@ const useAuthBootstrap = () => {
 
     if (error) {
       throw new Error(error.message);
-    }
-
-    if (data.session?.access_token) {
-      await persistProfile(data.session.access_token, {
-        fullName: trimmedFullName,
-        phoneNumber: trimmedPhoneNumber,
-      });
     }
 
     return {

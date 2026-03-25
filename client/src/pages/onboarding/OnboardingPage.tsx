@@ -1,4 +1,5 @@
-import { Navigate, useLocation, useNavigate } from 'react-router-dom';
+import { Navigate, useNavigate } from 'react-router-dom';
+import { Sparkles, Users, WandSparkles } from 'lucide-react';
 import { Card } from '../../components/ui/card';
 import { Button } from '../../components/ui/button';
 import { useAuth } from '../../hooks/useAuth';
@@ -8,11 +9,10 @@ import { useBrandProfile } from '../../hooks/useBrandProfile';
 export const OnboardingPage = () => {
   const { profile, saveProfile } = useBrandProfile();
   const { user, signOut } = useAuth();
-  const location = useLocation();
   const navigate = useNavigate();
   const userMetadata = (user?.user_metadata ?? {}) as Record<string, unknown>;
-  const authNotice = (location.state as { authNotice?: string } | null)?.authNotice;
   const profileDefaults = {
+    brandName: profile?.brandName || '',
     fullName:
       profile?.fullName ||
       (typeof userMetadata.full_name === 'string' ? userMetadata.full_name : '') ||
@@ -36,16 +36,28 @@ export const OnboardingPage = () => {
       undefined,
   };
 
-  if (profile?.fullName && profile?.phoneNumber) {
+  if (profile?.brandName && profile?.fullName && profile?.phoneNumber) {
     return <Navigate to="/app/generate" replace />;
   }
 
   return (
-    <div className="workspace-solo workspace-solo--onboarding">
+    <div
+      className="workspace-solo workspace-solo--onboarding"
+      data-lenis-prevent
+      data-lenis-prevent-wheel
+      data-lenis-prevent-touch
+    >
       <div className="onboarding-shell__toolbar">
+        <div className="onboarding-shell__toolbar-brand">
+          <span className="onboarding-shell__toolbar-orb" aria-hidden="true" />
+          <div className="onboarding-shell__toolbar-copy">
+            <strong>PrixmoAI</strong>
+          </div>
+        </div>
         <Button
           variant="secondary"
           size="md"
+          className="onboarding-shell__toolbar-action"
           onClick={() => {
             void signOut();
           }}
@@ -54,33 +66,61 @@ export const OnboardingPage = () => {
         </Button>
       </div>
       <div className="onboarding-shell">
-        <Card className="onboarding-shell__aside">
-          {authNotice ? <div className="message">{authNotice}</div> : null}
-          <p className="section-eyebrow">Brand memory setup</p>
-          <h1>Teach PrixmoAI how your brand should sound before you generate.</h1>
+        <Card glow className="onboarding-shell__aside">
+          <div className="onboarding-shell__eyebrow-row">
+            <p className="section-eyebrow">Brand memory setup</p>
+            <span className="onboarding-shell__status">Quick setup</span>
+          </div>
+          <h1>
+            <span>Give PrixmoAI the context it needs</span>
+            <span>before you generate.</span>
+          </h1>
           <p className="onboarding-shell__copy">
-            This profile becomes the default context behind captions, product visuals,
-            scheduler suggestions, and analytics summaries.
+            Save your brand essentials once and PrixmoAI will use them to shape
+            content, visuals, scheduling, and analytics from the first session.
           </p>
 
           <div className="onboarding-shell__highlights">
-            <div className="stack-list__item">
-              <strong>Brand voice</strong>
-              <span>Shapes how captions, hooks, and calls to action are written.</span>
+            <div className="stack-list__item onboarding-shell__highlight-card">
+              <span className="onboarding-shell__highlight-icon">
+                <WandSparkles size={18} />
+              </span>
+              <div>
+                <strong>Voice and style</strong>
+                <span>
+                  Shapes how captions, hooks, and calls to action sound across every asset.
+                </span>
+              </div>
             </div>
-            <div className="stack-list__item">
-              <strong>Audience</strong>
-              <span>Changes the positioning, tone, and relevance of every generated asset.</span>
+            <div className="stack-list__item onboarding-shell__highlight-card">
+              <span className="onboarding-shell__highlight-icon">
+                <Users size={18} />
+              </span>
+              <div>
+                <strong>Audience fit</strong>
+                <span>
+                  Keeps positioning, language, and messaging aligned with the people
+                  you want to reach.
+                </span>
+              </div>
             </div>
-            <div className="stack-list__item">
-              <strong>Industry context</strong>
-              <span>Helps the system choose better copy patterns and visual framing.</span>
+            <div className="stack-list__item onboarding-shell__highlight-card">
+              <span className="onboarding-shell__highlight-icon">
+                <Sparkles size={18} />
+              </span>
+              <div>
+                <strong>Industry context</strong>
+                <span>
+                  Helps PrixmoAI choose sharper copy patterns and stronger visual direction.
+                </span>
+              </div>
             </div>
           </div>
 
           <Card className="onboarding-shell__note">
             <strong>Signed in as</strong>
             <p>{user?.email || 'Workspace owner'}</p>
+            <span>Saved once, reused across your workspace.</span>
           </Card>
         </Card>
 
@@ -88,8 +128,7 @@ export const OnboardingPage = () => {
           <ProfileFormPanel
             profile={profile}
             defaults={profileDefaults}
-            heading="Set the memory layer before you generate."
-            subheading="Add the brand owner name and phone number first, then PrixmoAI can personalize generation, scheduling, and analytics from the very first session."
+            heading="Build your brand memory layer."
             submitLabel="Save profile and enter workspace"
             onSubmit={async (input) => {
               await saveProfile(input);

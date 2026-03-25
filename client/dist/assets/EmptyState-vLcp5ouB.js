@@ -1,0 +1,1 @@
+import{j as s}from"./react-vendor-BShjbBE1.js";const m=({title:e,description:a,action:t})=>s.jsxs("div",{className:"empty-state",children:[s.jsx("div",{className:"empty-state__glow"}),s.jsx("h3",{children:e}),s.jsx("p",{children:a}),t?s.jsx("div",{className:"empty-state__action",children:t}):null]});export{m as E};

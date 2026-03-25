@@ -4,6 +4,7 @@ import type { AppSupabaseClient } from '../supabase';
 type BrandProfileRow = {
   id: string;
   user_id: string;
+  brand_name: string | null;
   full_name: string;
   phone_number: string | null;
   username: string | null;
@@ -24,6 +25,7 @@ const compactObject = <T extends Record<string, unknown>>(value: T): Partial<T> 
 const toBrandProfile = (row: BrandProfileRow): BrandProfile => ({
   id: row.id,
   userId: row.user_id,
+  brandName: row.brand_name,
   fullName: row.full_name,
   phoneNumber: row.phone_number,
   username: row.username,
@@ -39,6 +41,7 @@ const toBrandProfile = (row: BrandProfileRow): BrandProfile => ({
 const toBrandProfilePayload = (userId: string, input: BrandProfileInput) =>
   compactObject({
     user_id: userId,
+    brand_name: input.brandName,
     full_name: input.fullName,
     phone_number: input.phoneNumber ?? null,
     username: input.username ?? null,
@@ -51,6 +54,7 @@ const toBrandProfilePayload = (userId: string, input: BrandProfileInput) =>
 
 const toBrandProfileUpdatePayload = (input: Partial<BrandProfileInput>) =>
   compactObject({
+    brand_name: input.brandName,
     full_name: input.fullName,
     phone_number: input.phoneNumber,
     username: input.username,

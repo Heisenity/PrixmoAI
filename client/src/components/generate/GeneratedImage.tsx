@@ -1,9 +1,10 @@
-import { Download, ExternalLink } from 'lucide-react';
+import { Download, ExternalLink, X, ZoomIn } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useAuth } from '../../hooks/useAuth';
 import { API_BASE_URL } from '../../lib/constants';
 import { Card } from '../ui/card';
 import type { GeneratedImage as GeneratedImageRecord } from '../../types';
+import { formatDateTime } from '../../lib/utils';
 
 export const GeneratedImage = ({
   image,
@@ -15,6 +16,7 @@ export const GeneratedImage = ({
   const { token } = useAuth();
   const [watermarkedAssetUrl, setWatermarkedAssetUrl] = useState<string | null>(null);
   const [isPreparingWatermark, setIsPreparingWatermark] = useState(false);
+  const [isPreviewOpen, setIsPreviewOpen] = useState(false);
 
   useEffect(() => {
     let nextObjectUrl: string | null = null;
@@ -68,6 +70,24 @@ export const GeneratedImage = ({
     };
   }, [image.id, showWatermark, token]);
 
+  useEffect(() => {
+    if (!isPreviewOpen) {
+      return;
+    }
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setIsPreviewOpen(false);
+      }
+    };
+
+    window.addEventListener('keydown', handleEscape);
+
+    return () => {
+      window.removeEventListener('keydown', handleEscape);
+    };
+  }, [isPreviewOpen]);
+
   const previewUrl =
     showWatermark && watermarkedAssetUrl
       ? watermarkedAssetUrl
@@ -80,13 +100,26 @@ export const GeneratedImage = ({
         : null;
 
   return (
+    <>
     <Card className="generated-image-card">
       <div className="generated-image-card__header">
         <div>
           <p className="section-eyebrow">Generated image</p>
           <h3>Image ready</h3>
+          <span className="generated-image-card__timestamp">
+            {formatDateTime(image.createdAt)}
+          </span>
         </div>
         <div className="generated-image-card__actions">
+          <button
+            type="button"
+            className="generated-image-card__action"
+            onClick={() => setIsPreviewOpen(true)}
+            aria-label="Preview generated image"
+            title="Preview image"
+          >
+            <ZoomIn size={16} />
+          </button>
           {actionUrl ? (
             <>
               <a
@@ -152,5 +185,40 @@ export const GeneratedImage = ({
         <img src={previewUrl} alt="Generated visual preview" />
       </div>
     </Card>
+    {isPreviewOpen ? (
+      <div
+        className="generated-image-lightbox"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Generated image preview"
+      >
+        <button
+          type="button"
+          className="generated-image-lightbox__backdrop"
+          onClick={() => setIsPreviewOpen(false)}
+          aria-label="Close image preview"
+        />
+        <div className="generated-image-lightbox__panel">
+          <div className="generated-image-lightbox__header">
+            <div>
+              <p className="section-eyebrow">Review image</p>
+              <h3>{image.prompt?.trim() ? 'Generated visual' : 'Image preview'}</h3>
+            </div>
+            <button
+              type="button"
+              className="generated-image-card__action"
+              onClick={() => setIsPreviewOpen(false)}
+              aria-label="Close image preview"
+            >
+              <X size={16} />
+            </button>
+          </div>
+          <div className="generated-image-lightbox__media">
+            <img src={previewUrl} alt="Generated visual preview" />
+          </div>
+        </div>
+      </div>
+    ) : null}
+    </>
   );
 };

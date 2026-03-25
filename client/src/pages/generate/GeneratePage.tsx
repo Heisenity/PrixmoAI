@@ -2,7 +2,6 @@ import {
   BarChart3,
   Check,
   ChevronDown,
-  ChevronUp,
   CreditCard,
   LayoutDashboard,
   LogOut,
@@ -11,6 +10,8 @@ import {
   MessageSquare,
   PanelLeftClose,
   PanelLeftOpen,
+  PanelRightClose,
+  PanelRightOpen,
   Search as SearchIcon,
   Sparkles,
   CalendarClock,
@@ -68,22 +69,24 @@ const WORKSPACE_MENU_ITEMS = [
   { label: 'Settings', href: '/app/settings', icon: Settings },
 ] as const;
 
-const DEFAULT_CONTENT_FORM = {
+const createDefaultContentForm = (useBrandName = false) => ({
+  useBrandName,
   productName: '',
   productDescription: '',
   platform: 'Instagram',
   goal: 'Drive product discovery and clicks',
   tone: 'Trendy and persuasive',
   audience: '',
-};
+});
 
-const DEFAULT_IMAGE_FORM = {
+const createDefaultImageForm = (useBrandName = false) => ({
+  useBrandName,
   productName: '',
   productDescription: '',
   backgroundStyle: '',
   sourceImageUrl: '',
   prompt: '',
-};
+});
 
 const GENERATE_SIDEBAR_COLLAPSED_STORAGE_KEY =
   'prixmoai.generate.sidebarCollapsed';
@@ -249,6 +252,57 @@ const formatTimestamp = (value: string) => {
 
 const formatMessageTimestamp = (value: string) => formatDateTime(value);
 
+const renderRequiredLabel = (label: string) => (
+  <span className="field__label-row">
+    <span className="field__label">{label}</span>
+    <span className="field__required" aria-hidden="true">
+      ✦
+    </span>
+    <span className="sr-only">Required field</span>
+  </span>
+);
+
+const normalizeWorkspaceError = (
+  message: string | null,
+  mode: WorkspaceMode
+) => {
+  if (!message) {
+    return null;
+  }
+
+  if (/conversation not found/i.test(message)) {
+    return 'That conversation is no longer available. Open another thread or start a new chat.';
+  }
+
+  if (/product name is required|please fill in product name/i.test(message)) {
+    return mode === 'copy'
+      ? 'Add a product or offer name before generating copy.'
+      : 'Add a product or offer name before generating an image.';
+  }
+
+  if (/settings\s*>\s*brand memory|turn off use brand name/i.test(message)) {
+    return 'Add your brand name in Settings > Brand memory, or switch off the saved-brand toggle.';
+  }
+
+  if (/valid source image url/i.test(message)) {
+    return 'Use a valid source image URL, or clear the field if you want text-to-image generation.';
+  }
+
+  if (/only jpg, png, and webp images are supported/i.test(message)) {
+    return 'Upload a JPG, PNG, or WEBP file for the reference image.';
+  }
+
+  if (/6mb or smaller/i.test(message)) {
+    return 'Choose a smaller reference image. Files must be 6MB or smaller.';
+  }
+
+  if (/unable to reach the prixmoai server/i.test(message)) {
+    return 'PrixmoAI could not reach the server. Check that the API is running, then try again.';
+  }
+
+  return message;
+};
+
 const getConversationIcon = (conversation: GenerateConversation) =>
   conversation.type === 'image' ? (
     <ImagePlus size={16} />
@@ -361,15 +415,19 @@ const hydrateCopyInput = (message: GenerateConversationMessage) => {
   }
 
   return {
+    useBrandName:
+      typeof input.useBrandName === 'boolean'
+        ? input.useBrandName
+        : typeof input.brandName === 'string' && input.brandName.trim().length > 0,
     productName,
     productDescription:
       typeof input.productDescription === 'string'
         ? input.productDescription
         : '',
     platform:
-      typeof input.platform === 'string' ? input.platform : DEFAULT_CONTENT_FORM.platform,
-    goal: typeof input.goal === 'string' ? input.goal : DEFAULT_CONTENT_FORM.goal,
-    tone: typeof input.tone === 'string' ? input.tone : DEFAULT_CONTENT_FORM.tone,
+      typeof input.platform === 'string' ? input.platform : createDefaultContentForm().platform,
+    goal: typeof input.goal === 'string' ? input.goal : createDefaultContentForm().goal,
+    tone: typeof input.tone === 'string' ? input.tone : createDefaultContentForm().tone,
     audience: typeof input.audience === 'string' ? input.audience : '',
     keywords: toStringArray(input.keywords),
   };
@@ -385,6 +443,10 @@ const hydrateImageInput = (message: GenerateConversationMessage) => {
   }
 
   return {
+    useBrandName:
+      typeof input.useBrandName === 'boolean'
+        ? input.useBrandName
+        : typeof input.brandName === 'string' && input.brandName.trim().length > 0,
     productName,
     productDescription:
       typeof input.productDescription === 'string'
@@ -456,9 +518,11 @@ export const GeneratePage = () => {
     null
   );
   const [draftTitle, setDraftTitle] = useState('');
+  const [pendingDeleteConversation, setPendingDeleteConversation] =
+    useState<GenerateConversation | null>(null);
   const [keywordInput, setKeywordInput] = useState('');
-  const [contentForm, setContentForm] = useState(DEFAULT_CONTENT_FORM);
-  const [imageForm, setImageForm] = useState(DEFAULT_IMAGE_FORM);
+  const [contentForm, setContentForm] = useState(() => createDefaultContentForm());
+  const [imageForm, setImageForm] = useState(() => createDefaultImageForm());
   const [isAccountMenuOpen, setIsAccountMenuOpen] = useState(false);
 
   useEffect(() => {
@@ -478,6 +542,7 @@ export const GeneratePage = () => {
       const hydratedCopy = hydrateCopyInput(lastCopyMessage);
       if (hydratedCopy) {
         setContentForm({
+          useBrandName: hydratedCopy.useBrandName,
           productName: hydratedCopy.productName,
           productDescription: hydratedCopy.productDescription,
           platform: hydratedCopy.platform,
@@ -588,6 +653,10 @@ export const GeneratePage = () => {
   const hasActiveMessages = Boolean(workspace.activeThread?.messages.length);
   const activeFormId =
     activeWorkspace === 'copy' ? 'generate-copy-form' : 'generate-image-form';
+  const readableWorkspaceError = normalizeWorkspaceError(
+    workspace.error,
+    activeWorkspace
+  );
   const currentPlan = subscription?.plan ?? catalog?.currentSubscription.plan ?? 'free';
   const monthlyLimit =
     subscription?.monthlyLimit ?? catalog?.currentSubscription.monthlyLimit ?? null;
@@ -609,16 +678,15 @@ export const GeneratePage = () => {
   const shouldWatermarkImages =
     !subscription || subscription.plan === 'free';
   const threadTitle = activeConversation?.title || 'New conversation';
-  const threadDescription = activeConversation
-    ? 'Everything generated in this thread stays here.'
-    : 'Generate copy or images below and PrixmoAI will keep the thread history here.';
+  const savedBrandName = profile?.brandName?.trim() || '';
+  const hasSavedBrandName = Boolean(savedBrandName);
   const brandProfileHint = useMemo(() => {
     if (!profile) {
       return null;
     }
 
     const parts = [
-      profile.fullName || null,
+      profile.brandName || null,
       profile.industry || null,
       profile.brandVoice ? `${profile.brandVoice} voice` : null,
       profile.targetAudience ? `${profile.targetAudience} audience` : null,
@@ -631,11 +699,53 @@ export const GeneratePage = () => {
     return parts.join(' • ');
   }, [profile]);
 
+  useEffect(() => {
+    const defaultUseBrandName = Boolean(profile?.brandName?.trim());
+
+    setContentForm((current) => {
+      if (
+        current.productName ||
+        current.productDescription ||
+        current.audience ||
+        keywordInput.trim()
+      ) {
+        return current;
+      }
+
+      return current.useBrandName === defaultUseBrandName
+        ? current
+        : {
+            ...current,
+            useBrandName: defaultUseBrandName,
+          };
+    });
+
+    setImageForm((current) => {
+      if (
+        current.productName ||
+        current.productDescription ||
+        current.sourceImageUrl ||
+        current.prompt ||
+        current.backgroundStyle
+      ) {
+        return current;
+      }
+
+      return current.useBrandName === defaultUseBrandName
+        ? current
+        : {
+            ...current,
+            useBrandName: defaultUseBrandName,
+          };
+    });
+  }, [profile?.brandName]);
+
   const resetComposer = () => {
     setActiveWorkspace('copy');
+    setIsComposerCollapsed(false);
     setKeywordInput('');
-    setContentForm(DEFAULT_CONTENT_FORM);
-    setImageForm(DEFAULT_IMAGE_FORM);
+    setContentForm(createDefaultContentForm(hasSavedBrandName));
+    setImageForm(createDefaultImageForm(hasSavedBrandName));
   };
 
   const startFreshChat = () => {
@@ -656,16 +766,9 @@ export const GeneratePage = () => {
   };
 
   const handleDeleteConversation = async (conversationId: string) => {
-    const shouldDelete = window.confirm(
-      'Delete this conversation? This will remove it from your workspace list.'
-    );
-
-    if (!shouldDelete) {
-      return;
-    }
-
     try {
       await workspace.deleteConversation(conversationId);
+      setPendingDeleteConversation(null);
       if (activeConversation?.id === conversationId) {
         resetComposer();
       }
@@ -678,6 +781,19 @@ export const GeneratePage = () => {
 
   const handleSubmitCopy = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+
+    if (contentForm.useBrandName && !hasSavedBrandName) {
+      workspace.setError(
+        'Add your brand name in Settings > Brand memory, or switch off the saved-brand toggle.'
+      );
+      return;
+    }
+
+    if (!contentForm.productName.trim()) {
+      workspace.setError('Add a product or offer name before generating copy.');
+      return;
+    }
+
     try {
       await workspace.generateCopy({
         ...contentForm,
@@ -690,6 +806,19 @@ export const GeneratePage = () => {
 
   const handleSubmitImage = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+
+    if (imageForm.useBrandName && !hasSavedBrandName) {
+      workspace.setError(
+        'Add your brand name in Settings > Brand memory, or switch off the saved-brand toggle.'
+      );
+      return;
+    }
+
+    if (!imageForm.productName.trim()) {
+      workspace.setError('Add a product or offer name before generating an image.');
+      return;
+    }
+
     try {
       await workspace.generateImage({
         ...imageForm,
@@ -842,9 +971,6 @@ export const GeneratePage = () => {
                 >
                   {isEditing ? (
                     <>
-                      <div className="generate-chat__conversation-icon">
-                        {getConversationIcon(conversation)}
-                      </div>
                       <div className="generate-chat__conversation-copy">
                         <input
                           className="generate-chat__conversation-input"
@@ -893,7 +1019,10 @@ export const GeneratePage = () => {
                       className={`generate-chat__conversation-pill ${
                         isActive ? 'generate-chat__conversation-pill--active' : ''
                       }`}
-                      onClick={() => workspace.openConversation(conversation.id)}
+                      onClick={() => {
+                        workspace.openConversation(conversation.id);
+                        setIsComposerCollapsed(false);
+                      }}
                       aria-label={conversation.title}
                       title={conversation.title}
                     >
@@ -906,11 +1035,12 @@ export const GeneratePage = () => {
                       <button
                         type="button"
                         className="generate-chat__conversation-button"
-                        onClick={() => workspace.openConversation(conversation.id)}
+                        onClick={() => {
+                          workspace.openConversation(conversation.id);
+                          setIsComposerCollapsed(false);
+                        }}
+                        aria-label={`Open conversation ${conversation.title}`}
                       >
-                        <div className="generate-chat__conversation-icon">
-                          {getConversationIcon(conversation)}
-                        </div>
                         <div className="generate-chat__conversation-copy">
                           <strong>{conversation.title}</strong>
                           <span>{conversation.lastMessagePreview || 'No messages yet'}</span>
@@ -933,7 +1063,7 @@ export const GeneratePage = () => {
                           </button>
                           <button
                             type="button"
-                            onClick={() => void handleDeleteConversation(conversation.id)}
+                            onClick={() => setPendingDeleteConversation(conversation)}
                             aria-label="Delete conversation"
                             title="Delete conversation"
                           >
@@ -957,6 +1087,33 @@ export const GeneratePage = () => {
             )
           )}
         </div>
+
+        {pendingDeleteConversation && !isConversationSidebarCollapsed ? (
+          <div className="generate-chat__delete-popover" role="alertdialog" aria-modal="false">
+            <div className="generate-chat__delete-popover-copy">
+              <strong>Delete conversation?</strong>
+              <span>
+                {pendingDeleteConversation.title} will be removed from your workspace list.
+              </span>
+            </div>
+            <div className="generate-chat__delete-popover-actions">
+              <button
+                type="button"
+                className="generate-chat__delete-popover-button"
+                onClick={() => setPendingDeleteConversation(null)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="generate-chat__delete-popover-button generate-chat__delete-popover-button--danger"
+                onClick={() => void handleDeleteConversation(pendingDeleteConversation.id)}
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        ) : null}
 
         <div className="generate-chat__account" ref={accountMenuRef}>
           {isAccountMenuOpen ? (
@@ -1046,194 +1203,203 @@ export const GeneratePage = () => {
 
       <div className="generate-chat__workspace-column">
         <ErrorMessage
-          message={workspace.error}
+          message={readableWorkspaceError}
           title="Generate issue"
           variant="toast"
           onDismiss={() => workspace.setError(null)}
         />
-        <Card
+        <div
           className={`generate-chat__workspace-shell ${
             isComposerCollapsed
               ? 'generate-chat__workspace-shell--composer-collapsed'
               : ''
           }`}
         >
-          <div className="generate-chat__thread-header">
-            <div>
-              <h2>{threadTitle}</h2>
-              <p>{threadDescription}</p>
-            </div>
-          </div>
-
-          <div
-            className="generate-chat__thread"
-            data-lenis-prevent
-            data-lenis-prevent-wheel
-            data-lenis-prevent-touch
-          >
-            {workspace.isLoadingThread ? (
-              <div className="generate-chat__thread-loading">
-                <LoadingSpinner label="Opening conversation" />
+          <Card className="generate-chat__thread-panel">
+            <div className="generate-chat__thread-header">
+              <div>
+                <h2>{threadTitle}</h2>
               </div>
-            ) : workspace.activeThread?.messages.length ? (
-              workspace.activeThread.messages.map((message) => (
-                <div
-                  key={message.id}
-                  className={`generate-chat__message ${
-                    message.role === 'user'
-                      ? 'generate-chat__message--user'
-                      : 'generate-chat__message--assistant'
-                  }`}
-                >
-                  <div className="generate-chat__message-bubble">
-                    <div className="generate-chat__message-meta">
-                      <span>{message.role === 'user' ? 'You' : 'PrixmoAI'}</span>
-                      <strong>{getMessageModeLabel(message)}</strong>
-                      <time dateTime={message.createdAt}>
-                        {formatMessageTimestamp(message.createdAt)}
-                      </time>
-                    </div>
-                    {(() => {
-                      const visibleContent = getUserMessageContent(message);
-                      return visibleContent ? <p>{visibleContent}</p> : null;
-                    })()}
-                    {message.role !== 'user' ? (
+            </div>
+
+            <div
+              className="generate-chat__thread"
+              data-lenis-prevent
+              data-lenis-prevent-wheel
+              data-lenis-prevent-touch
+            >
+              {workspace.isLoadingThread ? (
+                <div className="generate-chat__thread-loading">
+                  <LoadingSpinner label="Opening conversation" />
+                </div>
+              ) : workspace.activeThread?.messages.length ? (
+                workspace.activeThread.messages
+                  .filter(
+                    (message) =>
+                      message.role !== 'user' &&
+                      (message.assets.length > 0 || Boolean(message.content))
+                  )
+                  .map((message) => (
+                  <div
+                    key={message.id}
+                    className="generate-chat__message generate-chat__message--assistant"
+                  >
+                    <div className="generate-chat__message-bubble">
+                      <div className="generate-chat__message-meta">
+                        <span>PrixmoAI</span>
+                        <time dateTime={message.createdAt}>
+                          {formatMessageTimestamp(message.createdAt)}
+                        </time>
+                      </div>
+                      {!message.assets.length && message.content ? (
+                        <p>{message.content}</p>
+                      ) : null}
                       <AssistantAssets
                         assets={message.assets}
                         showImageWatermark={shouldWatermarkImages}
                       />
-                    ) : null}
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <div className="generate-chat__thread-placeholder">
+                  <strong>No output yet</strong>
+                  <p>
+                    Generate something below and the result will appear here as a
+                    saved thread turn.
+                  </p>
+                </div>
+              )}
+
+              {(workspace.isGeneratingCopy || workspace.isGeneratingImage) && (
+                <div className="generate-chat__message generate-chat__message--assistant generate-chat__message--loading">
+                  <div className="generate-chat__message-bubble generate-chat__message-bubble--loading">
+                    <GenerationBlackHoleLoader
+                      label={
+                        workspace.isGeneratingCopy
+                          ? 'Building copy for this thread'
+                          : 'Creating a visual for this thread'
+                      }
+                    />
                   </div>
                 </div>
-              ))
-            ) : (
-              <div className="generate-chat__thread-placeholder">
-                <strong>No output yet</strong>
-                <p>
-                  Your captions, hashtags, reel scripts, and generated images will
-                  appear here in this conversation.
-                </p>
-              </div>
-            )}
+              )}
 
-            {(workspace.isGeneratingCopy || workspace.isGeneratingImage) && (
-              <div className="generate-chat__message generate-chat__message--assistant generate-chat__message--loading">
-                <div className="generate-chat__message-bubble generate-chat__message-bubble--loading">
-                  <GenerationBlackHoleLoader
-                    label={
-                      workspace.isGeneratingCopy
-                        ? 'Building copy for this thread'
-                        : 'Creating a visual for this thread'
-                    }
-                  />
-                </div>
-              </div>
-            )}
+              <div ref={threadEndRef} />
+            </div>
+          </Card>
 
-            <div ref={threadEndRef} />
-          </div>
-
-          <div
+          <Card
             className={`generate-chat__composer ${
               isComposerCollapsed ? 'generate-chat__composer--collapsed' : ''
             }`}
           >
             <div className="generate-chat__composer-header">
-              <div className="generate-chat__composer-controls">
-                <div className="generate-chat__switcher">
-                  <button
-                    type="button"
-                    className={`generate-chat__switcher-button ${
-                      activeWorkspace === 'copy'
-                        ? 'generate-chat__switcher-button--active'
-                        : ''
-                    }`}
-                    onClick={() => setActiveWorkspace('copy')}
-                  >
-                    <Sparkles size={16} />
-                    Copy
-                  </button>
-                  <button
-                    type="button"
-                    className={`generate-chat__switcher-button ${
-                      activeWorkspace === 'image'
-                        ? 'generate-chat__switcher-button--active'
-                        : ''
-                    }`}
-                    onClick={() => setActiveWorkspace('image')}
-                  >
-                    <ImagePlus size={16} />
-                    Image
-                  </button>
+              <div className="generate-chat__composer-topline">
+                <div className="generate-chat__composer-controls">
+                  <div className="generate-chat__switcher">
+                    <button
+                      type="button"
+                      className={`generate-chat__switcher-button ${
+                        activeWorkspace === 'copy'
+                          ? 'generate-chat__switcher-button--active'
+                          : ''
+                      }`}
+                      onClick={() => {
+                        setActiveWorkspace('copy');
+                        setIsComposerCollapsed(false);
+                      }}
+                      aria-pressed={activeWorkspace === 'copy'}
+                    >
+                      <Sparkles size={16} />
+                      Content
+                    </button>
+                    <button
+                      type="button"
+                      className={`generate-chat__switcher-button ${
+                        activeWorkspace === 'image'
+                          ? 'generate-chat__switcher-button--active'
+                          : ''
+                      }`}
+                      onClick={() => {
+                        setActiveWorkspace('image');
+                        setIsComposerCollapsed(false);
+                      }}
+                      aria-pressed={activeWorkspace === 'image'}
+                    >
+                      <ImagePlus size={16} />
+                      Image
+                    </button>
+                  </div>
                 </div>
-
-                <div className="generate-chat__actions generate-chat__actions--header">
-                  <Button
-                    type="submit"
-                    size="md"
-                    form={activeFormId}
+                <div className="generate-chat__composer-side">
+                  <div className="generate-chat__composer-toolbar">
+                    <button
+                      type="button"
+                      className={`generate-chat__composer-toggle ${
+                        isComposerCollapsed
+                          ? 'generate-chat__composer-toggle--collapsed'
+                          : ''
+                      }`}
+                      onClick={() =>
+                        setIsComposerCollapsed((current) => !current)
+                      }
+                      aria-expanded={!isComposerCollapsed}
+                      aria-controls="generate-composer-body"
+                      aria-label={
+                        isComposerCollapsed
+                          ? 'Show generator panel'
+                          : 'Hide generator panel'
+                      }
+                      title={
+                        isComposerCollapsed
+                          ? 'Show generator panel'
+                          : 'Hide generator panel'
+                      }
+                    >
+                      {isComposerCollapsed ? (
+                        <PanelRightOpen size={16} />
+                      ) : (
+                        <PanelRightClose size={16} />
+                      )}
+                    </button>
+                  </div>
+                </div>
+              </div>
+              <div className="generate-chat__actions generate-chat__actions--header">
+                <Button
+                  type="submit"
+                  size="sm"
+                  form={activeFormId}
+                  disabled={
+                    activeWorkspace === 'copy'
+                      ? workspace.isGeneratingCopy
+                      : workspace.isGeneratingImage
+                  }
+                >
+                  {activeWorkspace === 'copy'
+                    ? workspace.isGeneratingCopy
+                      ? 'Generating...'
+                      : 'Generate content'
+                    : workspace.isGeneratingImage
+                      ? 'Generating...'
+                      : 'Generate image'}
+                </Button>
+                {workspace.activeThread?.messages.length ? (
+                  <RegenerateButton
+                    size="sm"
                     disabled={
                       activeWorkspace === 'copy'
                         ? workspace.isGeneratingCopy
                         : workspace.isGeneratingImage
                     }
-                  >
-                    {activeWorkspace === 'copy'
-                      ? workspace.isGeneratingCopy
-                        ? 'Generating...'
-                        : 'Generate copy'
-                      : workspace.isGeneratingImage
-                        ? 'Generating...'
-                        : 'Generate image'}
-                  </Button>
-                  {workspace.activeThread?.messages.length ? (
-                    <RegenerateButton
-                      disabled={
-                        activeWorkspace === 'copy'
-                          ? workspace.isGeneratingCopy
-                          : workspace.isGeneratingImage
-                      }
-                      onClick={
-                        activeWorkspace === 'copy'
-                          ? regenerateCopy
-                          : regenerateImage
-                      }
-                    />
-                  ) : null}
-                </div>
-              </div>
-              <div className="generate-chat__composer-note">
-                <strong>
-                  {activeWorkspace === 'copy'
-                    ? 'Copy generation'
-                    : imageForm.sourceImageUrl.trim()
-                      ? 'Image-to-image generation'
-                      : 'Image generation'}
-                </strong>
-                <span>
-                  {activeConversation
-                    ? ''
-                    : ''}
-                </span>
-              </div>
-              <div className="generate-chat__composer-toolbar">
-                {isComposerCollapsed ? (
-                  <span className="generate-chat__composer-status">
-                    Generator hidden
-                  </span>
+                    onClick={
+                      activeWorkspace === 'copy'
+                        ? regenerateCopy
+                        : regenerateImage
+                    }
+                  />
                 ) : null}
-                <button
-                  type="button"
-                  className="generate-chat__composer-toggle"
-                  onClick={() =>
-                    setIsComposerCollapsed((current) => !current)
-                  }
-                  aria-expanded={!isComposerCollapsed}
-                  aria-controls="generate-composer-body"
-                >
-                  {isComposerCollapsed ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-                  {isComposerCollapsed ? 'Show panel' : 'Hide panel'}
-                </button>
               </div>
             </div>
 
@@ -1253,7 +1419,7 @@ export const GeneratePage = () => {
                 >
                 <div className="generate-chat__form-grid generate-chat__form-grid--tight">
                   <label className="field">
-                    <span className="field__label">Product or offer name</span>
+                    {renderRequiredLabel('Product or offer name')}
                     <input
                       className="field__control"
                       value={contentForm.productName}
@@ -1266,6 +1432,44 @@ export const GeneratePage = () => {
                       required
                     />
                   </label>
+                  <div className="field">
+                    <span className="field__label">Saved brand name</span>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={contentForm.useBrandName}
+                      className={`generate-chat__brand-toggle ${
+                        contentForm.useBrandName
+                          ? 'generate-chat__brand-toggle--active'
+                          : ''
+                      }`}
+                      onClick={() =>
+                        setContentForm((current) => ({
+                          ...current,
+                          useBrandName: hasSavedBrandName
+                            ? !current.useBrandName
+                            : false,
+                        }))
+                      }
+                      disabled={!hasSavedBrandName}
+                    >
+                      <span className="generate-chat__brand-toggle-copy">
+                        <strong>
+                          {hasSavedBrandName ? savedBrandName : 'Use saved brand name'}
+                        </strong>
+                        <span>
+                          {hasSavedBrandName
+                            ? contentForm.useBrandName
+                              ? 'Brand memory is shaping this content.'
+                              : 'Generate without the saved brand name.'
+                            : 'Add a brand name in Settings > Brand memory to enable.'}
+                        </span>
+                      </span>
+                      <span className="generate-chat__brand-toggle-track" aria-hidden="true">
+                        <span className="generate-chat__brand-toggle-thumb" />
+                      </span>
+                    </button>
+                  </div>
                   <Input
                     label="Audience"
                     value={contentForm.audience}
@@ -1359,7 +1563,7 @@ export const GeneratePage = () => {
                 >
                 <div className="generate-chat__form-grid generate-chat__form-grid--tight">
                   <label className="field">
-                    <span className="field__label">Product or offer name</span>
+                    {renderRequiredLabel('Product or offer name')}
                     <input
                       className="field__control"
                       value={imageForm.productName}
@@ -1372,6 +1576,44 @@ export const GeneratePage = () => {
                       required
                     />
                   </label>
+                  <div className="field">
+                    <span className="field__label">Saved brand name</span>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={imageForm.useBrandName}
+                      className={`generate-chat__brand-toggle ${
+                        imageForm.useBrandName
+                          ? 'generate-chat__brand-toggle--active'
+                          : ''
+                      }`}
+                      onClick={() =>
+                        setImageForm((current) => ({
+                          ...current,
+                          useBrandName: hasSavedBrandName
+                            ? !current.useBrandName
+                            : false,
+                        }))
+                      }
+                      disabled={!hasSavedBrandName}
+                    >
+                      <span className="generate-chat__brand-toggle-copy">
+                        <strong>
+                          {hasSavedBrandName ? savedBrandName : 'Use saved brand name'}
+                        </strong>
+                        <span>
+                          {hasSavedBrandName
+                            ? imageForm.useBrandName
+                              ? 'Brand memory is shaping this visual.'
+                              : 'Generate without the saved brand name.'
+                            : 'Add a brand name in Settings > Brand memory to enable.'}
+                        </span>
+                      </span>
+                      <span className="generate-chat__brand-toggle-track" aria-hidden="true">
+                        <span className="generate-chat__brand-toggle-thumb" />
+                      </span>
+                    </button>
+                  </div>
                   <Select
                     label="Background style"
                     value={
@@ -1492,8 +1734,8 @@ export const GeneratePage = () => {
                 </form>
               )}
             </div>
-          </div>
-        </Card>
+          </Card>
+        </div>
       </div>
     </div>
   );

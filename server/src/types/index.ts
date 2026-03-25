@@ -42,6 +42,7 @@ export interface ApiResponse<T = unknown> {
 export interface BrandProfile {
   id: string;
   userId: string;
+  brandName: string | null;
   fullName: string;
   phoneNumber: string | null;
   username: string | null;
@@ -55,6 +56,7 @@ export interface BrandProfile {
 }
 
 export interface BrandProfileInput {
+  brandName: string;
   fullName: string;
   phoneNumber?: string | null;
   username?: string | null;
@@ -66,6 +68,8 @@ export interface BrandProfileInput {
 }
 
 export interface ProductInput {
+  brandName?: string | null;
+  useBrandName?: boolean;
   productName: string;
   productDescription?: string | null;
   productImageUrl?: string | null;

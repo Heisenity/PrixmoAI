@@ -4,6 +4,7 @@ import type { BrandProfile, ProductInput } from '../types';
 const sampleBrandProfile: BrandProfile = {
   id: 'sample-brand-profile',
   userId: 'sample-user',
+  brandName: 'PrixmoAI',
   fullName: 'PrixmoAI',
   phoneNumber: '+91 98765 43210',
   username: 'prixmoai',
@@ -18,6 +19,8 @@ const sampleBrandProfile: BrandProfile = {
 };
 
 const sampleProductInput: ProductInput = {
+  brandName: 'PrixmoAI',
+  useBrandName: true,
   productName: 'AI onboarding workshop',
   productDescription:
     'A live training session that helps small teams learn how to use AI tools in daily operations.',

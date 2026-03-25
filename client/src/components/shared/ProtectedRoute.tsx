@@ -5,7 +5,9 @@ import { LoadingSpinner } from './LoadingSpinner';
 export const ProtectedRoute = () => {
   const { session, user, profile, isInitializing } = useAuth();
   const location = useLocation();
-  const isProfileComplete = Boolean(profile?.fullName && profile?.phoneNumber);
+  const isProfileComplete = Boolean(
+    profile?.brandName && profile?.fullName && profile?.phoneNumber
+  );
   const isEmailVerified =
     !user?.email ||
     Boolean(user.email_confirmed_at) ||
@@ -38,16 +40,7 @@ export const ProtectedRoute = () => {
   }
 
   if ((!profile || !isProfileComplete) && location.pathname !== '/onboarding') {
-    return (
-      <Navigate
-        to="/onboarding"
-        replace
-        state={{
-          authNotice:
-            'Finish your profile with your name and phone number to unlock the workspace.',
-        }}
-      />
-    );
+    return <Navigate to="/onboarding" replace />;
   }
 
   return <Outlet />;

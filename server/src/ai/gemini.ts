@@ -32,12 +32,20 @@ type GeminiResponse = {
   candidates?: GeminiCandidate[];
 };
 
-const captionVariantSchema = z.object({
-  hook: z.string().trim().min(1),
-  mainCopy: z.string().trim().min(1),
-  shortCaption: z.string().trim().min(1),
-  cta: z.string().trim().min(1),
-});
+const captionVariantSchema = z
+  .object({
+    hook: z.string().trim().min(1),
+    mainCopy: z.string().trim().min(1),
+    shortCaption: z.string().trim().min(1).optional(),
+    Caption: z.string().trim().min(1).optional(),
+    cta: z.string().trim().min(1),
+  })
+  .transform((value) => ({
+    hook: value.hook,
+    mainCopy: value.mainCopy,
+    shortCaption: value.shortCaption ?? value.Caption ?? '',
+    cta: value.cta,
+  }));
 
 const captionResponseSchema = z.object({
   captions: z

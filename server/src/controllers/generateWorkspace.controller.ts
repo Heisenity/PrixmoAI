@@ -28,7 +28,11 @@ import type {
   GenerateConversationImageInput,
   UpdateGenerateConversationInput,
 } from '../schemas/generateWorkspace.schema';
-import type { GenerateConversation, GenerateConversationType } from '../types';
+import type {
+  BrandProfile,
+  GenerateConversation,
+  GenerateConversationType,
+} from '../types';
 
 type AuthenticatedRequest<
   Params = Record<string, string>,
@@ -98,6 +102,34 @@ const resolveConversationType = (
   }
 
   return 'mixed';
+};
+
+const resolveBrandPreference = (
+  brandProfile: BrandProfile | null,
+  useBrandName?: boolean
+) => {
+  const shouldUseBrandName =
+    useBrandName ?? Boolean(brandProfile?.brandName?.trim());
+
+  if (!shouldUseBrandName) {
+    return {
+      brandName: null,
+      useBrandName: false,
+    };
+  }
+
+  const brandName = brandProfile?.brandName?.trim();
+
+  if (!brandName) {
+    throw new Error(
+      'Add your brand name in Settings > Brand memory, or turn off Use brand name.'
+    );
+  }
+
+  return {
+    brandName,
+    useBrandName: true,
+  };
 };
 
 const ensureConversation = async (
@@ -344,23 +376,27 @@ export const generateWorkspaceCopy = async (
       req.body.conversationId
     );
     const brandProfile = await getBrandProfileByUserId(client, req.user.id);
-    const contentPack = await generateContentPack(brandProfile, req.body);
-    const userPromptSummary = buildCopyPromptSummary(req.body);
+    const generationInput = {
+      ...req.body,
+      ...resolveBrandPreference(brandProfile, req.body.useBrandName),
+    };
+    const contentPack = await generateContentPack(brandProfile, generationInput);
+    const userPromptSummary = buildCopyPromptSummary(generationInput);
 
     const conversation =
       existingConversation ??
       (await createGenerateConversation(client, req.user.id, {
         title: deriveConversationTitle([
-          req.body.productName,
-          req.body.productDescription,
-          req.body.audience,
+          generationInput.productName,
+          generationInput.productDescription,
+          generationInput.audience,
         ]),
         type: 'copy',
         lastMessagePreview: userPromptSummary,
       }));
 
     const content = await saveGeneratedContent(client, req.user.id, {
-      ...req.body,
+      ...generationInput,
       conversationId: conversation.id,
       brandProfileId: brandProfile?.id ?? null,
       ...contentPack,
@@ -373,7 +409,7 @@ export const generateWorkspaceCopy = async (
       content: userPromptSummary,
       metadata: {
         mode: 'copy',
-        input: req.body,
+        input: generationInput,
       },
     });
 
@@ -381,7 +417,7 @@ export const generateWorkspaceCopy = async (
       conversationId: conversation.id,
       role: 'assistant',
       messageType: 'copy',
-      content: buildAssistantCopySummary(req.body.productName),
+      content: buildAssistantCopySummary(generationInput.productName),
       metadata: {
         mode: 'copy',
         contentId: content.id,
@@ -429,13 +465,13 @@ export const generateWorkspaceCopy = async (
       conversationId: conversation.id,
       provider: 'gemini',
       brandProfileId: brandProfile?.id ?? null,
-      platform: req.body.platform ?? null,
-      goal: req.body.goal ?? null,
-      tone: req.body.tone ?? null,
-      audience: req.body.audience ?? null,
-      productName: req.body.productName,
-      productDescription: req.body.productDescription ?? null,
-      keywords: req.body.keywords ?? [],
+      platform: generationInput.platform ?? null,
+      goal: generationInput.goal ?? null,
+      tone: generationInput.tone ?? null,
+      audience: generationInput.audience ?? null,
+      productName: generationInput.productName,
+      productDescription: generationInput.productDescription ?? null,
+      keywords: generationInput.keywords ?? [],
     });
 
     const thread = await getGenerateConversationThread(
@@ -479,27 +515,31 @@ export const generateWorkspaceImage = async (
       req.body.conversationId
     );
     const brandProfile = await getBrandProfileByUserId(client, req.user.id);
-    const result = await generateProductImage(brandProfile, req.body);
-    const userPromptSummary = buildImagePromptSummary(req.body);
+    const generationInput = {
+      ...req.body,
+      ...resolveBrandPreference(brandProfile, req.body.useBrandName),
+    };
+    const result = await generateProductImage(brandProfile, generationInput);
+    const userPromptSummary = buildImagePromptSummary(generationInput);
 
     const conversation: GenerateConversation =
       existingConversation ??
       (await createGenerateConversation(client, req.user.id, {
         title: deriveConversationTitle([
-          req.body.productName,
-          req.body.productDescription,
-          req.body.prompt,
+          generationInput.productName,
+          generationInput.productDescription,
+          generationInput.prompt,
         ]),
         type: 'image',
         lastMessagePreview: userPromptSummary,
       }));
 
     const image = await saveGeneratedImage(client, req.user.id, {
-      contentId: req.body.contentId ?? null,
+      contentId: generationInput.contentId ?? null,
       conversationId: conversation.id,
-      sourceImageUrl: req.body.sourceImageUrl ?? null,
+      sourceImageUrl: generationInput.sourceImageUrl ?? null,
       generatedImageUrl: result.imageUrl,
-      backgroundStyle: req.body.backgroundStyle ?? null,
+      backgroundStyle: generationInput.backgroundStyle ?? null,
       prompt: result.promptUsed,
     });
 
@@ -510,7 +550,7 @@ export const generateWorkspaceImage = async (
       content: userPromptSummary,
       metadata: {
         mode: 'image',
-        input: req.body,
+        input: generationInput,
       },
     });
 
@@ -518,7 +558,7 @@ export const generateWorkspaceImage = async (
       conversationId: conversation.id,
       role: 'assistant',
       messageType: 'image',
-      content: buildAssistantImageSummary(req.body.productName),
+      content: buildAssistantImageSummary(generationInput.productName),
       metadata: {
         mode: 'image',
         provider: result.provider,
@@ -544,8 +584,8 @@ export const generateWorkspaceImage = async (
           assetType: 'prompt',
           payload: {
             promptUsed: result.promptUsed,
-            sourceImageUrl: req.body.sourceImageUrl ?? null,
-            backgroundStyle: req.body.backgroundStyle ?? null,
+            sourceImageUrl: generationInput.sourceImageUrl ?? null,
+            backgroundStyle: generationInput.backgroundStyle ?? null,
           },
         },
       ],
@@ -562,12 +602,12 @@ export const generateWorkspaceImage = async (
       conversationId: conversation.id,
       provider: result.provider,
       brandProfileId: brandProfile?.id ?? null,
-      contentId: req.body.contentId ?? null,
-      productName: req.body.productName,
-      productDescription: req.body.productDescription ?? null,
-      backgroundStyle: req.body.backgroundStyle ?? null,
+      contentId: generationInput.contentId ?? null,
+      productName: generationInput.productName,
+      productDescription: generationInput.productDescription ?? null,
+      backgroundStyle: generationInput.backgroundStyle ?? null,
       prompt: result.promptUsed,
-      sourceImageUrl: req.body.sourceImageUrl ?? null,
+      sourceImageUrl: generationInput.sourceImageUrl ?? null,
     });
 
     const thread = await getGenerateConversationThread(

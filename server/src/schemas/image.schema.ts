@@ -19,6 +19,7 @@ const optionalTrimmedUrl = (message: string) =>
 export const generateImageSchema = z.object({
   contentId: z.string().uuid().optional(),
   sourceImageUrl: optionalTrimmedUrl('Please enter a valid source image URL'),
+  useBrandName: z.boolean().optional(),
   productName: z.string().trim().min(1, 'Product name is required'),
   productDescription: optionalTrimmedString(),
   backgroundStyle: optionalTrimmedString(),

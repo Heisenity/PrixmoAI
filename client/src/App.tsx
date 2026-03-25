@@ -1,21 +1,71 @@
 import Lenis from 'lenis';
-import { useEffect } from 'react';
+import { Suspense, lazy, useEffect } from 'react';
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { AuthProvider } from './hooks/useAuth';
 import { ProtectedRoute } from './components/shared/ProtectedRoute';
 import { PageWrapper } from './components/layout/PageWrapper';
-import { HomePage } from './pages/home/HomePage';
-import { LoginPage } from './pages/auth/LoginPage';
-import { SignupPage } from './pages/auth/SignupPage';
-import { ForgotPasswordPage } from './pages/auth/ForgotPasswordPage';
-import { ResetPasswordPage } from './pages/auth/ResetPasswordPage';
-import { OnboardingPage } from './pages/onboarding/OnboardingPage';
-import { DashboardPage } from './pages/dashboard/DashboardPage';
-import { GeneratePage } from './pages/generate/GeneratePage';
-import { AnalyticsPage } from './pages/analytics/AnalyticsPage';
-import { SchedulerPage } from './pages/scheduler/SchedulerPage';
-import { BillingPage } from './pages/billing/BillingPage';
-import { SettingsPage } from './pages/settings/SettingsPage';
+import { LoadingSpinner } from './components/shared/LoadingSpinner';
+
+const HomePage = lazy(() =>
+  import('./pages/home/HomePage').then((module) => ({
+    default: module.HomePage,
+  }))
+);
+const LoginPage = lazy(() =>
+  import('./pages/auth/LoginPage').then((module) => ({
+    default: module.LoginPage,
+  }))
+);
+const SignupPage = lazy(() =>
+  import('./pages/auth/SignupPage').then((module) => ({
+    default: module.SignupPage,
+  }))
+);
+const ForgotPasswordPage = lazy(() =>
+  import('./pages/auth/ForgotPasswordPage').then((module) => ({
+    default: module.ForgotPasswordPage,
+  }))
+);
+const ResetPasswordPage = lazy(() =>
+  import('./pages/auth/ResetPasswordPage').then((module) => ({
+    default: module.ResetPasswordPage,
+  }))
+);
+const OnboardingPage = lazy(() =>
+  import('./pages/onboarding/OnboardingPage').then((module) => ({
+    default: module.OnboardingPage,
+  }))
+);
+const DashboardPage = lazy(() =>
+  import('./pages/dashboard/DashboardPage').then((module) => ({
+    default: module.DashboardPage,
+  }))
+);
+const GeneratePage = lazy(() =>
+  import('./pages/generate/GeneratePage').then((module) => ({
+    default: module.GeneratePage,
+  }))
+);
+const AnalyticsPage = lazy(() =>
+  import('./pages/analytics/AnalyticsPage').then((module) => ({
+    default: module.AnalyticsPage,
+  }))
+);
+const SchedulerPage = lazy(() =>
+  import('./pages/scheduler/SchedulerPage').then((module) => ({
+    default: module.SchedulerPage,
+  }))
+);
+const BillingPage = lazy(() =>
+  import('./pages/billing/BillingPage').then((module) => ({
+    default: module.BillingPage,
+  }))
+);
+const SettingsPage = lazy(() =>
+  import('./pages/settings/SettingsPage').then((module) => ({
+    default: module.SettingsPage,
+  }))
+);
 
 const SmoothScrollBridge = () => {
   useEffect(() => {
@@ -51,28 +101,36 @@ const SmoothScrollBridge = () => {
 const RouterTree = () => (
   <BrowserRouter>
     <SmoothScrollBridge />
-    <Routes>
-      <Route path="/" element={<HomePage />} />
-      <Route path="/login" element={<LoginPage />} />
-      <Route path="/signup" element={<SignupPage />} />
-      <Route path="/forgot-password" element={<ForgotPasswordPage />} />
-      <Route path="/reset-password" element={<ResetPasswordPage />} />
+    <Suspense
+      fallback={
+        <div className="screen-center">
+          <LoadingSpinner label="Loading workspace" />
+        </div>
+      }
+    >
+      <Routes>
+        <Route path="/" element={<HomePage />} />
+        <Route path="/login" element={<LoginPage />} />
+        <Route path="/signup" element={<SignupPage />} />
+        <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+        <Route path="/reset-password" element={<ResetPasswordPage />} />
 
         <Route element={<ProtectedRoute />}>
-        <Route path="/onboarding" element={<OnboardingPage />} />
-        <Route path="/app" element={<PageWrapper />}>
-          <Route index element={<Navigate to="/app/generate" replace />} />
-          <Route path="dashboard" element={<DashboardPage />} />
-          <Route path="generate" element={<GeneratePage />} />
-          <Route path="analytics" element={<AnalyticsPage />} />
-          <Route path="scheduler" element={<SchedulerPage />} />
-          <Route path="billing" element={<BillingPage />} />
-          <Route path="settings" element={<SettingsPage />} />
+          <Route path="/onboarding" element={<OnboardingPage />} />
+          <Route path="/app" element={<PageWrapper />}>
+            <Route index element={<Navigate to="/app/generate" replace />} />
+            <Route path="dashboard" element={<DashboardPage />} />
+            <Route path="generate" element={<GeneratePage />} />
+            <Route path="analytics" element={<AnalyticsPage />} />
+            <Route path="scheduler" element={<SchedulerPage />} />
+            <Route path="billing" element={<BillingPage />} />
+            <Route path="settings" element={<SettingsPage />} />
+          </Route>
         </Route>
-      </Route>
 
-      <Route path="*" element={<Navigate to="/" replace />} />
-    </Routes>
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    </Suspense>
   </BrowserRouter>
 );
 

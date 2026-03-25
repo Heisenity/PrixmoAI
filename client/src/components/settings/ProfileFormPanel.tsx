@@ -1,15 +1,17 @@
 import { useState } from 'react';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
+import { Select } from '../ui/select';
 import { ErrorMessage } from '../shared/ErrorMessage';
 import { Card } from '../ui/card';
 import type { BrandProfile, SaveProfileInput } from '../../types';
+import { BRAND_VOICE_OPTIONS } from '../../lib/constants';
 
 type ProfileFormPanelProps = {
   profile: BrandProfile | null;
   defaults?: Partial<SaveProfileInput>;
   heading: string;
-  subheading: string;
+  subheading?: string;
   submitLabel: string;
   onSubmit: (input: SaveProfileInput) => Promise<void>;
 };
@@ -23,6 +25,7 @@ export const ProfileFormPanel = ({
   onSubmit,
 }: ProfileFormPanelProps) => {
   const [form, setForm] = useState<SaveProfileInput>({
+    brandName: profile?.brandName || defaults?.brandName || '',
     fullName: profile?.fullName || defaults?.fullName || '',
     phoneNumber: profile?.phoneNumber || defaults?.phoneNumber || '',
     username: profile?.username || defaults?.username || '',
@@ -35,6 +38,11 @@ export const ProfileFormPanel = ({
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const brandVoiceOptions =
+    form.brandVoice &&
+    !(BRAND_VOICE_OPTIONS as readonly string[]).includes(form.brandVoice)
+      ? [form.brandVoice, ...BRAND_VOICE_OPTIONS]
+      : BRAND_VOICE_OPTIONS;
 
   const updateField = (key: keyof SaveProfileInput, value: string) => {
     setForm((current) => ({
@@ -51,6 +59,7 @@ export const ProfileFormPanel = ({
 
     try {
       const payload: SaveProfileInput = {
+        brandName: form.brandName.trim(),
         fullName: form.fullName.trim(),
         phoneNumber: form.phoneNumber?.trim(),
         ...(form.username?.trim() ? { username: form.username.trim() } : {}),
@@ -77,10 +86,17 @@ export const ProfileFormPanel = ({
       <div className="profile-panel__header">
         <p className="section-eyebrow">Brand memory</p>
         <h2>{heading}</h2>
-        <p>{subheading}</p>
+        {subheading ? <p>{subheading}</p> : null}
       </div>
 
       <form className="form-grid" onSubmit={handleSubmit}>
+        <Input
+          label="Brand / business name"
+          value={form.brandName || ''}
+          onChange={(event) => updateField('brandName', event.target.value)}
+          placeholder="PrixmoAI"
+          required
+        />
         <Input
           label="Full name"
           value={form.fullName || ''}
@@ -116,12 +132,18 @@ export const ProfileFormPanel = ({
           onChange={(event) => updateField('targetAudience', event.target.value)}
           placeholder="Young professionals, boutique shoppers, local customers"
         />
-        <Input
+        <Select
           label="Brand voice"
           value={form.brandVoice || ''}
           onChange={(event) => updateField('brandVoice', event.target.value)}
-          placeholder="Minimal, warm, premium, witty..."
-        />
+        >
+          <option value="">Select a brand voice</option>
+          {brandVoiceOptions.map((option) => (
+            <option key={option} value={option}>
+              {option}
+            </option>
+          ))}
+        </Select>
         <label className="field field--full">
           <span className="field__label">Brand description</span>
           <textarea

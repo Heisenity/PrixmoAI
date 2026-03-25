@@ -24,7 +24,7 @@ export const DashboardPage = () => {
   const { overview } = useAnalytics();
   const { catalog } = useBilling();
   const { history: contentHistory, refreshHistory } = useContent();
-  const { history: imageHistory } = useImages();
+  const { history: imageHistory, refreshHistory: refreshImageHistory } = useImages();
   const { posts } = useScheduler();
   const [conversations, setConversations] = useState<GenerateConversation[]>([]);
 
@@ -44,7 +44,7 @@ export const DashboardPage = () => {
           { token }
         );
         setConversations(nextConversations);
-        await refreshHistory();
+        await Promise.all([refreshHistory(), refreshImageHistory()]);
       } catch {
         return;
       }
@@ -66,7 +66,7 @@ export const DashboardPage = () => {
       window.clearInterval(intervalId);
       window.removeEventListener('focus', handleFocus);
     };
-  }, [token, refreshHistory]);
+  }, [token, refreshHistory, refreshImageHistory]);
 
   const liveConversationMap = useMemo(
     () => new Map(conversations.map((conversation) => [conversation.id, conversation])),
@@ -81,6 +81,16 @@ export const DashboardPage = () => {
         )
         .slice(0, 3),
     [contentHistory?.items, liveConversationMap]
+  );
+
+  const recentThreadImages = useMemo(
+    () =>
+      (imageHistory?.items ?? [])
+        .filter(
+          (item) => item.conversationId && liveConversationMap.has(item.conversationId)
+        )
+        .slice(0, 3),
+    [imageHistory?.items, liveConversationMap]
   );
 
   const openRecentConversation = (conversationId: string | null) => {
@@ -183,18 +193,27 @@ export const DashboardPage = () => {
             </div>
             <Link to="/app/generate">Generate</Link>
           </div>
-          {imageHistory?.items.length ? (
+          {recentThreadImages.length ? (
             <div className="image-strip">
-              {imageHistory.items.slice(0, 3).map((item) => (
-                <a key={item.id} href={item.generatedImageUrl} target="_blank" rel="noreferrer">
-                  <img src={item.generatedImageUrl} alt={item.prompt || item.id} />
-                </a>
+              {recentThreadImages.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  className="image-strip__item"
+                  onClick={() => openRecentConversation(item.conversationId)}
+                >
+                  <img
+                    src={item.generatedImageUrl}
+                    alt={item.prompt || item.id}
+                  />
+                  <span>{formatDateTime(item.createdAt)}</span>
+                </button>
               ))}
             </div>
           ) : (
             <EmptyState
               title="No images yet"
-              description="Once the first generation lands, the gallery will populate here."
+              description="Once the first conversation-linked image lands, the gallery will populate here."
             />
           )}
         </Card>

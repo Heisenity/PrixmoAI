@@ -14,6 +14,7 @@ import type {
   UploadSourceImageInput,
 } from '../schemas/image.schema';
 import { uploadSourceImage as uploadSourceImageToStorage } from '../services/storage.service';
+import type { BrandProfile } from '../types';
 
 type AuthenticatedRequest<
   Params = Record<string, string>,
@@ -32,6 +33,34 @@ const parsePositiveInt = (value: unknown, fallback: number): number => {
 
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+};
+
+const resolveBrandPreference = (
+  brandProfile: BrandProfile | null,
+  useBrandName?: boolean
+) => {
+  const shouldUseBrandName =
+    useBrandName ?? Boolean(brandProfile?.brandName?.trim());
+
+  if (!shouldUseBrandName) {
+    return {
+      brandName: null,
+      useBrandName: false,
+    };
+  }
+
+  const brandName = brandProfile?.brandName?.trim();
+
+  if (!brandName) {
+    throw new Error(
+      'Add your brand name in Settings > Brand memory, or turn off Use brand name.'
+    );
+  }
+
+  return {
+    brandName,
+    useBrandName: true,
+  };
 };
 
 const escapeXml = (value: string) =>
@@ -109,12 +138,16 @@ export const generateImage = async (
   try {
     const client = requireUserClient(req.accessToken);
     const brandProfile = await getBrandProfileByUserId(client, req.user.id);
-    const result = await generateProductImage(brandProfile, req.body);
+    const generationInput = {
+      ...req.body,
+      ...resolveBrandPreference(brandProfile, req.body.useBrandName),
+    };
+    const result = await generateProductImage(brandProfile, generationInput);
     const image = await saveGeneratedImage(client, req.user.id, {
-      contentId: req.body.contentId ?? null,
-      sourceImageUrl: req.body.sourceImageUrl ?? null,
+      contentId: generationInput.contentId ?? null,
+      sourceImageUrl: generationInput.sourceImageUrl ?? null,
       generatedImageUrl: result.imageUrl,
-      backgroundStyle: req.body.backgroundStyle ?? null,
+      backgroundStyle: generationInput.backgroundStyle ?? null,
       prompt: result.promptUsed,
     });
 
@@ -122,12 +155,12 @@ export const generateImage = async (
       imageId: image.id,
       provider: result.provider,
       brandProfileId: brandProfile?.id ?? null,
-      contentId: req.body.contentId ?? null,
-      productName: req.body.productName,
-      productDescription: req.body.productDescription ?? null,
-      backgroundStyle: req.body.backgroundStyle ?? null,
+      contentId: generationInput.contentId ?? null,
+      productName: generationInput.productName,
+      productDescription: generationInput.productDescription ?? null,
+      backgroundStyle: generationInput.backgroundStyle ?? null,
       prompt: result.promptUsed,
-      sourceImageUrl: req.body.sourceImageUrl ?? null,
+      sourceImageUrl: generationInput.sourceImageUrl ?? null,
     });
 
     return res.status(200).json({

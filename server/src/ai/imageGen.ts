@@ -11,6 +11,10 @@ export type GeneratedImageResult = {
   promptUsed: string;
 };
 
+type ResolvedGenerateImageInput = GenerateImageInput & {
+  brandName?: string | null;
+};
+
 const PIXAZO_GENERATE_ENDPOINT =
   'https://gateway.pixazo.ai/flux-1-schnell/v1/getDataBatch';
 const PIXAZO_STATUS_ENDPOINT =
@@ -41,10 +45,13 @@ const buildBrandDirection = (brandProfile: BrandProfile | null): string[] => {
 
 const buildImagePrompt = (
   brandProfile: BrandProfile | null,
-  input: GenerateImageInput
+  input: ResolvedGenerateImageInput
 ): string => {
   const parts = [
     `Create a polished, platform-ready marketing visual for ${input.productName}.`,
+    input.brandName
+      ? `Brand / business name: ${input.brandName}. Use this only as business context, not as visible text inside the image unless explicitly requested.`
+      : 'No brand / business name is being used for this generation. Do not invent one and do not use the workspace owner personal name as the visible brand name.',
     input.productDescription
       ? `Product details: ${input.productDescription}.`
       : null,
@@ -259,7 +266,7 @@ const getPixazoHeaders = (): Record<string, string> => {
 
 const generateWithPixazo = async (
   prompt: string,
-  input: GenerateImageInput
+  input: ResolvedGenerateImageInput
 ): Promise<string> => {
   const width = normalizeDimension(input.width, 768);
   const height = normalizeDimension(input.height, 768);
@@ -359,7 +366,7 @@ const generateWithPixazo = async (
 
 const generateWithAimlApi = async (
   prompt: string,
-  input: GenerateImageInput
+  input: ResolvedGenerateImageInput
 ): Promise<string> => {
   const apiKey = process.env.AIMLAPI_KEY;
 
@@ -412,7 +419,7 @@ const generateWithAimlApi = async (
 
 export const generateProductImage = async (
   brandProfile: BrandProfile | null,
-  input: GenerateImageInput
+  input: ResolvedGenerateImageInput
 ): Promise<GeneratedImageResult> => {
   const promptUsed = buildImagePrompt(brandProfile, input);
 

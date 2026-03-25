@@ -50,6 +50,7 @@ export interface PaginatedResult<T> {
 export interface BrandProfile {
   id: string;
   userId: string;
+  brandName: string | null;
   fullName: string;
   phoneNumber: string | null;
   username: string | null;
@@ -71,6 +72,7 @@ export interface AuthMeResponse {
 }
 
 export interface SaveProfileInput {
+  brandName: string;
   fullName: string;
   phoneNumber?: string;
   username?: string;
@@ -99,6 +101,7 @@ export interface GeneratedContent {
   userId: string;
   brandProfileId: string | null;
   conversationId: string | null;
+  brandName?: string | null;
   productName: string;
   productDescription?: string | null;
   productImageUrl?: string | null;
@@ -115,6 +118,7 @@ export interface GeneratedContent {
 }
 
 export interface GenerateContentInput {
+  useBrandName?: boolean;
   productName: string;
   productDescription?: string;
   productImageUrl?: string;
@@ -142,6 +146,7 @@ export interface GeneratedImage {
 export interface GenerateImageInput {
   contentId?: string;
   sourceImageUrl?: string;
+  useBrandName?: boolean;
   productName: string;
   productDescription?: string;
   backgroundStyle?: string;
