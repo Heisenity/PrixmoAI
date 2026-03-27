@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import type { User } from '@supabase/supabase-js';
 import { generateContentPack } from '../ai/gemini';
 import { generateProductImage } from '../ai/imageGen';
+import { FEATURE_KEYS } from '../config/constants';
 import { getBrandProfileByUserId } from '../db/queries/brandProfiles';
 import {
   createGenerateConversation,
@@ -14,13 +15,16 @@ import {
   updateGenerateConversation,
 } from '../db/queries/generateWorkspace';
 import {
+  getReelScriptDailyUsageCount,
   saveGeneratedContent,
   trackContentGenerationUsage,
+  trackReelScriptGenerationUsage,
 } from '../db/queries/content';
 import {
   saveGeneratedImage,
   trackImageGenerationUsage,
 } from '../db/queries/images';
+import { getCurrentSubscriptionByUserId, getPlanFeatureLimit } from '../db/queries/subscriptions';
 import { requireUserClient } from '../db/supabase';
 import type {
   CreateGenerateConversationInput,
@@ -28,6 +32,10 @@ import type {
   GenerateConversationImageInput,
   UpdateGenerateConversationInput,
 } from '../schemas/generateWorkspace.schema';
+import {
+  enqueueImageGeneration,
+  resolveImageRuntimePolicy,
+} from '../services/imageRuntimePolicy.service';
 import type {
   BrandProfile,
   GenerateConversation,
@@ -42,6 +50,7 @@ type AuthenticatedRequest<
 > = Request<Params, ResBody, ReqBody, ReqQuery> & {
   user?: User;
   accessToken?: string;
+  imageRuntimePolicy?: ReturnType<typeof resolveImageRuntimePolicy>;
 };
 
 const trimText = (value: string, maxLength = 120) => {
@@ -375,12 +384,25 @@ export const generateWorkspaceCopy = async (
       req.user.id,
       req.body.conversationId
     );
-    const brandProfile = await getBrandProfileByUserId(client, req.user.id);
+    const [brandProfile, subscription, reelScriptUsageCount] = await Promise.all([
+      getBrandProfileByUserId(client, req.user.id),
+      getCurrentSubscriptionByUserId(client, req.user.id),
+      getReelScriptDailyUsageCount(client, req.user.id),
+    ]);
     const generationInput = {
       ...req.body,
       ...resolveBrandPreference(brandProfile, req.body.useBrandName),
     };
-    const contentPack = await generateContentPack(brandProfile, generationInput);
+    const plan = subscription?.plan ?? 'free';
+    const reelScriptLimit = getPlanFeatureLimit(
+      plan,
+      FEATURE_KEYS.reelScriptGeneration
+    );
+    const includeReelScript =
+      reelScriptLimit === null || reelScriptUsageCount < reelScriptLimit;
+    const contentPack = await generateContentPack(brandProfile, generationInput, {
+      includeReelScript,
+    });
     const userPromptSummary = buildCopyPromptSummary(generationInput);
 
     const conversation =
@@ -445,12 +467,16 @@ export const generateWorkspaceCopy = async (
             hashtags: content.hashtags,
           },
         },
-        {
-          assetType: 'script',
-          payload: {
-            reelScript: content.reelScript,
-          },
-        },
+        ...(includeReelScript
+          ? [
+              {
+                assetType: 'script' as const,
+                payload: {
+                  reelScript: content.reelScript,
+                },
+              },
+            ]
+          : []),
       ],
     });
 
@@ -472,7 +498,22 @@ export const generateWorkspaceCopy = async (
       productName: generationInput.productName,
       productDescription: generationInput.productDescription ?? null,
       keywords: generationInput.keywords ?? [],
+      reelScriptIncluded: includeReelScript,
     });
+
+    if (includeReelScript) {
+      await trackReelScriptGenerationUsage(client, req.user.id, {
+        contentId: content.id,
+        conversationId: conversation.id,
+        provider: 'gemini',
+        brandProfileId: brandProfile?.id ?? null,
+        platform: generationInput.platform ?? null,
+        goal: generationInput.goal ?? null,
+        tone: generationInput.tone ?? null,
+        audience: generationInput.audience ?? null,
+        productName: generationInput.productName,
+      });
+    }
 
     const thread = await getGenerateConversationThread(
       client,
@@ -519,7 +560,11 @@ export const generateWorkspaceImage = async (
       ...req.body,
       ...resolveBrandPreference(brandProfile, req.body.useBrandName),
     };
-    const result = await generateProductImage(brandProfile, generationInput);
+    const runtimePolicy =
+      req.imageRuntimePolicy ?? resolveImageRuntimePolicy('free', 0);
+    const result = await enqueueImageGeneration(runtimePolicy, () =>
+      generateProductImage(brandProfile, generationInput)
+    );
     const userPromptSummary = buildImagePromptSummary(generationInput);
 
     const conversation: GenerateConversation =
@@ -608,7 +653,18 @@ export const generateWorkspaceImage = async (
       backgroundStyle: generationInput.backgroundStyle ?? null,
       prompt: result.promptUsed,
       sourceImageUrl: generationInput.sourceImageUrl ?? null,
+      queueTier: runtimePolicy.queueTier,
+      speedTier: runtimePolicy.speedTier,
+      throttleDelayMs: runtimePolicy.throttleDelayMs,
+      dailyUsageCountBeforeRequest: runtimePolicy.usageCount,
     });
+
+    res.setHeader('X-PrixmoAI-Queue-Tier', runtimePolicy.queueTier);
+    res.setHeader('X-PrixmoAI-Speed-Tier', runtimePolicy.speedTier);
+    res.setHeader(
+      'X-PrixmoAI-Throttle-Delay-Ms',
+      String(runtimePolicy.throttleDelayMs)
+    );
 
     const thread = await getGenerateConversationThread(
       client,
@@ -620,6 +676,9 @@ export const generateWorkspaceImage = async (
       status: 'success',
       message: `Image generated successfully using ${result.provider}`,
       data: thread,
+      meta: {
+        runtime: runtimePolicy,
+      },
     });
   } catch (error) {
     return res.status(502).json({

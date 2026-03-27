@@ -6,7 +6,10 @@ import {
   uploadSourceImage,
 } from '../controllers/image.controller';
 import { authMiddleware } from '../middleware/auth.middleware';
-import { imagePlanLimitMiddleware } from '../middleware/planLimit.middleware';
+import {
+  imagePlanLimitMiddleware,
+  imageRuntimePolicyMiddleware,
+} from '../middleware/planLimit.middleware';
 import { validate } from '../middleware/validate.middleware';
 import {
   generateImageSchema,
@@ -24,8 +27,9 @@ router.post(
 router.post(
   '/generate',
   authMiddleware,
-  imagePlanLimitMiddleware,
   validate(generateImageSchema),
+  imagePlanLimitMiddleware,
+  imageRuntimePolicyMiddleware,
   generateImage
 );
 router.get('/history', authMiddleware, getImageHistory);

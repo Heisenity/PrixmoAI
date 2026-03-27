@@ -112,28 +112,86 @@ export const PLAN_ACCENTS: Record<PlanType, string> = {
 
 export const PLAN_FEATURES: Record<PlanType, string[]> = {
   free: [
-    '5 caption generations each month',
-    '3 product image generations each month',
-    'Hashtag generator included',
-    'Reel script generator included',
-    'Post scheduling not included',
+    '15 AI captions for engagement / day',
+    '5 product image generations / day',
+    'Watermarked images',
+    'Trending Hashtag generator',
+    '4 Reel script generator / day',
+    'Schedule 1 account',
     'Analytics not included',
   ],
   basic: [
-    '30 caption generations each month',
-    '15 product image generations each month',
-    'Hashtag generator included',
-    'Reel script generator included',
-    'Schedule 1 social account',
+    '25 AI captions for engagement / day',
+    '15 product image generations / day',
+    'No watermark',
+    'Trending Hashtag generator',
+    '15 Reel script generator / day',
+    'Schedule 2 social account',
     'Basic analytics',
   ],
   pro: [
-    'Unlimited caption generations',
-    '40 product image generations each month',
-    'Hashtag generator included',
-    'Reel script generator included',
-    'Schedule 3 social accounts',
-    'Full analytics dashboard',
+    '60 AI captions for engagement / day',
+    '35 high-speed image generations / day',
+    'Trending Hashtag generator',
+    '30 Reel scripts / day',
+    'Schedule 5 social accounts',
+    'Advanced analytics dashboard',
+    'Caption keyword optimizer',
     'Priority support',
   ],
+};
+
+export const PLAN_DASHBOARD_DETAILS: Record<
+  PlanType,
+  {
+    contentLimit: number | null;
+    contentLimitLabel?: string;
+    contentMeterLabel: string;
+    imageLimit: number | null;
+    imageLimitLabel?: string;
+    imageMeterLabel: string;
+    usageWindowLabel: string;
+    planAllowanceSummary: string;
+    highlights: string[];
+  }
+> = {
+  free: {
+    contentLimit: 15,
+    contentMeterLabel: 'Content generations today',
+    imageLimit: 5,
+    imageMeterLabel: 'Image generations today',
+    usageWindowLabel: 'today',
+    planAllowanceSummary: '15 content / day • 5 images / day',
+    highlights: [
+      '15 AI captions for engagement / day',
+      '5 product image generations / day',
+      'Schedule 1 account',
+    ],
+  },
+  basic: {
+    contentLimit: 25,
+    contentMeterLabel: 'Content generations today',
+    imageLimit: 15,
+    imageMeterLabel: 'Image generations today',
+    usageWindowLabel: 'today',
+    planAllowanceSummary: '25 content / day • 15 images / day',
+    highlights: [
+      '25 AI captions for engagement / day',
+      '15 product image generations / day',
+      'Schedule 2 social accounts',
+    ],
+  },
+  pro: {
+    contentLimit: 60,
+    contentMeterLabel: 'Content generations today',
+    imageLimit: 35,
+    imageMeterLabel: 'Image generations today',
+    usageWindowLabel: 'today',
+    planAllowanceSummary: '60 content / day • 35 images / day',
+    highlights: [
+      '60 AI captions for engagement / day',
+      '35 high-speed image generations / day',
+      'Schedule 5 social accounts',
+    ],
+  },
 };

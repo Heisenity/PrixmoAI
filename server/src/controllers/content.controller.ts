@@ -1,14 +1,18 @@
 import { Request, Response } from 'express';
 import type { User } from '@supabase/supabase-js';
 import { generateContentPack } from '../ai/gemini';
+import { FEATURE_KEYS } from '../config/constants';
 import { getBrandProfileByUserId } from '../db/queries/brandProfiles';
 import {
   deleteGeneratedContent,
+  getReelScriptDailyUsageCount,
   getGeneratedContentById,
   getGeneratedContentHistory,
   saveGeneratedContent,
   trackContentGenerationUsage,
+  trackReelScriptGenerationUsage,
 } from '../db/queries/content';
+import { getCurrentSubscriptionByUserId, getPlanFeatureLimit } from '../db/queries/subscriptions';
 import { requireUserClient } from '../db/supabase';
 import type { GenerateContentInput } from '../schemas/content.schema';
 import type { BrandProfile } from '../types';
@@ -73,13 +77,26 @@ export const generateContent = async (
 
   try {
     const client = requireUserClient(req.accessToken);
-    const brandProfile = await getBrandProfileByUserId(client, req.user.id);
+    const [brandProfile, subscription, reelScriptUsageCount] = await Promise.all([
+      getBrandProfileByUserId(client, req.user.id),
+      getCurrentSubscriptionByUserId(client, req.user.id),
+      getReelScriptDailyUsageCount(client, req.user.id),
+    ]);
     const generationInput = {
       ...req.body,
       ...resolveBrandPreference(brandProfile, req.body.useBrandName),
     };
+    const plan = subscription?.plan ?? 'free';
+    const reelScriptLimit = getPlanFeatureLimit(
+      plan,
+      FEATURE_KEYS.reelScriptGeneration
+    );
+    const includeReelScript =
+      reelScriptLimit === null || reelScriptUsageCount < reelScriptLimit;
 
-    const contentPack = await generateContentPack(brandProfile, generationInput);
+    const contentPack = await generateContentPack(brandProfile, generationInput, {
+      includeReelScript,
+    });
     const content = await saveGeneratedContent(client, req.user.id, {
       ...generationInput,
       brandProfileId: brandProfile?.id ?? null,
@@ -97,7 +114,21 @@ export const generateContent = async (
       productName: generationInput.productName,
       productDescription: generationInput.productDescription ?? null,
       keywords: generationInput.keywords ?? [],
+      reelScriptIncluded: includeReelScript,
     });
+
+    if (includeReelScript) {
+      await trackReelScriptGenerationUsage(client, req.user.id, {
+        contentId: content.id,
+        provider: 'gemini',
+        brandProfileId: brandProfile?.id ?? null,
+        platform: generationInput.platform ?? null,
+        goal: generationInput.goal ?? null,
+        tone: generationInput.tone ?? null,
+        audience: generationInput.audience ?? null,
+        productName: generationInput.productName,
+      });
+    }
 
     return res.status(200).json({
       status: 'success',

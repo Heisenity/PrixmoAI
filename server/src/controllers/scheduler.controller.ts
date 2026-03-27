@@ -14,10 +14,13 @@ import {
   createSocialAccount,
   deleteSocialAccount,
   getSocialAccountById,
+  getSocialAccountCountByUser,
   getSocialAccountsByUser,
   updateSocialAccount,
 } from '../db/queries/socialAccounts';
+import { getFeatureLimit } from '../db/queries/subscriptions';
 import { requireUserClient } from '../db/supabase';
+import { FEATURE_KEYS } from '../config/constants';
 import type {
   CreateScheduledPostBody,
   CreateSocialAccountBody,
@@ -124,6 +127,31 @@ export const createConnectedSocialAccount = async (
 
   try {
     const client = requireUserClient(req.accessToken);
+    const [accountLimit, connectedAccounts] = await Promise.all([
+      getFeatureLimit(
+        client,
+        req.user.id,
+        FEATURE_KEYS.socialAccountConnection
+      ),
+      getSocialAccountCountByUser(client, req.user.id),
+    ]);
+
+    if (accountLimit !== null && connectedAccounts >= accountLimit) {
+      const message =
+        accountLimit === 0
+          ? 'Social account connections are not included in your current plan'
+          : `Your current plan allows ${accountLimit} connected social account${accountLimit === 1 ? '' : 's'}. Upgrade to connect more.`;
+
+      return res.status(403).json({
+        status: 'fail',
+        message,
+        data: {
+          connectedAccounts,
+          accountLimit,
+        },
+      });
+    }
+
     const account = await createSocialAccount(client, req.user.id, req.body);
 
     return res.status(201).json({

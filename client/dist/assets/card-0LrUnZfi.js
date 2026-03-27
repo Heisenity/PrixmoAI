@@ -1,1 +1,0 @@
-import{r as e,j as t}from"./react-vendor-BShjbBE1.js";import{c as d}from"./index-z3YLS7xd.js";const f=e.forwardRef(({children:a,className:r,glow:s=!1,...o},c)=>t.jsx("div",{ref:c,className:d("surface-card",s&&"surface-card--glow",r),...o,children:a}));f.displayName="Card";export{f as C};

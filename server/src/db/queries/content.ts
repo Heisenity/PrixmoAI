@@ -8,6 +8,7 @@ import type {
 } from '../../types';
 import type { AppSupabaseClient } from '../supabase';
 import {
+  getDailyUsageCount,
   getMonthlyUsageCount,
   recordUsageEvent,
 } from './subscriptions';
@@ -251,9 +252,28 @@ export const getContentMonthlyUsageCount = async (
 ): Promise<number> =>
   getMonthlyUsageCount(client, userId, FEATURE_KEYS.contentGeneration);
 
+export const getContentDailyUsageCount = async (
+  client: AppSupabaseClient,
+  userId: string
+): Promise<number> =>
+  getDailyUsageCount(client, userId, FEATURE_KEYS.contentGeneration);
+
+export const getReelScriptDailyUsageCount = async (
+  client: AppSupabaseClient,
+  userId: string
+): Promise<number> =>
+  getDailyUsageCount(client, userId, FEATURE_KEYS.reelScriptGeneration);
+
 export const trackContentGenerationUsage = async (
   client: AppSupabaseClient,
   userId: string,
   metadata: Record<string, unknown> = {}
 ) =>
   recordUsageEvent(client, userId, FEATURE_KEYS.contentGeneration, metadata);
+
+export const trackReelScriptGenerationUsage = async (
+  client: AppSupabaseClient,
+  userId: string,
+  metadata: Record<string, unknown> = {}
+) =>
+  recordUsageEvent(client, userId, FEATURE_KEYS.reelScriptGeneration, metadata);

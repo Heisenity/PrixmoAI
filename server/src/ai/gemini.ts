@@ -153,6 +153,12 @@ const normalizeHashtag = (value: string): string => {
     : `#${cleaned.toLowerCase()}`;
 };
 
+const EMPTY_REEL_SCRIPT: ReelScript = {
+  hook: '',
+  body: '',
+  cta: '',
+};
+
 export const generateCaptions = async (
   brandProfile: BrandProfile | null,
   productInput: ProductInput
@@ -219,12 +225,18 @@ export const generateReelScript = async (
 
 export const generateContentPack = async (
   brandProfile: BrandProfile | null,
-  productInput: ProductInput
+  productInput: ProductInput,
+  options: {
+    includeReelScript?: boolean;
+  } = {}
 ): Promise<GeneratedContentPack> => {
+  const includeReelScript = options.includeReelScript ?? true;
   const [captions, hashtags, reelScript] = await Promise.all([
     generateCaptions(brandProfile, productInput),
     generateHashtags(brandProfile, productInput),
-    generateReelScript(brandProfile, productInput),
+    includeReelScript
+      ? generateReelScript(brandProfile, productInput)
+      : Promise.resolve(EMPTY_REEL_SCRIPT),
   ]);
 
   return {

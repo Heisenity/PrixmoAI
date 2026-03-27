@@ -11,6 +11,7 @@ import {
 import { authMiddleware } from '../middleware/auth.middleware';
 import {
   imagePlanLimitMiddleware,
+  imageRuntimePolicyMiddleware,
   planLimitMiddleware,
 } from '../middleware/planLimit.middleware';
 import { validate } from '../middleware/validate.middleware';
@@ -50,8 +51,9 @@ router.post(
 router.post(
   '/image',
   authMiddleware,
-  imagePlanLimitMiddleware,
   validate(generateConversationImageSchema),
+  imagePlanLimitMiddleware,
+  imageRuntimePolicyMiddleware,
   generateWorkspaceImage
 );
 

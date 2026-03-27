@@ -15,6 +15,8 @@ import { useImages } from '../../hooks/useImages';
 import { useScheduler } from '../../hooks/useScheduler';
 import { apiRequest } from '../../lib/axios';
 import { setActiveGenerateConversationId } from '../../lib/generateWorkspace';
+import { PLAN_DASHBOARD_DETAILS } from '../../lib/constants';
+import { getUsageSnapshot } from '../../lib/usage';
 import { formatCompactNumber, formatDateTime } from '../../lib/utils';
 import type { GenerateConversation } from '../../types';
 
@@ -29,7 +31,24 @@ export const DashboardPage = () => {
   const [conversations, setConversations] = useState<GenerateConversation[]>([]);
 
   const subscription = catalog?.currentSubscription;
-  const monthlyLimit = subscription?.monthlyLimit ?? null;
+  const activePlan = subscription?.plan ?? 'free';
+  const planDetails = PLAN_DASHBOARD_DETAILS[activePlan];
+  const contentUsage = useMemo(
+    () =>
+      getUsageSnapshot(
+        overview?.generation.contentGenerationsToday || 0,
+        planDetails.contentLimit
+      ),
+    [overview?.generation.contentGenerationsToday, planDetails.contentLimit]
+  );
+  const imageUsage = useMemo(
+    () =>
+      getUsageSnapshot(
+        overview?.generation.imageGenerationsToday || 0,
+        planDetails.imageLimit
+      ),
+    [overview?.generation.imageGenerationsToday, planDetails.imageLimit]
+  );
 
   useEffect(() => {
     if (!token) {
@@ -132,21 +151,55 @@ export const DashboardPage = () => {
           <div className="dashboard-panel__header">
             <div>
               <p className="section-eyebrow">Subscription state</p>
-              <h3>Plan and monthly allowance</h3>
+              <h3>Plan and daily allowance</h3>
             </div>
-            {subscription ? <CurrentPlanBadge plan={subscription.plan} /> : null}
+            <CurrentPlanBadge plan={activePlan} />
           </div>
           <div className="dashboard-panel__body">
             <UsageMeter
-              label="Content generations this month"
-              value={overview?.generation.contentGenerationsThisMonth || 0}
-              limit={monthlyLimit}
+              label={planDetails.contentMeterLabel}
+              value={overview?.generation.contentGenerationsToday || 0}
+              limit={planDetails.contentLimit}
+              limitLabel={planDetails.contentLimitLabel}
             />
             <UsageMeter
-              label="Image generations this month"
-              value={overview?.generation.imageGenerationsThisMonth || 0}
-              limit={monthlyLimit}
+              label={planDetails.imageMeterLabel}
+              value={overview?.generation.imageGenerationsToday || 0}
+              limit={planDetails.imageLimit}
+              limitLabel={planDetails.imageLimitLabel}
             />
+            <div className="dashboard-usage-bubbles" aria-label="Daily allowance remaining">
+              <div className="dashboard-usage-bubble">
+                <span className="dashboard-usage-bubble__label">Content left</span>
+                <div className="dashboard-usage-bubble__value">
+                  <strong>
+                    {contentUsage.percentLeft === null
+                      ? 'Unlimited'
+                      : `${contentUsage.percentLeft}%`}
+                  </strong>
+                  <small>
+                    {contentUsage.remaining === null
+                      ? 'No cap on captions'
+                      : `${formatCompactNumber(contentUsage.remaining)} remaining`}
+                  </small>
+                </div>
+              </div>
+              <div className="dashboard-usage-bubble dashboard-usage-bubble--delayed">
+                <span className="dashboard-usage-bubble__label">Images left</span>
+                <div className="dashboard-usage-bubble__value">
+                  <strong>
+                    {imageUsage.percentLeft === null
+                      ? 'Unlimited'
+                      : `${imageUsage.percentLeft}%`}
+                  </strong>
+                  <small>
+                    {imageUsage.remaining === null
+                      ? 'No cap on images'
+                      : `${formatCompactNumber(imageUsage.remaining)} remaining`}
+                  </small>
+                </div>
+              </div>
+            </div>
           </div>
         </Card>
 

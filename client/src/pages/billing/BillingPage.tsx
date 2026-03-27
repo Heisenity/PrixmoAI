@@ -5,11 +5,14 @@ import { ErrorMessage } from '../../components/shared/ErrorMessage';
 import { LoadingSpinner } from '../../components/shared/LoadingSpinner';
 import { Card } from '../../components/ui/card';
 import { useBilling } from '../../hooks/useBilling';
+import { PLAN_DASHBOARD_DETAILS } from '../../lib/constants';
 import { formatDateTime } from '../../lib/utils';
 
 export const BillingPage = () => {
   const { catalog, subscription, error, isLoading, isCheckingOut, startCheckout } =
     useBilling();
+  const activePlan = subscription?.plan || catalog?.currentSubscription.plan || 'free';
+  const planDetails = PLAN_DASHBOARD_DETAILS[activePlan];
 
   if (isLoading && !catalog) {
     return (
@@ -67,9 +70,9 @@ export const BillingPage = () => {
               <strong>Status</strong>
               <span>{subscription.status}</span>
             </div>
-            <div className="stack-list__item">
-              <strong>Monthly limit</strong>
-              <span>{subscription.monthlyLimit ?? 'Unlimited'}</span>
+          <div className="stack-list__item">
+              <strong>Daily allowance</strong>
+              <span>{planDetails.planAllowanceSummary}</span>
             </div>
             <div className="stack-list__item">
               <strong>Current period end</strong>

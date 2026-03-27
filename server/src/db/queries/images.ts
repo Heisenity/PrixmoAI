@@ -6,6 +6,7 @@ import type {
 } from '../../types';
 import type { AppSupabaseClient } from '../supabase';
 import {
+  getDailyUsageCount,
   getMonthlyUsageCount,
   recordUsageEvent,
 } from './subscriptions';
@@ -148,6 +149,12 @@ export const getImageMonthlyUsageCount = async (
   userId: string
 ): Promise<number> =>
   getMonthlyUsageCount(client, userId, FEATURE_KEYS.imageGeneration);
+
+export const getImageDailyUsageCount = async (
+  client: AppSupabaseClient,
+  userId: string
+): Promise<number> =>
+  getDailyUsageCount(client, userId, FEATURE_KEYS.imageGeneration);
 
 export const trackImageGenerationUsage = async (
   client: AppSupabaseClient,

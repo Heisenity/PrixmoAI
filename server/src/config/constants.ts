@@ -13,15 +13,87 @@ export const HASHTAG_VARIATION_COUNT = 15;
 export const FEATURE_KEYS = {
   contentGeneration: 'content_generation',
   imageGeneration: 'image_generation',
+  reelScriptGeneration: 'reel_script_generation',
+  socialAccountConnection: 'social_account_connection',
 } as const;
 
 export type FeatureKey = (typeof FEATURE_KEYS)[keyof typeof FEATURE_KEYS];
+export const IMAGE_QUEUE_TIERS = ['priority', 'normal', 'slow'] as const;
+export type ImageQueueTier = (typeof IMAGE_QUEUE_TIERS)[number];
+
+export const IMAGE_SPEED_TIERS = ['fast', 'standard', 'slow'] as const;
+export type ImageSpeedTier = (typeof IMAGE_SPEED_TIERS)[number];
 
 export const PLAN_LIMITS: Record<PlanType, number | null> = {
-  free: 8,
-  basic: 30,
+  free: 20,
+  basic: 150,
   pro: null,
 };
+
+export const PLAN_FEATURE_LIMITS: Record<
+  PlanType,
+  Record<FeatureKey, number | null>
+> = {
+  free: {
+    [FEATURE_KEYS.contentGeneration]: 15,
+    [FEATURE_KEYS.imageGeneration]: 5,
+    [FEATURE_KEYS.reelScriptGeneration]: 4,
+    [FEATURE_KEYS.socialAccountConnection]: 1,
+  },
+  basic: {
+    [FEATURE_KEYS.contentGeneration]: 25,
+    [FEATURE_KEYS.imageGeneration]: 15,
+    [FEATURE_KEYS.reelScriptGeneration]: 15,
+    [FEATURE_KEYS.socialAccountConnection]: 2,
+  },
+  pro: {
+    [FEATURE_KEYS.contentGeneration]: 60,
+    [FEATURE_KEYS.imageGeneration]: 35,
+    [FEATURE_KEYS.reelScriptGeneration]: 30,
+    [FEATURE_KEYS.socialAccountConnection]: 5,
+  },
+};
+
+export const IMAGE_RUNTIME_POLICIES: Record<
+  PlanType,
+  {
+    requestsPerMinute: number | null;
+    defaultQueueTier: ImageQueueTier;
+    defaultSpeedTier: ImageSpeedTier;
+    burstLimit: number | null;
+    burstWindowMs: number | null;
+    throttleDelayMsAfterBurst: number;
+  }
+> = {
+  free: {
+    requestsPerMinute: 2,
+    defaultQueueTier: 'slow',
+    defaultSpeedTier: 'slow',
+    burstLimit: null,
+    burstWindowMs: null,
+    throttleDelayMsAfterBurst: 0,
+  },
+  basic: {
+    requestsPerMinute: 4,
+    defaultQueueTier: 'normal',
+    defaultSpeedTier: 'standard',
+    burstLimit: 6,
+    burstWindowMs: 10 * 60_000,
+    throttleDelayMsAfterBurst: 3_000,
+  },
+  pro: {
+    requestsPerMinute: 10,
+    defaultQueueTier: 'priority',
+    defaultSpeedTier: 'fast',
+    burstLimit: 15,
+    burstWindowMs: 10 * 60_000,
+    throttleDelayMsAfterBurst: 1_000,
+  },
+};
+
+export const FREE_IMAGE_NORMAL_QUEUE_DAILY_THRESHOLD = 3;
+export const FREE_IMAGE_STANDARD_SPEED_DAILY_THRESHOLD = 2;
+export const IMAGE_QUEUE_CONCURRENCY = 2;
 
 export const BILLING_PLAN_CATALOG: Record<PlanType, BillingPlan> = {
   free: {

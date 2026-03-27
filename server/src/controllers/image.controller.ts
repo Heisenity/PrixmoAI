@@ -13,6 +13,10 @@ import type {
   GenerateImageInput,
   UploadSourceImageInput,
 } from '../schemas/image.schema';
+import {
+  enqueueImageGeneration,
+  resolveImageRuntimePolicy,
+} from '../services/imageRuntimePolicy.service';
 import { uploadSourceImage as uploadSourceImageToStorage } from '../services/storage.service';
 import type { BrandProfile } from '../types';
 
@@ -24,6 +28,7 @@ type AuthenticatedRequest<
 > = Request<Params, ResBody, ReqBody, ReqQuery> & {
   user?: User;
   accessToken?: string;
+  imageRuntimePolicy?: ReturnType<typeof resolveImageRuntimePolicy>;
 };
 
 const parsePositiveInt = (value: unknown, fallback: number): number => {
@@ -142,7 +147,11 @@ export const generateImage = async (
       ...req.body,
       ...resolveBrandPreference(brandProfile, req.body.useBrandName),
     };
-    const result = await generateProductImage(brandProfile, generationInput);
+    const runtimePolicy =
+      req.imageRuntimePolicy ?? resolveImageRuntimePolicy('free', 0);
+    const result = await enqueueImageGeneration(runtimePolicy, () =>
+      generateProductImage(brandProfile, generationInput)
+    );
     const image = await saveGeneratedImage(client, req.user.id, {
       contentId: generationInput.contentId ?? null,
       sourceImageUrl: generationInput.sourceImageUrl ?? null,
@@ -161,7 +170,18 @@ export const generateImage = async (
       backgroundStyle: generationInput.backgroundStyle ?? null,
       prompt: result.promptUsed,
       sourceImageUrl: generationInput.sourceImageUrl ?? null,
+      queueTier: runtimePolicy.queueTier,
+      speedTier: runtimePolicy.speedTier,
+      throttleDelayMs: runtimePolicy.throttleDelayMs,
+      dailyUsageCountBeforeRequest: runtimePolicy.usageCount,
     });
+
+    res.setHeader('X-PrixmoAI-Queue-Tier', runtimePolicy.queueTier);
+    res.setHeader('X-PrixmoAI-Speed-Tier', runtimePolicy.speedTier);
+    res.setHeader(
+      'X-PrixmoAI-Throttle-Delay-Ms',
+      String(runtimePolicy.throttleDelayMs)
+    );
 
     return res.status(200).json({
       status: 'success',
@@ -169,6 +189,9 @@ export const generateImage = async (
       data: {
         ...image,
         provider: result.provider,
+      },
+      meta: {
+        runtime: runtimePolicy,
       },
     });
   } catch (error) {

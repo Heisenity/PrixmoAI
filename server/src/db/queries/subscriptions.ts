@@ -1,4 +1,9 @@
-import { FEATURE_KEYS, PLAN_LIMITS } from '../../config/constants';
+import {
+  FEATURE_KEYS,
+  PLAN_FEATURE_LIMITS,
+  PLAN_LIMITS,
+  type FeatureKey,
+} from '../../config/constants';
 import type {
   CreateSubscriptionInput,
   PlanType,
@@ -45,6 +50,21 @@ const getMonthWindow = () => {
   };
 };
 
+const getDayWindow = () => {
+  const now = new Date();
+  const start = new Date(
+    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())
+  );
+  const end = new Date(
+    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1)
+  );
+
+  return {
+    start: start.toISOString(),
+    end: end.toISOString(),
+  };
+};
+
 const toSubscription = (row: SubscriptionRow): Subscription => ({
   id: row.id,
   userId: row.user_id,
@@ -69,6 +89,11 @@ const toUsageTrackingEvent = (row: UsageTrackingRow): UsageTrackingEvent => ({
 
 export const getPlanMonthlyLimit = (plan: PlanType): number | null =>
   PLAN_LIMITS[plan];
+
+export const getPlanFeatureLimit = (
+  plan: PlanType,
+  featureKey: FeatureKey
+): number | null => PLAN_FEATURE_LIMITS[plan][featureKey];
 
 export const upsertSubscription = async (
   client: AppSupabaseClient,
@@ -122,18 +147,15 @@ export const getCurrentSubscriptionByUserId = async (
 export const getFeatureMonthlyLimit = async (
   client: AppSupabaseClient,
   userId: string,
-  featureKey: string = FEATURE_KEYS.contentGeneration
+  featureKey: FeatureKey = FEATURE_KEYS.contentGeneration
 ): Promise<number | null> => {
   const subscription = await getCurrentSubscriptionByUserId(client, userId);
+  const plan = subscription?.plan ?? 'free';
 
-  if (!subscription) {
-    return FEATURE_KEYS.imageGeneration === featureKey
-      ? PLAN_LIMITS.free
-      : PLAN_LIMITS.free;
-  }
-
-  return subscription.monthlyLimit;
+  return getPlanFeatureLimit(plan, featureKey);
 };
+
+export const getFeatureLimit = getFeatureMonthlyLimit;
 
 export const recordUsageEvent = async (
   client: AppSupabaseClient,
@@ -158,12 +180,13 @@ export const recordUsageEvent = async (
   return toUsageTrackingEvent(data as UsageTrackingRow);
 };
 
-export const getMonthlyUsageCount = async (
+const getUsageCountForWindow = async (
   client: AppSupabaseClient,
   userId: string,
-  featureKey: string
+  featureKey: string,
+  window: 'day' | 'month'
 ): Promise<number> => {
-  const { start, end } = getMonthWindow();
+  const { start, end } = window === 'day' ? getDayWindow() : getMonthWindow();
   const { count, error } = await client
     .from('usage_tracking')
     .select('*', { count: 'exact', head: true })
@@ -178,3 +201,15 @@ export const getMonthlyUsageCount = async (
 
   return count ?? 0;
 };
+
+export const getMonthlyUsageCount = async (
+  client: AppSupabaseClient,
+  userId: string,
+  featureKey: string
+): Promise<number> => getUsageCountForWindow(client, userId, featureKey, 'month');
+
+export const getDailyUsageCount = async (
+  client: AppSupabaseClient,
+  userId: string,
+  featureKey: string
+): Promise<number> => getUsageCountForWindow(client, userId, featureKey, 'day');

@@ -12,12 +12,17 @@ import {
 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
-import { APP_NAME } from '../../lib/constants';
+import { APP_NAME, PLAN_DASHBOARD_DETAILS } from '../../lib/constants';
+import { getAvatarCandidates } from '../../lib/profile';
+import { getOverallUsageSummary } from '../../lib/usage';
 import { cn } from '../../lib/utils';
 import { useAuth } from '../../hooks/useAuth';
 import { useAnalytics } from '../../hooks/useAnalytics';
 import { useBilling } from '../../hooks/useBilling';
+import { useUpgradePrompt } from '../../hooks/useUpgradePrompt';
 import { CurrentPlanBadge } from '../billing/CurrentPlanBadge';
+import { ProfileAvatar } from '../shared/ProfileAvatar';
+import { UpgradePrompt } from '../shared/UpgradePrompt';
 
 const workspaceLinks = [
   { label: 'Generate', href: '/app/generate', icon: Sparkles },
@@ -33,59 +38,31 @@ type SidebarProps = {
   onToggleCollapse: () => void;
 };
 
-const getProfileAvatar = (avatarUrl: string | null | undefined, fullName?: string | null) => {
-  if (avatarUrl) {
-    return <img src={avatarUrl} alt={fullName || 'Workspace owner'} />;
-  }
-
-  return (fullName || 'P').slice(0, 1);
-};
-
-const getUsageSnapshot = (used: number, limit: number | null) => {
-  if (limit === null) {
-    return {
-      used,
-      remaining: null,
-      percentLeft: null,
-    };
-  }
-
-  const safeUsed = Math.max(0, used);
-  const remaining = Math.max(0, limit - safeUsed);
-  const percentLeft = limit > 0 ? Math.max(0, Math.round((remaining / limit) * 100)) : 0;
-
-  return {
-    used: safeUsed,
-    remaining,
-    percentLeft,
-  };
-};
-
 export const Sidebar = ({ collapsed, onToggleCollapse }: SidebarProps) => {
   const location = useLocation();
-  const { profile, signOut } = useAuth();
+  const { profile, signOut, user } = useAuth();
   const { subscription, catalog, isLoading: isBillingLoading } = useBilling();
   const { overview, isLoading: isAnalyticsLoading } = useAnalytics();
   const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
   const profileMenuRef = useRef<HTMLDivElement | null>(null);
+  const { prompt, dismissPrompt } = useUpgradePrompt();
+  const avatarCandidates = getAvatarCandidates(
+    profile?.avatarUrl,
+    user?.user_metadata && typeof user.user_metadata === 'object'
+      ? (user.user_metadata as Record<string, unknown>)
+      : null
+  );
   const currentPlan = subscription?.plan ?? catalog?.currentSubscription.plan ?? 'free';
-  const monthlyLimit =
-    subscription?.monthlyLimit ?? catalog?.currentSubscription.monthlyLimit ?? null;
-  const contentUsage = getUsageSnapshot(
-    overview?.generation.contentGenerationsThisMonth ?? 0,
-    monthlyLimit
-  );
-  const imageUsage = getUsageSnapshot(
-    overview?.generation.imageGenerationsThisMonth ?? 0,
-    monthlyLimit
-  );
+  const planDetails = PLAN_DASHBOARD_DETAILS[currentPlan];
   const isUsageLoading = isBillingLoading || isAnalyticsLoading;
-  const usageSummary =
-    monthlyLimit === null
-      ? 'Unlimited access'
-      : isUsageLoading
-        ? 'Checking limits…'
-        : `Copy ${contentUsage.percentLeft ?? 0}% • Image ${imageUsage.percentLeft ?? 0}% left`;
+  const usageSummary = getOverallUsageSummary({
+    contentLimit: planDetails.contentLimit,
+    imageLimit: planDetails.imageLimit,
+    contentUsed: overview?.generation.contentGenerationsToday ?? 0,
+    imageUsed: overview?.generation.imageGenerationsToday ?? 0,
+    isLoading: isUsageLoading,
+    usageWindowLabel: planDetails.usageWindowLabel,
+  });
 
   useEffect(() => {
     setIsProfileMenuOpen(false);
@@ -144,6 +121,14 @@ export const Sidebar = ({ collapsed, onToggleCollapse }: SidebarProps) => {
       </div>
 
       <div className="sidebar__footer" ref={profileMenuRef}>
+        {prompt ? (
+          <UpgradePrompt
+            prompt={prompt}
+            currentPlan={currentPlan}
+            onDismiss={dismissPrompt}
+          />
+        ) : null}
+
         {isProfileMenuOpen ? (
           <div
             className={cn(
@@ -204,9 +189,11 @@ export const Sidebar = ({ collapsed, onToggleCollapse }: SidebarProps) => {
           aria-expanded={isProfileMenuOpen}
           title={profile?.fullName || 'Workspace owner'}
         >
-          <div className="sidebar__avatar">
-            {getProfileAvatar(profile?.avatarUrl, profile?.fullName)}
-          </div>
+          <ProfileAvatar
+            avatarCandidates={avatarCandidates}
+            fullName={profile?.fullName}
+            className="sidebar__avatar"
+          />
           <div className="sidebar__profile-copy">
             <div className="sidebar__profile-title">
               <strong>{profile?.fullName || 'Workspace Owner'}</strong>

@@ -5,12 +5,16 @@ export const UsageMeter = ({
   label,
   value,
   limit,
+  limitLabel,
 }: {
   label: string;
   value: number;
   limit: number | null;
+  limitLabel?: string;
 }) => {
-  const ratio = limit ? Math.min(100, (value / limit) * 100) : 12;
+  const ratio = limit ? Math.min(100, (value / limit) * 100) : Math.min(100, value > 0 ? 16 : 10);
+  const resolvedLimitLabel =
+    limitLabel ?? (limit !== null ? formatCompactNumber(limit) : null);
 
   return (
     <Card className="usage-meter">
@@ -18,7 +22,7 @@ export const UsageMeter = ({
         <span>{label}</span>
         <strong>
           {formatCompactNumber(value)}
-          {limit ? ` / ${formatCompactNumber(limit)}` : ''}
+          {resolvedLimitLabel ? ` / ${resolvedLimitLabel}` : ''}
         </strong>
       </div>
       <div className="usage-meter__track">

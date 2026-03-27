@@ -143,12 +143,12 @@ const pricingPlans: Array<{
     description: 'Try PrixmoAI and create your first content',
     cta: 'Get Started Free',
     features: [
-      { label: '20 AI captions optimized for engagement / month', included: true },
-      { label: '5 product image generations / month', included: true },
+      { label: '15 AI captions for engagement / day', included: true },
+      { label: '5 product image generations / day', included: true },
       { label: 'Watermarked images', included: true },
       { label: 'Trending Hashtag generator', included: true },
-      { label: '3 Reel script generator', included: true },
-      { label: 'Post scheduling', included: false },
+      { label: ' Reel script generator / day', included: true },
+      { label: 'Schedule 1 account', included: true },
       { label: 'Analytics', included: false },
     ],
   },
@@ -161,12 +161,12 @@ const pricingPlans: Array<{
     cta: 'Start Basic Plan',
     badge: 'Most Popular',
     features: [
-      { label: '150 AI captions optimized for engagement / month', included: true },
-      { label: '40 product image generations / month', included: true },
+      { label: '25 AI captions for engagement / day', included: true },
+      { label: '15 product image generations / day', included: true },
        {label: 'No watermark', included: true },
       { label: 'Trending Hashtag generator', included: true },
-      { label: 'Reel script generator', included: true },
-      { label: 'Schedule 1 social account', included: true },
+      { label: '15 Reel script generator / day', included: true },
+      { label: 'Schedule 2 social account', included: true },
       { label: 'Basic analytics', included: true },
     ],
   },
@@ -178,15 +178,16 @@ const pricingPlans: Array<{
     description: 'Made for brands playing at the next level',
     cta: 'Start Pro Plan',
     features: [
-      { label: 'Unlimited AI captions optimized for engagement (fair usage)', included: true },
-      { label: '200 high-speed image generations / month', included: true },
-      { label: 'Unlimited images (standard speed)', included: true },
-      {label: 'No watermark', included: true },
+      { label: '60 AI captions for engagement / day', included: true },
+      { label: '35 high-speed image generations / day', included: true },
+      
       { label: 'Trending Hashtag generator', included: true },
-      { label: 'Reel scripts + video generation', included: true },
+      { label: '30 Reel scripts / day', included: true },
       { label: 'Schedule 5 social accounts', included: true },
       { label: 'Advanced analytics dashboard', included: true },
+      { label: 'Caption keyword optimizer', included: true },
       { label: 'Priority support', included: true },
+      
     ],
   },
 ] as const;
@@ -492,7 +493,7 @@ export const HomePage = () => {
 
         <div className="hero__grid landing-hero__grid landing-hero__grid--single">
           <motion.div
-            className="landing-hero__content landing-hero__content--centered"
+            className="landing-hero__content"
             initial={{ opacity: 0, y: 30 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.8, ease: [0.22, 1, 0.36, 1] }}
@@ -500,20 +501,21 @@ export const HomePage = () => {
             <Badge className="landing-pill">AI-Powered Branding for Indian Businesses</Badge>
             <h1>
               Create. Schedule
+              <br></br>
               <span> Grow Your </span>
               <br></br>
               <span> Social Media </span>
               <br></br>
-              in 30 Seconds
+              In Few Seconds
             </h1>
             <p className="landing-copy landing-copy--lead">
               <span className="landing-copy__lead-line">
-                From product to powerful content in seconds, not days.
+                
               </span>
               <span className="landing-copy__lead-subline">
                
                 
-                Upload your product photo and let PrixmoAI do the magic
+                The fastest way to create and publish social media content
               </span>
             </p>
 
@@ -910,7 +912,8 @@ export const HomePage = () => {
                 to={plan.id === 'free' ? '/signup' : '/app/billing'}
                 className={buttonClassName(
                   plan.id === 'basic' ? 'primary' : 'secondary',
-                  'lg'
+                  'lg',
+                  'pricing-card__cta'
                 )}
               >
                 {plan.cta}

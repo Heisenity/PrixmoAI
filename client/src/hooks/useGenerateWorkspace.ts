@@ -4,6 +4,10 @@ import {
   readActiveGenerateConversationId,
   setActiveGenerateConversationId,
 } from '../lib/generateWorkspace';
+import {
+  emitUpgradePrompt,
+  getUpgradePromptFromMessage,
+} from '../lib/upgradePrompt';
 import { useAuth } from './useAuth';
 import type {
   GenerateContentInput,
@@ -266,8 +270,15 @@ export const useGenerateWorkspace = () => {
         generationError instanceof Error
           ? generationError.message
           : 'Failed to generate copy';
-      setError(message);
-      throw new Error(message);
+      const upgradePrompt = getUpgradePromptFromMessage(message);
+      const nextMessage = upgradePrompt?.message ?? message;
+
+      if (upgradePrompt) {
+        emitUpgradePrompt(upgradePrompt);
+      }
+
+      setError(nextMessage);
+      throw new Error(nextMessage);
     } finally {
       setIsGeneratingCopy(false);
     }
@@ -304,8 +315,15 @@ export const useGenerateWorkspace = () => {
         generationError instanceof Error
           ? generationError.message
           : 'Failed to generate image';
-      setError(message);
-      throw new Error(message);
+      const upgradePrompt = getUpgradePromptFromMessage(message);
+      const nextMessage = upgradePrompt?.message ?? message;
+
+      if (upgradePrompt) {
+        emitUpgradePrompt(upgradePrompt);
+      }
+
+      setError(nextMessage);
+      throw new Error(nextMessage);
     } finally {
       setIsGeneratingImage(false);
     }

@@ -36,17 +36,23 @@ import { Card } from '../../components/ui/card';
 import { Input } from '../../components/ui/input';
 import { Select } from '../../components/ui/select';
 import { CurrentPlanBadge } from '../../components/billing/CurrentPlanBadge';
+import { ProfileAvatar } from '../../components/shared/ProfileAvatar';
 import { useBilling } from '../../hooks/useBilling';
 import { useBrandProfile } from '../../hooks/useBrandProfile';
 import { useGenerateWorkspace } from '../../hooks/useGenerateWorkspace';
 import { useAuth } from '../../hooks/useAuth';
 import { useAnalytics } from '../../hooks/useAnalytics';
+import { useUpgradePrompt } from '../../hooks/useUpgradePrompt';
+import { getAvatarCandidates } from '../../lib/profile';
+import { getOverallUsageSummary } from '../../lib/usage';
 import { APP_NAME } from '../../lib/constants';
+import { UpgradePrompt } from '../../components/shared/UpgradePrompt';
 import {
   CONTENT_GOAL_OPTIONS,
   CONTENT_PLATFORM_OPTIONS,
   CONTENT_TONE_OPTIONS,
   IMAGE_BACKGROUND_OPTIONS,
+  PLAN_DASHBOARD_DETAILS,
 } from '../../lib/constants';
 import { formatDateTime, splitKeywords } from '../../lib/utils';
 import type {
@@ -377,34 +383,6 @@ const getUserMessageContent = (message: GenerateConversationMessage) => {
   return message.content;
 };
 
-const getProfileAvatar = (avatarUrl: string | null | undefined, fullName?: string | null) => {
-  if (avatarUrl) {
-    return <img src={avatarUrl} alt={fullName || 'Workspace owner'} />;
-  }
-
-  return (fullName || 'P').slice(0, 1);
-};
-
-const getUsageSnapshot = (used: number, limit: number | null) => {
-  if (limit === null) {
-    return {
-      used,
-      remaining: null,
-      percentLeft: null,
-    };
-  }
-
-  const safeUsed = Math.max(0, used);
-  const remaining = Math.max(0, limit - safeUsed);
-  const percentLeft = limit > 0 ? Math.max(0, Math.round((remaining / limit) * 100)) : 0;
-
-  return {
-    used: safeUsed,
-    remaining,
-    percentLeft,
-  };
-};
-
 const hydrateCopyInput = (message: GenerateConversationMessage) => {
   const input = toRecord(message.metadata.input);
   const productName =
@@ -504,7 +482,7 @@ export const GeneratePage = () => {
   const { subscription, catalog, isLoading: isBillingLoading } = useBilling();
   const { overview, isLoading: isAnalyticsLoading } = useAnalytics();
   const { profile } = useBrandProfile();
-  const { signOut } = useAuth();
+  const { signOut, user } = useAuth();
   const threadEndRef = useRef<HTMLDivElement | null>(null);
   const accountMenuRef = useRef<HTMLDivElement | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -520,10 +498,17 @@ export const GeneratePage = () => {
   const [draftTitle, setDraftTitle] = useState('');
   const [pendingDeleteConversation, setPendingDeleteConversation] =
     useState<GenerateConversation | null>(null);
+  const { prompt: upgradePrompt, dismissPrompt } = useUpgradePrompt();
   const [keywordInput, setKeywordInput] = useState('');
   const [contentForm, setContentForm] = useState(() => createDefaultContentForm());
   const [imageForm, setImageForm] = useState(() => createDefaultImageForm());
   const [isAccountMenuOpen, setIsAccountMenuOpen] = useState(false);
+  const avatarCandidates = getAvatarCandidates(
+    profile?.avatarUrl,
+    user?.user_metadata && typeof user.user_metadata === 'object'
+      ? (user.user_metadata as Record<string, unknown>)
+      : null
+  );
 
   useEffect(() => {
     if (!workspace.activeThread) {
@@ -658,23 +643,16 @@ export const GeneratePage = () => {
     activeWorkspace
   );
   const currentPlan = subscription?.plan ?? catalog?.currentSubscription.plan ?? 'free';
-  const monthlyLimit =
-    subscription?.monthlyLimit ?? catalog?.currentSubscription.monthlyLimit ?? null;
-  const contentUsage = getUsageSnapshot(
-    overview?.generation.contentGenerationsThisMonth ?? 0,
-    monthlyLimit
-  );
-  const imageUsage = getUsageSnapshot(
-    overview?.generation.imageGenerationsThisMonth ?? 0,
-    monthlyLimit
-  );
+  const planDetails = PLAN_DASHBOARD_DETAILS[currentPlan];
   const isUsageLoading = isBillingLoading || isAnalyticsLoading;
-  const usageSummary =
-    monthlyLimit === null
-      ? 'Unlimited access'
-      : isUsageLoading
-        ? 'Checking limits…'
-        : `Copy ${contentUsage.percentLeft ?? 0}% • Image ${imageUsage.percentLeft ?? 0}% left`;
+  const usageSummary = getOverallUsageSummary({
+    contentLimit: planDetails.contentLimit,
+    imageLimit: planDetails.imageLimit,
+    contentUsed: overview?.generation.contentGenerationsToday ?? 0,
+    imageUsed: overview?.generation.imageGenerationsToday ?? 0,
+    isLoading: isUsageLoading,
+    usageWindowLabel: planDetails.usageWindowLabel,
+  });
   const shouldWatermarkImages =
     !subscription || subscription.plan === 'free';
   const threadTitle = activeConversation?.title || 'New conversation';
@@ -1116,6 +1094,14 @@ export const GeneratePage = () => {
         ) : null}
 
         <div className="generate-chat__account" ref={accountMenuRef}>
+          {upgradePrompt ? (
+            <UpgradePrompt
+              prompt={upgradePrompt}
+              currentPlan={currentPlan}
+              onDismiss={dismissPrompt}
+            />
+          ) : null}
+
           {isAccountMenuOpen ? (
             <div
               className={`generate-chat__account-menu ${
@@ -1180,9 +1166,11 @@ export const GeneratePage = () => {
             aria-haspopup="menu"
             aria-expanded={isAccountMenuOpen}
           >
-            <div className="generate-chat__account-avatar">
-              {getProfileAvatar(profile?.avatarUrl, profile?.fullName)}
-            </div>
+            <ProfileAvatar
+              avatarCandidates={avatarCandidates}
+              fullName={profile?.fullName}
+              className="generate-chat__account-avatar"
+            />
             {!isConversationSidebarCollapsed ? (
               <>
                 <div className="generate-chat__account-copy">

@@ -1,5 +1,9 @@
 import { useEffect, useState } from 'react';
 import { apiRequest } from '../lib/axios';
+import {
+  emitUpgradePrompt,
+  getUpgradePromptFromMessage,
+} from '../lib/upgradePrompt';
 import { useAuth } from './useAuth';
 import type {
   CreateScheduledPostInput,
@@ -67,8 +71,15 @@ export const useScheduler = () => {
         mutationError instanceof Error
           ? mutationError.message
           : 'Failed to connect social account';
-      setError(message);
-      throw new Error(message);
+      const upgradePrompt = getUpgradePromptFromMessage(message);
+      const nextMessage = upgradePrompt?.message ?? message;
+
+      if (upgradePrompt) {
+        emitUpgradePrompt(upgradePrompt);
+      }
+
+      setError(nextMessage);
+      throw new Error(nextMessage);
     } finally {
       setIsMutating(false);
     }

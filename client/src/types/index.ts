@@ -218,6 +218,22 @@ export interface AnalyticsSummary {
   averageEngagement: number;
 }
 
+export interface PlatformPerformanceSummary {
+  platform: string;
+  posts: number;
+  reach: number;
+  impressions: number;
+  likes: number;
+  comments: number;
+  shares: number;
+  saves: number;
+  totalEngagement: number;
+  averageEngagementRate: number;
+  latestRecordedAt: string | null;
+  topPost: AnalyticsRecord | null;
+  recentPosts: AnalyticsRecord[];
+}
+
 export interface WeeklyAnalyticsComparison {
   currentWeek: number;
   previousWeek: number;
@@ -230,6 +246,8 @@ export interface GenerationOverview {
   totalGeneratedImages: number;
   totalScheduledPosts: number;
   scheduledPostStatusBreakdown: Record<ScheduledPostStatus, number>;
+  contentGenerationsToday: number;
+  imageGenerationsToday: number;
   contentGenerationsThisMonth: number;
   imageGenerationsThisMonth: number;
   analyticsRecordsThisMonth: number;
@@ -238,6 +256,7 @@ export interface GenerationOverview {
   topTones: AnalyticsTrendItem[];
   topAudiences: AnalyticsTrendItem[];
   topKeywords: AnalyticsTrendItem[];
+  platformSignals: PlatformPerformanceSummary[];
 }
 
 export interface AnalyticsOverview {

@@ -47,10 +47,6 @@ export const PlanCard = ({
             <span>{feature}</span>
           </li>
         ))}
-        <li>
-          <Check size={14} />
-          <span>Monthly limit: {plan.monthlyLimit ?? 'Unlimited'}</span>
-        </li>
       </ul>
       {plan.id === 'free' ? (
         <Button variant={currentPlan === 'free' ? 'secondary' : 'ghost'} disabled>
