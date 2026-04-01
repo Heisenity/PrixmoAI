@@ -35,17 +35,29 @@ export const uploadSourceImageSchema = z.object({
     .string()
     .trim()
     .refine(
-      (value) => ['image/jpeg', 'image/png', 'image/webp'].includes(value),
-      'Only JPG, PNG, and WEBP images are supported'
+      (value) =>
+        [
+          'image/jpeg',
+          'image/png',
+          'image/webp',
+          'video/mp4',
+          'video/quicktime',
+        ].includes(value),
+      'Only JPG, PNG, WEBP, MP4, and MOV media are supported'
     ),
   dataUrl: z
     .string()
     .trim()
     .regex(
-      /^data:image\/(?:jpeg|png|webp);base64,[a-zA-Z0-9+/=]+$/,
-      'Upload payload must be a valid base64 image'
+      /^data:[a-zA-Z0-9.+/-]+;base64,[a-zA-Z0-9+/=]+$/,
+      'Upload payload must be a valid base64 media file'
     ),
+});
+
+export const importSourceImageUrlSchema = z.object({
+  url: z.string().trim().url('Invalid media URL'),
 });
 
 export type GenerateImageInput = z.infer<typeof generateImageSchema>;
 export type UploadSourceImageInput = z.infer<typeof uploadSourceImageSchema>;
+export type ImportSourceImageUrlInput = z.infer<typeof importSourceImageUrlSchema>;

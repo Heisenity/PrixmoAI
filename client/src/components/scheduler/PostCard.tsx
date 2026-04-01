@@ -2,6 +2,7 @@ import { Card } from '../ui/card';
 import { Button } from '../ui/button';
 import type { ScheduledPost, ScheduledPostStatus } from '../../types';
 import { formatDateTime } from '../../lib/utils';
+import { MediaPreview } from './MediaPreview';
 
 const nextStatuses: ScheduledPostStatus[] = [
   'pending',
@@ -27,9 +28,14 @@ export const PostCard = ({
       <span className={`status-pill status-pill--${post.status}`}>{post.status}</span>
     </div>
     <p className="post-card__date">Scheduled for {formatDateTime(post.scheduledFor)}</p>
+    {post.lastError ? <p className="post-card__date">{post.lastError}</p> : null}
     {post.mediaUrl ? (
       <a className="post-card__media" href={post.mediaUrl} target="_blank" rel="noreferrer">
-        <img src={post.mediaUrl} alt={post.caption || post.id} />
+        <MediaPreview
+          src={post.mediaUrl}
+          alt={post.caption || post.id}
+          mediaType={post.mediaType}
+        />
         <span>{post.mediaUrl}</span>
       </a>
     ) : null}

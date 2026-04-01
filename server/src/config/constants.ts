@@ -4,8 +4,103 @@ import type { BillingPlan, PlanType } from '../types';
 dotenv.config();
 
 export const APP_PORT = Number(process.env.PORT || 5000);
+const trimTrailingSlash = (value: string) => value.replace(/\/+$/, '');
+const readBoolean = (value: string | undefined, fallback: boolean) => {
+  if (value === undefined) {
+    return fallback;
+  }
+
+  const normalized = value.trim().toLowerCase();
+
+  if (['1', 'true', 'yes', 'on'].includes(normalized)) {
+    return true;
+  }
+
+  if (['0', 'false', 'no', 'off'].includes(normalized)) {
+    return false;
+  }
+
+  return fallback;
+};
+
+export const SERVER_PUBLIC_URL = trimTrailingSlash(
+  process.env.SERVER_PUBLIC_URL || `http://localhost:${APP_PORT}`
+);
+export const CLIENT_APP_URL = trimTrailingSlash(
+  process.env.CLIENT_APP_URL || 'http://localhost:5173'
+);
 export const DEFAULT_GEMINI_MODEL =
   process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+export const META_GRAPH_VERSION = process.env.META_GRAPH_VERSION || 'v23.0';
+export const META_FACEBOOK_APP_ID =
+  process.env.META_FACEBOOK_APP_ID || process.env.META_APP_ID || '';
+export const META_FACEBOOK_APP_SECRET =
+  process.env.META_FACEBOOK_APP_SECRET || process.env.META_APP_SECRET || '';
+export const META_INSTAGRAM_APP_ID =
+  process.env.META_INSTAGRAM_APP_ID || META_FACEBOOK_APP_ID;
+export const META_INSTAGRAM_APP_SECRET =
+  process.env.META_INSTAGRAM_APP_SECRET || META_FACEBOOK_APP_SECRET;
+export const META_REDIRECT_URI =
+  process.env.META_REDIRECT_URI ||
+  `${SERVER_PUBLIC_URL}/api/scheduler/oauth/meta/callback`;
+export const META_OAUTH_CONFIG_ID =
+  process.env.META_OAUTH_CONFIG_ID || process.env.META_CONFIG_ID || '';
+export const META_OAUTH_STATE_SECRET = process.env.META_OAUTH_STATE_SECRET || '';
+export const META_OAUTH_DEBUG = readBoolean(
+  process.env.META_OAUTH_DEBUG,
+  (process.env.NODE_ENV || 'development') !== 'production'
+);
+const toScopeList = (value: string | undefined, fallback: string[]) =>
+  (value || fallback.join(','))
+    .split(',')
+    .map((scope) => scope.trim())
+    .filter(Boolean);
+
+export const META_FACEBOOK_OAUTH_SCOPES = toScopeList(
+  process.env.META_FACEBOOK_OAUTH_SCOPES,
+  ['pages_show_list', 'pages_read_engagement', 'pages_manage_posts']
+);
+
+export const META_INSTAGRAM_OAUTH_SCOPES = toScopeList(
+  process.env.META_INSTAGRAM_OAUTH_SCOPES,
+  [
+    'instagram_business_basic',
+    'instagram_business_content_publish',
+  ]
+);
+export const META_OAUTH_STATE_TTL_MS = Number(
+  process.env.META_OAUTH_STATE_TTL_MS || 10 * 60_000
+);
+export const SCHEDULER_PUBLISHER_POLL_MS = Number(
+  process.env.SCHEDULER_PUBLISHER_POLL_MS || 30_000
+);
+export const SCHEDULER_PUBLISHER_BATCH_SIZE = Number(
+  process.env.SCHEDULER_PUBLISHER_BATCH_SIZE || 10
+);
+export const ANALYTICS_SYNC_POLL_MS = Number(
+  process.env.ANALYTICS_SYNC_POLL_MS || 15 * 60_000
+);
+export const ANALYTICS_SYNC_BATCH_SIZE = Number(
+  process.env.ANALYTICS_SYNC_BATCH_SIZE || 10
+);
+export const ANALYTICS_SYNC_LOOKBACK_DAYS = Number(
+  process.env.ANALYTICS_SYNC_LOOKBACK_DAYS || 30
+);
+export const isMetaOAuthConfigured = Boolean(
+  META_OAUTH_STATE_SECRET &&
+    ((META_FACEBOOK_APP_ID && META_FACEBOOK_APP_SECRET) ||
+      (META_INSTAGRAM_APP_ID && META_INSTAGRAM_APP_SECRET))
+);
+export const isMetaFacebookOAuthConfigured = Boolean(
+  META_FACEBOOK_APP_ID &&
+    META_FACEBOOK_APP_SECRET &&
+    META_OAUTH_STATE_SECRET
+);
+export const isMetaInstagramOAuthConfigured = Boolean(
+  ((META_INSTAGRAM_APP_ID && META_INSTAGRAM_APP_SECRET) ||
+    (META_FACEBOOK_APP_ID && META_FACEBOOK_APP_SECRET)) &&
+    META_OAUTH_STATE_SECRET
+);
 
 export const CAPTION_VARIATION_COUNT = 3;
 export const HASHTAG_VARIATION_COUNT = 15;

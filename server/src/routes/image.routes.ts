@@ -3,6 +3,7 @@ import {
   generateImage,
   getWatermarkedImage,
   getImageHistory,
+  importSourceImageUrl,
   uploadSourceImage,
 } from '../controllers/image.controller';
 import { authMiddleware } from '../middleware/auth.middleware';
@@ -13,6 +14,7 @@ import {
 import { validate } from '../middleware/validate.middleware';
 import {
   generateImageSchema,
+  importSourceImageUrlSchema,
   uploadSourceImageSchema,
 } from '../schemas/image.schema';
 
@@ -23,6 +25,12 @@ router.post(
   authMiddleware,
   validate(uploadSourceImageSchema),
   uploadSourceImage
+);
+router.post(
+  '/import-source-url',
+  authMiddleware,
+  validate(importSourceImageUrlSchema),
+  importSourceImageUrl
 );
 router.post(
   '/generate',

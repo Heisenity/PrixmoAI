@@ -8,6 +8,7 @@ exports.createUserSchema = zod_1.z.object({
     username: zod_1.z.string().optional(),
 });
 exports.authProfileSchema = zod_1.z.object({
+    brandName: zod_1.z.string().trim().min(1, 'Brand name is required'),
     fullName: zod_1.z.string().trim().min(1, 'Full name is required'),
     phoneNumber: zod_1.z
         .string()

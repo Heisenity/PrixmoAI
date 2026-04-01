@@ -11,6 +11,8 @@ import {
   saveAnalyticsData,
 } from '../db/queries/analytics';
 import { requireSupabaseAdmin, requireUserClient } from '../db/supabase';
+import { getAnalyticsDashboard } from '../services/analyticsDashboard.service';
+import { syncAnalyticsForUser } from '../services/analyticsSync.service';
 import type { RecordAnalyticsInput } from '../schemas/analytics.schema';
 
 type AuthenticatedRequest<
@@ -101,6 +103,90 @@ export const getOverview = async (
         error instanceof Error
           ? error.message
           : 'Failed to fetch analytics overview',
+    });
+  }
+};
+
+export const getDashboard = async (
+  req: AuthenticatedRequest<
+    {},
+    unknown,
+    unknown,
+    {
+      preset?: string;
+      start?: string;
+      end?: string;
+      platform?: string;
+    }
+  >,
+  res: Response
+) => {
+  if (!req.user?.id) {
+    return res.status(401).json({
+      status: 'fail',
+      message: 'Unauthorized',
+    });
+  }
+
+  try {
+    const client = requireUserClient(req.accessToken);
+    const dashboard = await getAnalyticsDashboard(client, req.user.id, {
+      preset:
+        req.query.preset === '7d' ||
+        req.query.preset === '14d' ||
+        req.query.preset === '28d' ||
+        req.query.preset === '30d' ||
+        req.query.preset === 'custom'
+          ? req.query.preset
+          : undefined,
+      start: parseOptionalDate(req.query.start),
+      end: parseOptionalDate(req.query.end),
+      platformScope:
+        req.query.platform === 'instagram' || req.query.platform === 'facebook'
+          ? req.query.platform
+          : 'all',
+    });
+
+    return res.status(200).json({
+      status: 'success',
+      data: dashboard,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      status: 'error',
+      message:
+        error instanceof Error
+          ? error.message
+          : 'Failed to fetch analytics dashboard',
+    });
+  }
+};
+
+export const syncAnalytics = async (
+  req: AuthenticatedRequest,
+  res: Response
+) => {
+  if (!req.user?.id) {
+    return res.status(401).json({
+      status: 'fail',
+      message: 'Unauthorized',
+    });
+  }
+
+  try {
+    const client = requireUserClient(req.accessToken);
+    const summary = await syncAnalyticsForUser(client, req.user.id);
+
+    return res.status(200).json({
+      status: 'success',
+      message: 'Analytics synced successfully',
+      data: summary,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      status: 'error',
+      message:
+        error instanceof Error ? error.message : 'Failed to sync analytics',
     });
   }
 };

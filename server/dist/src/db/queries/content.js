@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.trackContentGenerationUsage = exports.getContentMonthlyUsageCount = exports.deleteGeneratedContent = exports.getGeneratedContentHistory = exports.getGeneratedContentById = exports.saveGeneratedContent = void 0;
+exports.trackReelScriptGenerationUsage = exports.trackContentGenerationUsage = exports.getReelScriptDailyUsageCount = exports.getContentDailyUsageCount = exports.getContentMonthlyUsageCount = exports.deleteGeneratedContent = exports.getGeneratedContentHistory = exports.getGeneratedContentById = exports.saveGeneratedContent = void 0;
 const constants_1 = require("../../config/constants");
 const subscriptions_1 = require("./subscriptions");
 const DEFAULT_PAGE = 1;
@@ -11,6 +11,46 @@ const toStringArray = (value) => Array.isArray(value)
         .map((entry) => entry.trim())
         .filter(Boolean)
     : [];
+const toCaptionVariants = (value) => {
+    if (!Array.isArray(value)) {
+        return [];
+    }
+    return value
+        .map((entry) => {
+        if (typeof entry === 'string') {
+            const normalized = entry.trim();
+            if (!normalized) {
+                return null;
+            }
+            return {
+                hook: normalized,
+                mainCopy: normalized,
+                shortCaption: normalized,
+                cta: 'Learn more.',
+            };
+        }
+        if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+            return null;
+        }
+        const record = entry;
+        const hook = typeof record.hook === 'string' ? record.hook.trim() : '';
+        const mainCopy = typeof record.mainCopy === 'string' ? record.mainCopy.trim() : '';
+        const shortCaption = typeof record.shortCaption === 'string'
+            ? record.shortCaption.trim()
+            : '';
+        const cta = typeof record.cta === 'string' ? record.cta.trim() : '';
+        if (!hook || !mainCopy || !shortCaption || !cta) {
+            return null;
+        }
+        return {
+            hook,
+            mainCopy,
+            shortCaption,
+            cta,
+        };
+    })
+        .filter((entry) => Boolean(entry));
+};
 const toReelScript = (value) => {
     if (!value || typeof value !== 'object' || Array.isArray(value)) {
         return {
@@ -30,6 +70,7 @@ const toGeneratedContent = (row) => ({
     id: row.id,
     userId: row.user_id,
     brandProfileId: row.brand_profile_id,
+    conversationId: row.conversation_id,
     productName: row.product_name,
     productDescription: row.product_description,
     productImageUrl: row.product_image_url,
@@ -38,7 +79,7 @@ const toGeneratedContent = (row) => ({
     tone: row.tone,
     audience: row.audience,
     keywords: toStringArray(row.keywords),
-    captions: toStringArray(row.captions),
+    captions: toCaptionVariants(row.captions),
     hashtags: toStringArray(row.hashtags),
     reelScript: toReelScript(row.reel_script),
     createdAt: row.created_at,
@@ -52,6 +93,7 @@ const saveGeneratedContent = async (client, userId, input) => {
         .insert({
         user_id: userId,
         brand_profile_id: input.brandProfileId ?? null,
+        conversation_id: input.conversationId ?? null,
         product_name: input.productName,
         product_description: input.productDescription ?? null,
         product_image_url: input.productImageUrl ?? null,
@@ -123,5 +165,11 @@ const deleteGeneratedContent = async (client, userId, contentId) => {
 exports.deleteGeneratedContent = deleteGeneratedContent;
 const getContentMonthlyUsageCount = async (client, userId) => (0, subscriptions_1.getMonthlyUsageCount)(client, userId, constants_1.FEATURE_KEYS.contentGeneration);
 exports.getContentMonthlyUsageCount = getContentMonthlyUsageCount;
+const getContentDailyUsageCount = async (client, userId) => (0, subscriptions_1.getDailyUsageCount)(client, userId, constants_1.FEATURE_KEYS.contentGeneration);
+exports.getContentDailyUsageCount = getContentDailyUsageCount;
+const getReelScriptDailyUsageCount = async (client, userId) => (0, subscriptions_1.getDailyUsageCount)(client, userId, constants_1.FEATURE_KEYS.reelScriptGeneration);
+exports.getReelScriptDailyUsageCount = getReelScriptDailyUsageCount;
 const trackContentGenerationUsage = async (client, userId, metadata = {}) => (0, subscriptions_1.recordUsageEvent)(client, userId, constants_1.FEATURE_KEYS.contentGeneration, metadata);
 exports.trackContentGenerationUsage = trackContentGenerationUsage;
+const trackReelScriptGenerationUsage = async (client, userId, metadata = {}) => (0, subscriptions_1.recordUsageEvent)(client, userId, constants_1.FEATURE_KEYS.reelScriptGeneration, metadata);
+exports.trackReelScriptGenerationUsage = trackReelScriptGenerationUsage;

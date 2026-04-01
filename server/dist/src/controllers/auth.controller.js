@@ -4,6 +4,7 @@ exports.getMe = exports.saveProfile = void 0;
 const brandProfiles_1 = require("../db/queries/brandProfiles");
 const supabase_1 = require("../db/supabase");
 const toBrandProfileInput = (body) => ({
+    brandName: body.brandName,
     fullName: body.fullName,
     phoneNumber: body.phoneNumber ?? null,
     username: body.username ?? null,

@@ -5,6 +5,7 @@ const compactObject = (value) => Object.fromEntries(Object.entries(value).filter
 const toBrandProfile = (row) => ({
     id: row.id,
     userId: row.user_id,
+    brandName: row.brand_name,
     fullName: row.full_name,
     phoneNumber: row.phone_number,
     username: row.username,
@@ -18,6 +19,7 @@ const toBrandProfile = (row) => ({
 });
 const toBrandProfilePayload = (userId, input) => compactObject({
     user_id: userId,
+    brand_name: input.brandName,
     full_name: input.fullName,
     phone_number: input.phoneNumber ?? null,
     username: input.username ?? null,
@@ -28,6 +30,7 @@ const toBrandProfilePayload = (userId, input) => compactObject({
     description: input.description ?? null,
 });
 const toBrandProfileUpdatePayload = (input) => compactObject({
+    brand_name: input.brandName,
     full_name: input.fullName,
     phone_number: input.phoneNumber,
     username: input.username,

@@ -11,8 +11,24 @@ const caption_prompt_1 = require("./prompts/caption.prompt");
 const hashtag_prompt_1 = require("./prompts/hashtag.prompt");
 const script_prompt_1 = require("./prompts/script.prompt");
 dotenv_1.default.config();
+const captionVariantSchema = zod_1.z
+    .object({
+    hook: zod_1.z.string().trim().min(1),
+    mainCopy: zod_1.z.string().trim().min(1),
+    shortCaption: zod_1.z.string().trim().min(1).optional(),
+    Caption: zod_1.z.string().trim().min(1).optional(),
+    cta: zod_1.z.string().trim().min(1),
+})
+    .transform((value) => ({
+    hook: value.hook,
+    mainCopy: value.mainCopy,
+    shortCaption: value.shortCaption ?? value.Caption ?? '',
+    cta: value.cta,
+}));
 const captionResponseSchema = zod_1.z.object({
-    captions: zod_1.z.array(zod_1.z.string().trim().min(1)).min(constants_1.CAPTION_VARIATION_COUNT),
+    captions: zod_1.z
+        .array(captionVariantSchema)
+        .min(constants_1.CAPTION_VARIATION_COUNT),
 });
 const hashtagResponseSchema = zod_1.z.object({
     hashtags: zod_1.z.array(zod_1.z.string().trim().min(1)).min(constants_1.HASHTAG_VARIATION_COUNT),
@@ -90,11 +106,24 @@ const normalizeHashtag = (value) => {
         ? cleaned.toLowerCase()
         : `#${cleaned.toLowerCase()}`;
 };
+const EMPTY_REEL_SCRIPT = {
+    hook: '',
+    body: '',
+    cta: '',
+};
 const generateCaptions = async (brandProfile, productInput) => {
     const response = await generateStructuredResponse((0, caption_prompt_1.buildCaptionPrompt)(brandProfile, productInput), captionResponseSchema);
     const captions = response.captions
-        .map((caption) => caption.trim())
-        .filter(Boolean)
+        .map((caption) => ({
+        hook: caption.hook.trim(),
+        mainCopy: caption.mainCopy.trim(),
+        shortCaption: caption.shortCaption.trim(),
+        cta: caption.cta.trim(),
+    }))
+        .filter((caption) => caption.hook &&
+        caption.mainCopy &&
+        caption.shortCaption &&
+        caption.cta)
         .slice(0, constants_1.CAPTION_VARIATION_COUNT);
     if (captions.length < constants_1.CAPTION_VARIATION_COUNT) {
         throw new Error('Gemini did not return enough caption options');
@@ -116,11 +145,14 @@ const generateReelScript = async (brandProfile, productInput) => {
     return response.reelScript;
 };
 exports.generateReelScript = generateReelScript;
-const generateContentPack = async (brandProfile, productInput) => {
+const generateContentPack = async (brandProfile, productInput, options = {}) => {
+    const includeReelScript = options.includeReelScript ?? true;
     const [captions, hashtags, reelScript] = await Promise.all([
         (0, exports.generateCaptions)(brandProfile, productInput),
         (0, exports.generateHashtags)(brandProfile, productInput),
-        (0, exports.generateReelScript)(brandProfile, productInput),
+        includeReelScript
+            ? (0, exports.generateReelScript)(brandProfile, productInput)
+            : Promise.resolve(EMPTY_REEL_SCRIPT),
     ]);
     return {
         captions,

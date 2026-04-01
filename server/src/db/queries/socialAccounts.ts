@@ -12,6 +12,10 @@ type SocialAccountRow = {
   platform: string;
   account_id: string;
   account_name: string | null;
+  profile_url: string | null;
+  oauth_provider: string | null;
+  verification_status: SocialAccount['verificationStatus'];
+  verified_at: string | null;
   access_token: string | null;
   refresh_token: string | null;
   token_expires_at: string | null;
@@ -48,9 +52,13 @@ const normalizeLimit = (limit?: number) =>
 const toSocialAccount = (row: SocialAccountRow): SocialAccount => ({
   id: row.id,
   userId: row.user_id,
-  platform: row.platform,
+  platform: row.platform as SocialAccount['platform'],
   accountId: row.account_id,
   accountName: row.account_name,
+  profileUrl: row.profile_url,
+  oauthProvider: (row.oauth_provider as SocialAccount['oauthProvider']) ?? null,
+  verificationStatus: row.verification_status,
+  verifiedAt: row.verified_at,
   accessToken: row.access_token,
   refreshToken: row.refresh_token,
   tokenExpiresAt: row.token_expires_at,
@@ -72,6 +80,10 @@ export const createSocialAccount = async (
       platform: input.platform,
       account_id: input.accountId,
       account_name: input.accountName ?? null,
+      profile_url: input.profileUrl ?? null,
+      oauth_provider: input.oauthProvider ?? null,
+      verification_status: input.verificationStatus ?? 'unverified',
+      verified_at: input.verifiedAt ?? null,
       access_token: input.accessToken ?? null,
       refresh_token: input.refreshToken ?? null,
       token_expires_at: input.tokenExpiresAt ?? null,
@@ -82,6 +94,61 @@ export const createSocialAccount = async (
 
   if (error || !data) {
     throw new Error(error?.message || 'Failed to create social account');
+  }
+
+  return toSocialAccount(data as SocialAccountRow);
+};
+
+export const getSocialAccountByUserAndPlatformAndAccountId = async (
+  client: AppSupabaseClient,
+  userId: string,
+  platform: SocialAccount['platform'],
+  accountId: string
+): Promise<SocialAccount | null> => {
+  const { data, error } = await client
+    .from('social_accounts')
+    .select('*')
+    .eq('user_id', userId)
+    .eq('platform', platform)
+    .eq('account_id', accountId)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(error.message || 'Failed to fetch social account');
+  }
+
+  return data ? toSocialAccount(data as SocialAccountRow) : null;
+};
+
+export const upsertSocialAccountByUniqueKey = async (
+  client: AppSupabaseClient,
+  userId: string,
+  input: CreateSocialAccountInput
+): Promise<SocialAccount> => {
+  const { data, error } = await client
+    .from('social_accounts')
+    .upsert(
+      {
+        user_id: userId,
+        platform: input.platform,
+        account_id: input.accountId,
+        account_name: input.accountName ?? null,
+        profile_url: input.profileUrl ?? null,
+        oauth_provider: input.oauthProvider ?? null,
+        verification_status: input.verificationStatus ?? 'unverified',
+        verified_at: input.verifiedAt ?? null,
+        access_token: input.accessToken ?? null,
+        refresh_token: input.refreshToken ?? null,
+        token_expires_at: input.tokenExpiresAt ?? null,
+        metadata: input.metadata ?? {},
+      },
+      { onConflict: 'user_id,platform,account_id' }
+    )
+    .select('*')
+    .single();
+
+  if (error || !data) {
+    throw new Error(error?.message || 'Failed to upsert social account');
   }
 
   return toSocialAccount(data as SocialAccountRow);
@@ -164,6 +231,10 @@ export const updateSocialAccount = async (
     platform: input.platform,
     account_id: input.accountId,
     account_name: input.accountName,
+    profile_url: input.profileUrl,
+    oauth_provider: input.oauthProvider,
+    verification_status: input.verificationStatus,
+    verified_at: input.verifiedAt,
     access_token: input.accessToken,
     refresh_token: input.refreshToken,
     token_expires_at: input.tokenExpiresAt,

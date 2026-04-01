@@ -5,9 +5,12 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "doppler:dev": "doppler run -- vite",
     "build": "vite build",
+    "doppler:build": "doppler run -- vite build",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "doppler:typecheck": "doppler run -- tsc --noEmit"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.49.8",

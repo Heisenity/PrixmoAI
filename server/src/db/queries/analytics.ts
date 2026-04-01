@@ -5,9 +5,12 @@ import {
 import type {
   AnalyticsData,
   AnalyticsSummary,
+  AnalyticsAudienceBreakdownItem,
+  AnalyticsAudienceSnapshot,
   PlatformPerformanceSummary,
   AnalyticsTrendItem,
   CreateAnalyticsInput,
+  CreateAnalyticsAudienceSnapshotInput,
   DeveloperResearchSummary,
   GenerationOverview,
   PaginatedResult,
@@ -25,13 +28,47 @@ type AnalyticsRow = {
   content_id: string | null;
   platform: string | null;
   post_external_id: string | null;
+  post_type?: string | null;
+  caption?: string | null;
+  media_url?: string | null;
+  thumbnail_url?: string | null;
   reach: number | null;
   impressions: number | null;
   likes: number | null;
   comments: number | null;
   shares: number | null;
   saves: number | null;
+  reactions?: number | null;
+  video_plays?: number | null;
+  replays?: number | null;
+  exits?: number | null;
+  profile_visits?: number | null;
+  post_clicks?: number | null;
+  page_likes?: number | null;
+  completion_rate?: number | string | null;
+  followers_at_post_time?: number | null;
   engagement_rate: number | string | null;
+  published_time?: string | null;
+  top_comments?: unknown;
+  recorded_at: string;
+  created_at: string;
+  updated_at: string;
+};
+
+type AnalyticsAudienceSnapshotRow = {
+  id: string;
+  user_id: string;
+  social_account_id: string;
+  platform: string;
+  followers: number | null;
+  impressions: number | null;
+  reach: number | null;
+  profile_visits?: number | null;
+  page_likes?: number | null;
+  age_distribution?: unknown;
+  gender_distribution?: unknown;
+  top_locations?: unknown;
+  active_hours?: unknown;
   recorded_at: string;
   created_at: string;
   updated_at: string;
@@ -91,6 +128,51 @@ const toStringArray = (value: unknown): string[] =>
         .filter(Boolean)
     : [];
 
+const toAudienceBreakdownItems = (value: unknown): AnalyticsAudienceBreakdownItem[] => {
+  if (Array.isArray(value)) {
+    return value
+      .map((entry) => {
+        if (typeof entry === 'string' && entry.trim()) {
+          return { label: entry.trim(), value: 1 };
+        }
+
+        const record = toRecord(entry);
+        const label =
+          typeof record.label === 'string'
+            ? record.label
+            : typeof record.name === 'string'
+              ? record.name
+              : typeof record.key === 'string'
+                ? record.key
+                : null;
+
+        if (!label?.trim()) {
+          return null;
+        }
+
+        return {
+          label: label.trim(),
+          value: toNumber(
+            record.value ?? record.count ?? record.total ?? record.percentage
+          ),
+        };
+      })
+      .filter((entry): entry is AnalyticsAudienceBreakdownItem => Boolean(entry));
+  }
+
+  return Object.entries(toRecord(value))
+    .map(([label, rawValue]) => ({
+      label,
+      value: toNumber(rawValue),
+    }))
+    .filter((entry) => entry.label.trim().length > 0);
+};
+
+const toActiveHoursMap = (value: unknown): Record<string, number> =>
+  Object.fromEntries(
+    Object.entries(toRecord(value)).map(([key, rawValue]) => [key, toNumber(rawValue)])
+  );
+
 const incrementCounter = (
   map: Map<string, number>,
   rawValue: unknown,
@@ -134,7 +216,7 @@ const normalizeLimit = (limit?: number) =>
   Number.isFinite(limit) && limit && limit > 0 ? limit : DEFAULT_LIMIT;
 
 const getEngagementScore = (item: AnalyticsData) =>
-  item.likes + item.comments + item.shares + item.saves;
+  item.likes + item.comments + item.shares + item.saves + item.reactions;
 
 const normalizePlatformLabel = (value: string | null) => {
   if (!value) {
@@ -213,6 +295,19 @@ const getPreviousWeekWindow = () => {
   };
 };
 
+const startOfUtcDayIso = (value: string) => {
+  const date = new Date(value);
+  return new Date(
+    Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate())
+  ).toISOString();
+};
+
+const endOfUtcDayIso = (value: string) => {
+  const date = new Date(startOfUtcDayIso(value));
+  date.setUTCDate(date.getUTCDate() + 1);
+  return date.toISOString();
+};
+
 const toAnalyticsData = (row: AnalyticsRow): AnalyticsData => ({
   id: row.id,
   userId: row.user_id,
@@ -220,14 +315,56 @@ const toAnalyticsData = (row: AnalyticsRow): AnalyticsData => ({
   contentId: row.content_id,
   platform: row.platform,
   postExternalId: row.post_external_id,
+  postType: row.post_type ?? null,
+  caption: row.caption ?? null,
+  mediaUrl: row.media_url ?? null,
+  thumbnailUrl: row.thumbnail_url ?? row.media_url ?? null,
   reach: toNumber(row.reach),
   impressions: toNumber(row.impressions),
   likes: toNumber(row.likes),
   comments: toNumber(row.comments),
   shares: toNumber(row.shares),
   saves: toNumber(row.saves),
+  reactions: toNumber(row.reactions),
+  videoPlays: toNumber(row.video_plays),
+  replays: toNumber(row.replays),
+  exits: toNumber(row.exits),
+  profileVisits: toNumber(row.profile_visits),
+  postClicks: toNumber(row.post_clicks),
+  pageLikes: toNumber(row.page_likes),
+  completionRate:
+    row.completion_rate === null || row.completion_rate === undefined
+      ? null
+      : Number(row.completion_rate),
+  followersAtPostTime:
+    row.followers_at_post_time === null || row.followers_at_post_time === undefined
+      ? null
+      : toNumber(row.followers_at_post_time),
   engagementRate:
     row.engagement_rate === null ? null : Number(row.engagement_rate),
+  publishedTime: row.published_time ?? null,
+  topComments: toStringArray(row.top_comments),
+  recordedAt: row.recorded_at,
+  createdAt: row.created_at,
+  updatedAt: row.updated_at,
+});
+
+const toAnalyticsAudienceSnapshot = (
+  row: AnalyticsAudienceSnapshotRow
+): AnalyticsAudienceSnapshot => ({
+  id: row.id,
+  userId: row.user_id,
+  socialAccountId: row.social_account_id,
+  platform: row.platform,
+  followers: toNumber(row.followers),
+  impressions: toNumber(row.impressions),
+  reach: toNumber(row.reach),
+  profileVisits: toNumber(row.profile_visits),
+  pageLikes: toNumber(row.page_likes),
+  ageDistribution: toAudienceBreakdownItems(row.age_distribution),
+  genderDistribution: toAudienceBreakdownItems(row.gender_distribution),
+  topLocations: toAudienceBreakdownItems(row.top_locations),
+  activeHours: toActiveHoursMap(row.active_hours),
   recordedAt: row.recorded_at,
   createdAt: row.created_at,
   updatedAt: row.updated_at,
@@ -281,25 +418,60 @@ export const saveAnalyticsData = async (
   userId: string,
   input: CreateAnalyticsInput
 ): Promise<AnalyticsData> => {
-  const { data, error } = await client
+  const buildInsertPayload = (includeExtendedFields: boolean) => ({
+    user_id: userId,
+    scheduled_post_id: input.scheduledPostId ?? null,
+    content_id: input.contentId ?? null,
+    platform: input.platform ?? null,
+    post_external_id: input.postExternalId ?? null,
+    reach: input.reach ?? 0,
+    impressions: input.impressions ?? 0,
+    likes: input.likes ?? 0,
+    comments: input.comments ?? 0,
+    shares: input.shares ?? 0,
+    saves: input.saves ?? 0,
+    engagement_rate: input.engagementRate ?? null,
+    recorded_at: input.recordedAt ?? new Date().toISOString(),
+    ...(includeExtendedFields
+      ? {
+          post_type: input.postType ?? null,
+          caption: input.caption ?? null,
+          media_url: input.mediaUrl ?? null,
+          thumbnail_url: input.thumbnailUrl ?? null,
+          reactions: input.reactions ?? 0,
+          video_plays: input.videoPlays ?? 0,
+          replays: input.replays ?? 0,
+          exits: input.exits ?? 0,
+          profile_visits: input.profileVisits ?? 0,
+          post_clicks: input.postClicks ?? 0,
+          page_likes: input.pageLikes ?? 0,
+          completion_rate: input.completionRate ?? null,
+          followers_at_post_time: input.followersAtPostTime ?? null,
+          published_time: input.publishedTime ?? null,
+          top_comments: input.topComments ?? [],
+        }
+      : {}),
+  });
+
+  let { data, error } = await client
     .from('analytics')
-    .insert({
-      user_id: userId,
-      scheduled_post_id: input.scheduledPostId ?? null,
-      content_id: input.contentId ?? null,
-      platform: input.platform ?? null,
-      post_external_id: input.postExternalId ?? null,
-      reach: input.reach ?? 0,
-      impressions: input.impressions ?? 0,
-      likes: input.likes ?? 0,
-      comments: input.comments ?? 0,
-      shares: input.shares ?? 0,
-      saves: input.saves ?? 0,
-      engagement_rate: input.engagementRate ?? null,
-      recorded_at: input.recordedAt ?? new Date().toISOString(),
-    })
+    .insert(buildInsertPayload(true))
     .select('*')
     .single();
+
+  if (
+    error &&
+    /column .* does not exist|schema cache/i.test(error.message || '')
+  ) {
+    const fallback = await client
+      .from('analytics')
+      .insert(buildInsertPayload(false))
+      .select('*')
+      .single();
+
+    data = fallback.data;
+    error = fallback.error;
+  }
 
   if (error || !data) {
     throw new Error(error?.message || 'Failed to save analytics data');
@@ -328,6 +500,116 @@ export const getAnalyticsByUserId = async (
   }
 
   return (data ?? []).map((row) => toAnalyticsData(row as AnalyticsRow));
+};
+
+export const saveAnalyticsAudienceSnapshot = async (
+  client: AppSupabaseClient,
+  userId: string,
+  input: CreateAnalyticsAudienceSnapshotInput
+): Promise<AnalyticsAudienceSnapshot | null> => {
+  const recordedAt = input.recordedAt ?? new Date().toISOString();
+  const lookupResult = await client
+    .from('analytics_audience_snapshots')
+    .select('*')
+    .eq('user_id', userId)
+    .eq('social_account_id', input.socialAccountId)
+    .gte('recorded_at', startOfUtcDayIso(recordedAt))
+    .lt('recorded_at', endOfUtcDayIso(recordedAt))
+    .order('recorded_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (
+    lookupResult.error &&
+    /relation .*analytics_audience_snapshots.* does not exist|schema cache/i.test(
+      lookupResult.error.message || ''
+    )
+  ) {
+    return null;
+  }
+
+  if (lookupResult.error) {
+    throw new Error(
+      lookupResult.error.message || 'Failed to query audience analytics snapshots'
+    );
+  }
+
+  const payload = {
+    user_id: userId,
+    social_account_id: input.socialAccountId,
+    platform: input.platform,
+    followers: input.followers ?? 0,
+    impressions: input.impressions ?? 0,
+    reach: input.reach ?? 0,
+    profile_visits: input.profileVisits ?? 0,
+    page_likes: input.pageLikes ?? 0,
+    age_distribution: input.ageDistribution ?? [],
+    gender_distribution: input.genderDistribution ?? [],
+    top_locations: input.topLocations ?? [],
+    active_hours: input.activeHours ?? {},
+    recorded_at: recordedAt,
+  };
+
+  const result = lookupResult.data
+    ? await client
+        .from('analytics_audience_snapshots')
+        .update(payload)
+        .eq('id', lookupResult.data.id)
+        .select('*')
+        .single()
+    : await client
+        .from('analytics_audience_snapshots')
+        .insert(payload)
+        .select('*')
+        .single();
+
+  if (
+    result.error &&
+    /relation .*analytics_audience_snapshots.* does not exist|schema cache/i.test(
+      result.error.message || ''
+    )
+  ) {
+    return null;
+  }
+
+  if (result.error || !result.data) {
+    throw new Error(result.error?.message || 'Failed to save audience analytics snapshot');
+  }
+
+  return toAnalyticsAudienceSnapshot(result.data as AnalyticsAudienceSnapshotRow);
+};
+
+export const getAnalyticsAudienceSnapshotsByUserId = async (
+  client: AppSupabaseClient,
+  userId: string,
+  options: DateRangeOptions = {}
+): Promise<AnalyticsAudienceSnapshot[]> => {
+  let query = client
+    .from('analytics_audience_snapshots')
+    .select('*')
+    .eq('user_id', userId)
+    .order('recorded_at', { ascending: false });
+
+  query = applyDateRange(query, 'recorded_at', options);
+
+  const { data, error } = await query;
+
+  if (
+    error &&
+    /relation .*analytics_audience_snapshots.* does not exist|schema cache/i.test(
+      error.message || ''
+    )
+  ) {
+    return [];
+  }
+
+  if (error) {
+    throw new Error(error.message || 'Failed to fetch audience analytics snapshots');
+  }
+
+  return (data ?? []).map((row) =>
+    toAnalyticsAudienceSnapshot(row as AnalyticsAudienceSnapshotRow)
+  );
 };
 
 export const getAnalyticsHistory = async (
@@ -482,7 +764,7 @@ export const getGenerationOverview = async (
   const [
     totalGeneratedContent,
     totalGeneratedImages,
-    totalScheduledPosts,
+    totalScheduledPostsResult,
     contentGenerationsToday,
     imageGenerationsToday,
     contentGenerationsThisMonth,
@@ -493,7 +775,11 @@ export const getGenerationOverview = async (
   ] = await Promise.all([
     getTableCount(client, 'generated_content', userId),
     getTableCount(client, 'generated_images', userId),
-    getTableCount(client, 'scheduled_posts', userId),
+    client
+      .from('scheduled_posts')
+      .select('*', { count: 'exact', head: true })
+      .eq('user_id', userId)
+      .in('status', ['pending', 'scheduled']),
     getDailyUsageCount(client, userId, FEATURE_KEYS.contentGeneration),
     getDailyUsageCount(client, userId, FEATURE_KEYS.imageGeneration),
     getMonthlyUsageCount(client, userId, FEATURE_KEYS.contentGeneration),
@@ -529,6 +815,13 @@ export const getGenerationOverview = async (
     throw new Error(
       analyticsRecordsThisMonthResult.error.message ||
         'Failed to fetch analytics record count'
+    );
+  }
+
+  if (totalScheduledPostsResult.error) {
+    throw new Error(
+      totalScheduledPostsResult.error.message ||
+        'Failed to fetch active scheduled post count'
     );
   }
 
@@ -668,7 +961,7 @@ export const getGenerationOverview = async (
   return {
     totalGeneratedContent,
     totalGeneratedImages,
-    totalScheduledPosts,
+    totalScheduledPosts: totalScheduledPostsResult.count ?? 0,
     scheduledPostStatusBreakdown,
     contentGenerationsToday,
     imageGenerationsToday,

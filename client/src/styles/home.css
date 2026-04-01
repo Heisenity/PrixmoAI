@@ -55,10 +55,21 @@
 }
 
 .landing-hero__void {
+  --hero-orbit-center-x: 60%;
+  --hero-orbit-center-y: 46%;
+  --hero-ring-one-width: clamp(760px, 64vw, 820px);
+  --hero-ring-one-height: clamp(700px, 58vw, 760px);
+  --hero-ring-two-width: clamp(610px, 52vw, 660px);
+  --hero-ring-two-height: clamp(560px, 47vw, 620px);
+  --hero-ring-three-width: clamp(460px, 39vw, 500px);
+  --hero-ring-three-height: clamp(420px, 35vw, 460px);
+  --hero-blackhole-size: min(62vw, 520px);
+  --hero-blackhole-half-size: min(31vw, 260px);
   position: absolute;
   inset: -3rem -4rem auto auto;
   width: min(88vw, 1040px);
   aspect-ratio: 1.08;
+  overflow: hidden;
   pointer-events: none;
   z-index: 0;
   opacity: 0.86;
@@ -77,22 +88,51 @@
 
 .landing-hero__void-rings {
   position: absolute;
+  left: var(--hero-orbit-center-x);
+  top: var(--hero-orbit-center-y);
+  width: var(--hero-ring-width);
+  height: var(--hero-ring-height);
+  transform: translate(-50%, -50%) rotate(var(--hero-ring-rotate));
+  transform-origin: center center;
   border-radius: 50%;
-  border: 1px solid rgba(143, 216, 255, 0.11);
+  border: 1px solid var(--hero-ring-color);
+  opacity: var(--hero-ring-opacity);
+  pointer-events: none;
+  box-sizing: border-box;
 }
 
 .landing-hero__void-rings--one {
-  inset: 10% -16% 10% 24%;
+  --hero-ring-width: calc(var(--hero-ring-one-width) - 140px);
+  --hero-ring-height: calc(var(--hero-ring-one-height) - 96px);
+  --hero-ring-rotate: -6deg;
+  --hero-ring-color: rgba(143, 216, 255, 0.15);
+  --hero-ring-opacity: 0.74;
+  left: calc(var(--hero-orbit-center-x) - 2%);
+  top: calc(var(--hero-orbit-center-y) - 5%);
+  z-index: 0;
+  border: 1px solid rgba(143, 216, 255, 0.15);
+  box-shadow: none;
+  transform: translate(-50%, -50%) rotate(var(--hero-ring-rotate));
 }
 
 .landing-hero__void-rings--two {
-  inset: 24% -2% 18% 36%;
-  border-color: rgba(115, 240, 213, 0.12);
+  --hero-ring-width: var(--hero-ring-two-width);
+  --hero-ring-height: var(--hero-ring-two-height);
+  --hero-ring-rotate: 9deg;
+  --hero-ring-color: rgba(115, 240, 213, 0.14);
+  --hero-ring-opacity: 0.68;
 }
 
 .landing-hero__void-rings--three {
-  inset: 34% 7% 24% 44%;
-  border-color: rgba(143, 216, 255, 0.14);
+  --hero-ring-width: var(--hero-ring-three-width);
+  --hero-ring-height: var(--hero-ring-three-height);
+  --hero-ring-rotate: -8deg;
+  --hero-ring-color: rgba(143, 216, 255, 0.13);
+  --hero-ring-opacity: 0.68;
+  top: calc(var(--hero-orbit-center-y) - 2%);
+  border: 0;
+  box-shadow: inset 0 0 0 1px rgba(143, 216, 255, 0.13);
+  transform: translate(-50%, -50%) rotate(var(--hero-ring-rotate));
 }
 
 .landing-hero__content,
@@ -1152,9 +1192,9 @@
 
 .blackhole-core-shell--backdrop {
   position: absolute;
-  right: 12%;
-  top: 18%;
-  width: min(62vw, 520px);
+  left: calc(var(--hero-orbit-center-x) - var(--hero-blackhole-half-size));
+  top: calc(var(--hero-orbit-center-y) - var(--hero-blackhole-half-size));
+  width: var(--hero-blackhole-size);
 }
 
 .blackhole__shadow {
@@ -1834,14 +1874,18 @@
   }
 
   .landing-hero__void {
+    --hero-orbit-center-x: 61%;
+    --hero-orbit-center-y: 46%;
+    --hero-ring-one-width: 680px;
+    --hero-ring-one-height: 640px;
+    --hero-ring-two-width: 540px;
+    --hero-ring-two-height: 500px;
+    --hero-ring-three-width: 410px;
+    --hero-ring-three-height: 380px;
+    --hero-blackhole-size: min(56vw, 440px);
+    --hero-blackhole-half-size: min(28vw, 220px);
     width: min(104vw, 860px);
     inset: -1.5rem -10rem auto auto;
-  }
-
-  .blackhole-core-shell--backdrop {
-    right: 8%;
-    top: 18%;
-    width: min(56vw, 440px);
   }
 }
 
@@ -1883,16 +1927,20 @@
   }
 
   .landing-hero__void {
+    --hero-orbit-center-x: 63%;
+    --hero-orbit-center-y: 48%;
+    --hero-ring-one-width: 620px;
+    --hero-ring-one-height: 580px;
+    --hero-ring-two-width: 480px;
+    --hero-ring-two-height: 450px;
+    --hero-ring-three-width: 360px;
+    --hero-ring-three-height: 340px;
+    --hero-blackhole-size: min(76vw, 380px);
+    --hero-blackhole-half-size: min(38vw, 190px);
     width: min(150vw, 860px);
     inset: 2rem 50% auto auto;
     transform: translateX(42%);
     opacity: 0.48;
-  }
-
-  .blackhole-core-shell--backdrop {
-    right: 10%;
-    top: 22%;
-    width: min(76vw, 380px);
   }
 
   .step-card {
@@ -1988,16 +2036,20 @@
   }
 
   .landing-hero__void {
+    --hero-orbit-center-x: 65%;
+    --hero-orbit-center-y: 49%;
+    --hero-ring-one-width: 560px;
+    --hero-ring-one-height: 520px;
+    --hero-ring-two-width: 430px;
+    --hero-ring-two-height: 400px;
+    --hero-ring-three-width: 320px;
+    --hero-ring-three-height: 300px;
+    --hero-blackhole-size: min(82vw, 290px);
+    --hero-blackhole-half-size: min(41vw, 145px);
     width: 135vw;
     inset: 3.5rem 50% auto auto;
     transform: translateX(50%);
     opacity: 0.34;
-  }
-
-  .blackhole-core-shell--backdrop {
-    right: 12%;
-    top: 24%;
-    width: min(82vw, 290px);
   }
 
   .hero-showcase {

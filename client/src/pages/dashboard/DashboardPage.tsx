@@ -49,6 +49,13 @@ export const DashboardPage = () => {
       ),
     [overview?.generation.imageGenerationsToday, planDetails.imageLimit]
   );
+  const activeScheduledPostCount = useMemo(
+    () =>
+      (posts?.items ?? []).filter(
+        (post) => post.status === 'pending' || post.status === 'scheduled'
+      ).length,
+    [posts?.items]
+  );
 
   useEffect(() => {
     if (!token) {
@@ -136,7 +143,7 @@ export const DashboardPage = () => {
         />
         <StatsCard
           label="Scheduled posts"
-          value={formatCompactNumber(overview?.generation.totalScheduledPosts || 0)}
+          value={formatCompactNumber(activeScheduledPostCount)}
           hint="Queued in the scheduler"
         />
         {overview?.weeklyComparison ? (

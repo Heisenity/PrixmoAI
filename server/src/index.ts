@@ -11,6 +11,8 @@ import generateRouter from "./routes/generate.routes";
 import imageRouter from "./routes/image.routes";
 import schedulerRouter from "./routes/scheduler.routes";
 import { APP_PORT } from "./config/constants";
+import { startAnalyticsSyncWorker } from './services/analyticsSync.service';
+import { startSchedulerPublisherWorker } from './services/schedulerPublisher.service';
 import { version } from '../package.json';
 
 
@@ -25,8 +27,8 @@ app.post(
   express.raw({ type: 'application/json' }),
   handleRazorpayWebhook
 );
-app.use(express.json({ limit: '12mb' }));
-app.use(express.urlencoded({ extended: true, limit: '12mb' }));
+app.use(express.json({ limit: '80mb' }));
+app.use(express.urlencoded({ extended: true, limit: '80mb' }));
 
 app.get('/', (req, res) => {
   res.status(200).json({
@@ -70,4 +72,6 @@ app.use(errorHandler);
 app.listen(PORT, () => {
   console.log(`🚀 Server running at http://localhost:${PORT}`);
   console.log(`✅ Check health at http://localhost:${PORT}/health`);
+  startSchedulerPublisherWorker();
+  startAnalyticsSyncWorker();
 });

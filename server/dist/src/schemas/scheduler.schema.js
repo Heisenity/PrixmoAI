@@ -1,26 +1,46 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.updateScheduledPostStatusSchema = exports.updateScheduledPostSchema = exports.createScheduledPostSchema = exports.updateSocialAccountSchema = exports.createSocialAccountSchema = void 0;
+exports.updateScheduledPostStatusSchema = exports.updateScheduledPostSchema = exports.createScheduledPostSchema = exports.updateSocialAccountSchema = exports.finalizeMetaFacebookPagesSchema = exports.startMetaOAuthSchema = exports.createSocialAccountSchema = void 0;
 const zod_1 = require("zod");
+const socialPlatformSchema = zod_1.z.enum(['instagram', 'facebook', 'linkedin', 'x']);
+const metaOAuthPlatformSchema = zod_1.z.enum(['instagram', 'facebook']);
 const optionalNullableString = zod_1.z
     .string()
     .trim()
     .min(1)
     .nullable()
     .optional();
+const optionalNonEmptyString = zod_1.z.string().trim().min(1).optional();
 const metadataSchema = zod_1.z.record(zod_1.z.string(), zod_1.z.unknown()).optional();
-exports.createSocialAccountSchema = zod_1.z.object({
-    platform: zod_1.z.string().trim().min(1, 'Platform is required'),
-    accountId: zod_1.z.string().trim().min(1, 'Account ID is required'),
-    accountName: optionalNullableString,
+exports.createSocialAccountSchema = zod_1.z
+    .object({
+    platform: socialPlatformSchema,
+    accountId: optionalNonEmptyString,
+    profileUrl: zod_1.z.url({ error: 'Please enter a valid profile URL' }).optional(),
     accessToken: optionalNullableString,
     refreshToken: optionalNullableString,
     tokenExpiresAt: zod_1.z.string().datetime().nullable().optional(),
     metadata: metadataSchema,
+})
+    .refine((value) => Boolean(value.accountId || value.profileUrl), {
+    message: 'Add a profile URL or a profile ID',
+    path: ['accountId'],
+});
+exports.startMetaOAuthSchema = zod_1.z
+    .object({
+    platform: metaOAuthPlatformSchema,
+    accountId: optionalNonEmptyString,
+    profileUrl: zod_1.z.url({ error: 'Please enter a valid profile URL' }).optional(),
+});
+exports.finalizeMetaFacebookPagesSchema = zod_1.z.object({
+    selectionId: zod_1.z.string().uuid('Invalid selection ID'),
+    pageIds: zod_1.z
+        .array(zod_1.z.string().trim().min(1, 'Select a Facebook Page'))
+        .min(1, 'Select at least one Facebook Page'),
 });
 exports.updateSocialAccountSchema = zod_1.z
     .object({
-    platform: zod_1.z.string().trim().min(1).optional(),
+    platform: socialPlatformSchema.optional(),
     accountId: zod_1.z.string().trim().min(1).optional(),
     accountName: optionalNullableString,
     accessToken: optionalNullableString,

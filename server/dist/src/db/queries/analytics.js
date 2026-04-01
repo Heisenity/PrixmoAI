@@ -44,6 +44,31 @@ const topItemsFromMap = (map, limit = 5) => [...map.entries()]
 const normalizePage = (page) => Number.isFinite(page) && page && page > 0 ? page : DEFAULT_PAGE;
 const normalizeLimit = (limit) => Number.isFinite(limit) && limit && limit > 0 ? limit : DEFAULT_LIMIT;
 const getEngagementScore = (item) => item.likes + item.comments + item.shares + item.saves;
+const normalizePlatformLabel = (value) => {
+    if (!value) {
+        return 'Other';
+    }
+    const normalized = value.trim().toLowerCase();
+    if (!normalized) {
+        return 'Other';
+    }
+    if (normalized === 'instagram') {
+        return 'Instagram';
+    }
+    if (normalized === 'linkedin') {
+        return 'LinkedIn';
+    }
+    if (normalized === 'facebook') {
+        return 'Facebook';
+    }
+    if (normalized === 'x' || normalized === 'twitter') {
+        return 'X';
+    }
+    if (normalized === 'youtube') {
+        return 'YouTube';
+    }
+    return normalized.charAt(0).toUpperCase() + normalized.slice(1);
+};
 const getCurrentMonthWindow = () => {
     const now = new Date();
     const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
@@ -260,10 +285,12 @@ const getWeeklyAnalyticsComparison = async (client, userId) => {
 exports.getWeeklyAnalyticsComparison = getWeeklyAnalyticsComparison;
 const getGenerationOverview = async (client, userId) => {
     const { start, end } = getCurrentMonthWindow();
-    const [totalGeneratedContent, totalGeneratedImages, totalScheduledPosts, contentGenerationsThisMonth, imageGenerationsThisMonth, scheduledStatusesResult, generatedContentInsightsResult, analyticsRecordsThisMonthResult,] = await Promise.all([
+    const [totalGeneratedContent, totalGeneratedImages, totalScheduledPosts, contentGenerationsToday, imageGenerationsToday, contentGenerationsThisMonth, imageGenerationsThisMonth, scheduledStatusesResult, generatedContentInsightsResult, analyticsRecordsThisMonthResult,] = await Promise.all([
         getTableCount(client, 'generated_content', userId),
         getTableCount(client, 'generated_images', userId),
         getTableCount(client, 'scheduled_posts', userId),
+        (0, subscriptions_1.getDailyUsageCount)(client, userId, constants_1.FEATURE_KEYS.contentGeneration),
+        (0, subscriptions_1.getDailyUsageCount)(client, userId, constants_1.FEATURE_KEYS.imageGeneration),
         (0, subscriptions_1.getMonthlyUsageCount)(client, userId, constants_1.FEATURE_KEYS.contentGeneration),
         (0, subscriptions_1.getMonthlyUsageCount)(client, userId, constants_1.FEATURE_KEYS.imageGeneration),
         client.from('scheduled_posts').select('status').eq('user_id', userId),
@@ -303,8 +330,9 @@ const getGenerationOverview = async (client, userId) => {
     const toneCounts = new Map();
     const audienceCounts = new Map();
     const keywordCounts = new Map();
+    const platformSignalMap = new Map();
     for (const row of (generatedContentInsightsResult.data ?? [])) {
-        incrementCounter(platformCounts, row.platform);
+        incrementCounter(platformCounts, row.platform, normalizePlatformLabel);
         incrementCounter(goalCounts, row.goal);
         incrementCounter(toneCounts, row.tone);
         incrementCounter(audienceCounts, row.audience);
@@ -312,11 +340,88 @@ const getGenerationOverview = async (client, userId) => {
             incrementCounter(keywordCounts, keyword.toLowerCase());
         }
     }
+    const analyticsRows = await (0, exports.getAnalyticsByUserId)(client, userId, {
+        start,
+        end,
+    });
+    for (const row of analyticsRows) {
+        const platform = normalizePlatformLabel(row.platform);
+        const existing = platformSignalMap.get(platform) ??
+            {
+                platform,
+                posts: 0,
+                reach: 0,
+                impressions: 0,
+                likes: 0,
+                comments: 0,
+                shares: 0,
+                saves: 0,
+                totalEngagement: 0,
+                averageEngagementRate: 0,
+                latestRecordedAt: null,
+                topPost: null,
+                recentPosts: [],
+                engagementRateSum: 0,
+                engagementRateCount: 0,
+            };
+        existing.posts += 1;
+        existing.reach += row.reach;
+        existing.impressions += row.impressions;
+        existing.likes += row.likes;
+        existing.comments += row.comments;
+        existing.shares += row.shares;
+        existing.saves += row.saves;
+        existing.totalEngagement += getEngagementScore(row);
+        existing.recentPosts.push(row);
+        if (row.engagementRate !== null) {
+            existing.engagementRateSum += row.engagementRate;
+            existing.engagementRateCount += 1;
+        }
+        if (!existing.latestRecordedAt ||
+            new Date(row.recordedAt).getTime() > new Date(existing.latestRecordedAt).getTime()) {
+            existing.latestRecordedAt = row.recordedAt;
+        }
+        if (!existing.topPost || getEngagementScore(row) > getEngagementScore(existing.topPost)) {
+            existing.topPost = row;
+        }
+        platformSignalMap.set(platform, existing);
+    }
+    const platformSignals = [...platformSignalMap.values()]
+        .map((entry) => ({
+        platform: entry.platform,
+        posts: entry.posts,
+        reach: entry.reach,
+        impressions: entry.impressions,
+        likes: entry.likes,
+        comments: entry.comments,
+        shares: entry.shares,
+        saves: entry.saves,
+        totalEngagement: entry.totalEngagement,
+        averageEngagementRate: entry.engagementRateCount > 0
+            ? Number((entry.engagementRateSum / entry.engagementRateCount).toFixed(2))
+            : Number((entry.totalEngagement / Math.max(1, entry.posts)).toFixed(2)),
+        latestRecordedAt: entry.latestRecordedAt,
+        topPost: entry.topPost,
+        recentPosts: [...entry.recentPosts]
+            .sort((left, right) => new Date(right.recordedAt).getTime() - new Date(left.recordedAt).getTime())
+            .slice(0, 3),
+    }))
+        .sort((left, right) => {
+        if (right.totalEngagement !== left.totalEngagement) {
+            return right.totalEngagement - left.totalEngagement;
+        }
+        if (right.posts !== left.posts) {
+            return right.posts - left.posts;
+        }
+        return left.platform.localeCompare(right.platform);
+    });
     return {
         totalGeneratedContent,
         totalGeneratedImages,
         totalScheduledPosts,
         scheduledPostStatusBreakdown,
+        contentGenerationsToday,
+        imageGenerationsToday,
         contentGenerationsThisMonth,
         imageGenerationsThisMonth,
         analyticsRecordsThisMonth: analyticsRecordsThisMonthResult.count ?? 0,
@@ -325,6 +430,7 @@ const getGenerationOverview = async (client, userId) => {
         topTones: topItemsFromMap(toneCounts),
         topAudiences: topItemsFromMap(audienceCounts),
         topKeywords: topItemsFromMap(keywordCounts),
+        platformSignals,
     };
 };
 exports.getGenerationOverview = getGenerationOverview;

@@ -1,11 +1,13 @@
 import { Router } from 'express';
 import {
   getBestPost,
+  getDashboard,
   getHistory,
   getInternalResearchEvents,
   getInternalResearchSummary,
   getOverview,
   getSummary,
+  syncAnalytics,
   getWeeklyComparison,
   recordAnalytics,
 } from '../controllers/analytics.controller';
@@ -17,6 +19,8 @@ import { recordAnalyticsSchema } from '../schemas/analytics.schema';
 const router = Router();
 
 router.post('/record', authMiddleware, validate(recordAnalyticsSchema), recordAnalytics);
+router.post('/sync', authMiddleware, syncAnalytics);
+router.get('/dashboard', authMiddleware, getDashboard);
 router.get('/overview', authMiddleware, getOverview);
 router.get('/summary', authMiddleware, getSummary);
 router.get('/weekly-comparison', authMiddleware, getWeeklyComparison);

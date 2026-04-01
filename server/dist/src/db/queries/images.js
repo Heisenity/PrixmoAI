@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.trackImageGenerationUsage = exports.getImageMonthlyUsageCount = exports.deleteGeneratedImage = exports.getGeneratedImageHistory = exports.getGeneratedImageById = exports.saveGeneratedImage = void 0;
+exports.trackImageGenerationUsage = exports.getImageDailyUsageCount = exports.getImageMonthlyUsageCount = exports.deleteGeneratedImage = exports.getGeneratedImageHistory = exports.getGeneratedImageById = exports.saveGeneratedImage = void 0;
 const constants_1 = require("../../config/constants");
 const subscriptions_1 = require("./subscriptions");
 const DEFAULT_PAGE = 1;
@@ -9,6 +9,7 @@ const toGeneratedImage = (row) => ({
     id: row.id,
     userId: row.user_id,
     contentId: row.content_id,
+    conversationId: row.conversation_id,
     sourceImageUrl: row.source_image_url,
     generatedImageUrl: row.generated_image_url,
     backgroundStyle: row.background_style,
@@ -22,6 +23,7 @@ const saveGeneratedImage = async (client, userId, input) => {
         .insert({
         user_id: userId,
         content_id: input.contentId ?? null,
+        conversation_id: input.conversationId ?? null,
         source_image_url: input.sourceImageUrl ?? null,
         generated_image_url: input.generatedImageUrl,
         background_style: input.backgroundStyle ?? null,
@@ -89,5 +91,7 @@ const deleteGeneratedImage = async (client, userId, imageId) => {
 exports.deleteGeneratedImage = deleteGeneratedImage;
 const getImageMonthlyUsageCount = async (client, userId) => (0, subscriptions_1.getMonthlyUsageCount)(client, userId, constants_1.FEATURE_KEYS.imageGeneration);
 exports.getImageMonthlyUsageCount = getImageMonthlyUsageCount;
+const getImageDailyUsageCount = async (client, userId) => (0, subscriptions_1.getDailyUsageCount)(client, userId, constants_1.FEATURE_KEYS.imageGeneration);
+exports.getImageDailyUsageCount = getImageDailyUsageCount;
 const trackImageGenerationUsage = async (client, userId, metadata = {}) => (0, subscriptions_1.recordUsageEvent)(client, userId, constants_1.FEATURE_KEYS.imageGeneration, metadata);
 exports.trackImageGenerationUsage = trackImageGenerationUsage;

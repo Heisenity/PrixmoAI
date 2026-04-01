@@ -1,0 +1,17 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+const express_1 = require("express");
+const generateWorkspace_controller_1 = require("../controllers/generateWorkspace.controller");
+const auth_middleware_1 = require("../middleware/auth.middleware");
+const planLimit_middleware_1 = require("../middleware/planLimit.middleware");
+const validate_middleware_1 = require("../middleware/validate.middleware");
+const generateWorkspace_schema_1 = require("../schemas/generateWorkspace.schema");
+const router = (0, express_1.Router)();
+router.get('/conversations', auth_middleware_1.authMiddleware, generateWorkspace_controller_1.listWorkspaceConversations);
+router.post('/conversations', auth_middleware_1.authMiddleware, (0, validate_middleware_1.validate)(generateWorkspace_schema_1.createGenerateConversationSchema), generateWorkspace_controller_1.createWorkspaceConversation);
+router.get('/conversations/:id', auth_middleware_1.authMiddleware, generateWorkspace_controller_1.getWorkspaceConversationThread);
+router.patch('/conversations/:id', auth_middleware_1.authMiddleware, (0, validate_middleware_1.validate)(generateWorkspace_schema_1.updateGenerateConversationSchema), generateWorkspace_controller_1.updateWorkspaceConversation);
+router.delete('/conversations/:id', auth_middleware_1.authMiddleware, generateWorkspace_controller_1.deleteWorkspaceConversation);
+router.post('/copy', auth_middleware_1.authMiddleware, planLimit_middleware_1.planLimitMiddleware, (0, validate_middleware_1.validate)(generateWorkspace_schema_1.generateConversationCopySchema), generateWorkspace_controller_1.generateWorkspaceCopy);
+router.post('/image', auth_middleware_1.authMiddleware, (0, validate_middleware_1.validate)(generateWorkspace_schema_1.generateConversationImageSchema), planLimit_middleware_1.imagePlanLimitMiddleware, planLimit_middleware_1.imageRuntimePolicyMiddleware, generateWorkspace_controller_1.generateWorkspaceImage);
+exports.default = router;

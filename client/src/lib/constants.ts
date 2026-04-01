@@ -1,10 +1,14 @@
 import type { HomeMetric, PlanType } from '../types';
 
 export const API_BASE_URL =
-  import.meta.env.VITE_API_BASE_URL || 'http://localhost:5001';
+  import.meta.env.VITE_API_BASE_URL ||
+  __PRIXMOAI_API_BASE_URL__ ||
+  'http://localhost:5000';
 
-export const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
-export const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
+export const SUPABASE_URL =
+  import.meta.env.VITE_SUPABASE_URL || __PRIXMOAI_SUPABASE_URL__;
+export const SUPABASE_ANON_KEY =
+  import.meta.env.VITE_SUPABASE_ANON_KEY || __PRIXMOAI_SUPABASE_ANON_KEY__;
 
 export const APP_NAME = 'PrixmoAI';
 

@@ -11,13 +11,17 @@ import {
 import { requireUserClient } from '../db/supabase';
 import type {
   GenerateImageInput,
+  ImportSourceImageUrlInput,
   UploadSourceImageInput,
 } from '../schemas/image.schema';
 import {
   enqueueImageGeneration,
   resolveImageRuntimePolicy,
 } from '../services/imageRuntimePolicy.service';
-import { uploadSourceImage as uploadSourceImageToStorage } from '../services/storage.service';
+import {
+  importExternalSourceImage,
+  uploadSourceImage as uploadSourceImageToStorage,
+} from '../services/storage.service';
 import type { BrandProfile } from '../types';
 
 type AuthenticatedRequest<
@@ -320,18 +324,63 @@ export const uploadSourceImage = async (
 
     return res.status(200).json({
       status: 'success',
-      message: 'Source image uploaded successfully',
+      message: 'Source media uploaded successfully',
       data: {
         sourceImageUrl: uploadedSourceImage.publicUrl,
         bucket: uploadedSourceImage.bucket,
         path: uploadedSourceImage.path,
+        mediaType: uploadedSourceImage.mediaType,
+        contentType: uploadedSourceImage.contentType,
       },
     });
   } catch (error) {
     return res.status(502).json({
       status: 'error',
       message:
-        error instanceof Error ? error.message : 'Failed to upload source image',
+        error instanceof Error ? error.message : 'Failed to upload source media',
+    });
+  }
+};
+
+export const importSourceImageUrl = async (
+  req: AuthenticatedRequest<{}, unknown, ImportSourceImageUrlInput>,
+  res: Response
+) => {
+  if (!req.user?.id) {
+    return res.status(401).json({
+      status: 'fail',
+      message: 'Unauthorized',
+    });
+  }
+
+  try {
+    const uploadedSourceImage = await importExternalSourceImage(
+      req.user.id,
+      req.body.url
+    );
+
+    return res.status(200).json({
+      status: 'success',
+      message: 'Source media imported successfully',
+      data: {
+        sourceImageUrl: uploadedSourceImage.publicUrl,
+        bucket: uploadedSourceImage.bucket,
+        path: uploadedSourceImage.path,
+        mediaType: uploadedSourceImage.mediaType,
+        contentType: uploadedSourceImage.contentType,
+      },
+    });
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : 'Failed to import source media';
+
+    return res.status(
+      message === 'Invalid media URL' || message === 'No preview available for this link'
+        ? 400
+        : 502
+    ).json({
+      status: 'error',
+      message,
     });
   }
 };

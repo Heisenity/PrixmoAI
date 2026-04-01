@@ -1,5 +1,12 @@
 export type ApiStatus = 'success' | 'fail' | 'error';
 export type PlanType = 'free' | 'basic' | 'pro';
+export type SocialPlatform = 'instagram' | 'facebook' | 'linkedin' | 'x';
+export type OAuthProvider = 'meta';
+export type SocialAccountVerificationStatus =
+  | 'unverified'
+  | 'verified'
+  | 'expired'
+  | 'revoked';
 export type GenerateConversationType = 'copy' | 'image' | 'mixed';
 export type GenerateConversationRole = 'user' | 'assistant' | 'system';
 export type GenerateConversationMessageType =
@@ -25,6 +32,7 @@ export type ScheduledPostStatus =
   | 'published'
   | 'failed'
   | 'cancelled';
+export type SchedulerMediaType = 'image' | 'video';
 export type WeeklyDirection = 'up' | 'down' | 'flat';
 
 export interface ApiErrorDetail {
@@ -160,6 +168,8 @@ export interface UploadedSourceImage {
   sourceImageUrl: string;
   bucket: string;
   path: string;
+  mediaType: SchedulerMediaType;
+  contentType: string;
 }
 
 export interface GenerateConversation {
@@ -218,6 +228,206 @@ export interface AnalyticsSummary {
   averageEngagement: number;
 }
 
+export type AnalyticsPlatformScope = 'all' | 'instagram' | 'facebook';
+
+export interface AnalyticsMetricPoint {
+  date: string;
+  label: string;
+  value: number;
+}
+
+export interface AnalyticsMetricValue {
+  value: number | null;
+  previousValue: number | null;
+  changePercent: number | null;
+  direction: 'up' | 'down' | 'flat' | 'na';
+  sparkline: AnalyticsMetricPoint[];
+  platformBreakdown?: Partial<Record<Exclude<AnalyticsPlatformScope, 'all'>, number>>;
+}
+
+export interface AnalyticsOverviewMetrics {
+  impressions: AnalyticsMetricValue;
+  reach: AnalyticsMetricValue;
+  engagementRate: AnalyticsMetricValue;
+  likes: AnalyticsMetricValue;
+  comments: AnalyticsMetricValue;
+  saves: AnalyticsMetricValue;
+  sharesOrReactions: AnalyticsMetricValue;
+  newFollowers: AnalyticsMetricValue;
+  postsPublished: AnalyticsMetricValue;
+}
+
+export interface AnalyticsTrendBreakdown {
+  impressions: number;
+  reach: number;
+  likes: number;
+  comments: number;
+  saves: number;
+  shares: number;
+  reactions: number;
+  engagements: number;
+}
+
+export interface AnalyticsTrendPoint {
+  date: string;
+  label: string;
+  impressions: number;
+  reach: number;
+  likes: number;
+  comments: number;
+  saves: number;
+  shares: number;
+  reactions: number;
+  engagements: number;
+  platformBreakdown: Partial<
+    Record<Exclude<AnalyticsPlatformScope, 'all'>, AnalyticsTrendBreakdown>
+  >;
+}
+
+export interface AnalyticsPostTrendPoint {
+  date: string;
+  label: string;
+  impressions: number;
+  reach: number;
+  engagements: number;
+}
+
+export interface AnalyticsPostInsight {
+  id: string;
+  scheduledPostId: string | null;
+  contentId: string | null;
+  platform: string | null;
+  platformLabel: string;
+  socialAccountId: string | null;
+  socialAccountName: string | null;
+  postExternalId: string | null;
+  postType: string | null;
+  caption: string | null;
+  mediaUrl: string | null;
+  thumbnailUrl: string | null;
+  publishedTime: string | null;
+  impressions: number;
+  reach: number;
+  likes: number;
+  comments: number;
+  saves: number;
+  shares: number;
+  reactions: number;
+  videoPlays: number;
+  replays: number;
+  exits: number;
+  profileVisits: number;
+  postClicks: number;
+  pageLikes: number;
+  completionRate: number | null;
+  followersAtPostTime: number | null;
+  engagements: number;
+  engagementRate: number | null;
+  performanceScore: number;
+  keywords: string[];
+  topComments: string[];
+  trend: AnalyticsPostTrendPoint[];
+}
+
+export interface AnalyticsHeatmapCell {
+  day: string;
+  dayIndex: number;
+  hour: number;
+  posts: number;
+  averageEngagementRate: number | null;
+  intensity: number;
+}
+
+export interface AnalyticsBestTimeSlot {
+  day: string;
+  dayIndex: number;
+  hour: number;
+  posts: number;
+  averageEngagementRate: number;
+}
+
+export interface AnalyticsBestTimeInsight {
+  hasEnoughData: boolean;
+  minimumPostsRequired: number;
+  postsConsidered: number;
+  summary: string;
+  topSlots: AnalyticsBestTimeSlot[];
+  heatmap: AnalyticsHeatmapCell[];
+}
+
+export interface AnalyticsAudienceBreakdownItem {
+  label: string;
+  value: number;
+}
+
+export interface AnalyticsFollowerTrendPoint {
+  date: string;
+  label: string;
+  value: number;
+}
+
+export interface AnalyticsAudienceInsights {
+  hasAudienceData: boolean;
+  ageDistribution: AnalyticsAudienceBreakdownItem[];
+  genderDistribution: AnalyticsAudienceBreakdownItem[];
+  ageGenderBreakdown: AnalyticsAudienceBreakdownItem[];
+  topLocations: AnalyticsAudienceBreakdownItem[];
+  followerGrowthSeries: AnalyticsFollowerTrendPoint[];
+  followerGrowthValue: number | null;
+  profileVisits: number;
+  pageLikes: number;
+  activeHoursHeatmap: AnalyticsHeatmapCell[];
+  bestTimeSummary: string;
+  summaryNotes: string[];
+}
+
+export interface AnalyticsInsightCard {
+  id: string;
+  title: string;
+  description: string;
+  supportingMetric: string;
+  confidence: 'low' | 'medium' | 'high';
+  tone: 'positive' | 'neutral' | 'warning';
+}
+
+export interface AnalyticsPlatformComparison {
+  platform: string;
+  label: string;
+  posts: number;
+  impressions: number;
+  reach: number;
+  engagements: number;
+  engagementRate: number | null;
+  followerGrowth: number | null;
+  score: number;
+}
+
+export interface AnalyticsDashboardDateRange {
+  preset: '7d' | '14d' | '28d' | '30d' | 'custom';
+  start: string;
+  end: string;
+  previousStart: string;
+  previousEnd: string;
+  days: number;
+}
+
+export interface AnalyticsDashboard {
+  dateRange: AnalyticsDashboardDateRange;
+  platformScope: AnalyticsPlatformScope;
+  lastUpdatedAt: string | null;
+  connectedPlatforms: string[];
+  overview: AnalyticsOverviewMetrics;
+  trends: {
+    impressionsReachSeries: AnalyticsTrendPoint[];
+    engagementSeries: AnalyticsTrendPoint[];
+  };
+  posts: AnalyticsPostInsight[];
+  audience: AnalyticsAudienceInsights;
+  insights: AnalyticsInsightCard[];
+  platformComparison: AnalyticsPlatformComparison[];
+  bestTimeToPost: AnalyticsBestTimeInsight;
+}
+
 export interface PlatformPerformanceSummary {
   platform: string;
   posts: number;
@@ -273,13 +483,28 @@ export interface AnalyticsRecord {
   contentId: string | null;
   platform: string | null;
   postExternalId: string | null;
+  postType: string | null;
+  caption: string | null;
+  mediaUrl: string | null;
+  thumbnailUrl: string | null;
   reach: number;
   impressions: number;
   likes: number;
   comments: number;
   shares: number;
   saves: number;
+  reactions: number;
+  videoPlays: number;
+  replays: number;
+  exits: number;
+  profileVisits: number;
+  postClicks: number;
+  pageLikes: number;
+  completionRate: number | null;
+  followersAtPostTime: number | null;
   engagementRate: number | null;
+  publishedTime: string | null;
+  topComments: string[];
   recordedAt: string;
   createdAt: string;
   updatedAt: string;
@@ -288,9 +513,13 @@ export interface AnalyticsRecord {
 export interface SocialAccount {
   id: string;
   userId: string;
-  platform: string;
+  platform: SocialPlatform;
   accountId: string;
   accountName: string | null;
+  profileUrl: string | null;
+  oauthProvider: OAuthProvider | null;
+  verificationStatus: SocialAccountVerificationStatus;
+  verifiedAt: string | null;
   accessToken: string | null;
   refreshToken: string | null;
   tokenExpiresAt: string | null;
@@ -301,14 +530,41 @@ export interface SocialAccount {
 }
 
 export interface CreateSocialAccountInput {
-  platform: string;
-  accountId: string;
-  accountName?: string;
-  accessToken?: string;
-  refreshToken?: string;
-  tokenExpiresAt?: string;
+  platform: SocialPlatform;
+  accountId?: string;
+  profileUrl?: string;
   metadata?: Record<string, unknown>;
 }
+
+export interface PendingFacebookPageCandidate {
+  pageId: string;
+  accountId: string;
+  accountName: string;
+  profileUrl: string | null;
+  alreadyConnected: boolean;
+  linkedInstagramUsername: string | null;
+}
+
+export interface PendingMetaFacebookPageSelection {
+  selectionId: string;
+  expiresAt: string;
+  pages: PendingFacebookPageCandidate[];
+}
+
+export type MetaOAuthPopupResult =
+  | {
+      status: 'success';
+      message: string;
+    }
+  | {
+      status: 'error';
+      message: string;
+    }
+  | {
+      status: 'select_facebook_pages';
+      message: string;
+      selectionId: string;
+    };
 
 export interface ScheduledPost {
   id: string;
@@ -316,12 +572,19 @@ export interface ScheduledPost {
   socialAccountId: string;
   contentId: string | null;
   generatedImageId: string | null;
-  platform: string | null;
+  platform: SocialPlatform | null;
   caption: string | null;
   mediaUrl: string | null;
+  mediaType: SchedulerMediaType | null;
   scheduledFor: string;
   status: ScheduledPostStatus;
+  externalPostId: string | null;
+  publishAttemptedAt: string | null;
+  lastError: string | null;
   publishedAt: string | null;
+  canEdit: boolean;
+  canCancel: boolean;
+  actionBlockedReason: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -330,9 +593,10 @@ export interface CreateScheduledPostInput {
   socialAccountId: string;
   contentId?: string | null;
   generatedImageId?: string | null;
-  platform?: string;
+  platform?: SocialPlatform;
   caption?: string;
   mediaUrl?: string;
+  mediaType?: SchedulerMediaType | null;
   scheduledFor: string;
   status?: ScheduledPostStatus;
 }

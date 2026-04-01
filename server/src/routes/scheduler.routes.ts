@@ -1,12 +1,17 @@
 import { Router } from 'express';
 import { authMiddleware } from '../middleware/auth.middleware';
 import {
+  cancelPostSchedule,
   createPostSchedule,
   createConnectedSocialAccount,
   deletePostSchedule,
+  finalizePendingMetaFacebookPages,
+  handleMetaOAuthCallback,
+  listPendingMetaFacebookPages,
   listConnectedSocialAccounts,
   listScheduledPosts,
   removeConnectedSocialAccount,
+  startMetaOAuth,
   updateConnectedSocialAccount,
   updatePostSchedule,
   updatePostScheduleStatus,
@@ -15,12 +20,33 @@ import { validate } from '../middleware/validate.middleware';
 import {
   createScheduledPostSchema,
   createSocialAccountSchema,
+  finalizeMetaFacebookPagesSchema,
+  startMetaOAuthSchema,
   updateScheduledPostSchema,
   updateScheduledPostStatusSchema,
   updateSocialAccountSchema,
 } from '../schemas/scheduler.schema';
 
 const router = Router();
+
+router.post(
+  '/oauth/meta/start',
+  authMiddleware,
+  validate(startMetaOAuthSchema),
+  startMetaOAuth
+);
+router.get('/oauth/meta/callback', handleMetaOAuthCallback);
+router.get(
+  '/oauth/meta/pending/facebook-pages/:id',
+  authMiddleware,
+  listPendingMetaFacebookPages
+);
+router.post(
+  '/oauth/meta/finalize/facebook-pages',
+  authMiddleware,
+  validate(finalizeMetaFacebookPagesSchema),
+  finalizePendingMetaFacebookPages
+);
 
 router.post(
   '/accounts',
@@ -56,6 +82,7 @@ router.patch(
   validate(updateScheduledPostStatusSchema),
   updatePostScheduleStatus
 );
+router.post('/posts/:id/cancel', authMiddleware, cancelPostSchedule);
 router.delete('/posts/:id', authMiddleware, deletePostSchedule);
 
 export default router;

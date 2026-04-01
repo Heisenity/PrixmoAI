@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.getMonthlyUsageCount = exports.recordUsageEvent = exports.getFeatureMonthlyLimit = exports.getCurrentSubscriptionByUserId = exports.upsertSubscription = exports.getPlanMonthlyLimit = void 0;
+exports.getDailyUsageCount = exports.getMonthlyUsageCount = exports.recordUsageEvent = exports.getFeatureLimit = exports.getFeatureMonthlyLimit = exports.getCurrentSubscriptionByUserId = exports.upsertSubscription = exports.getPlanFeatureLimit = exports.getPlanMonthlyLimit = void 0;
 const constants_1 = require("../../config/constants");
 const toRecord = (value) => value && typeof value === 'object' && !Array.isArray(value)
     ? value
@@ -9,6 +9,15 @@ const getMonthWindow = () => {
     const now = new Date();
     const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
     const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
+    return {
+        start: start.toISOString(),
+        end: end.toISOString(),
+    };
+};
+const getDayWindow = () => {
+    const now = new Date();
+    const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+    const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1));
     return {
         start: start.toISOString(),
         end: end.toISOString(),
@@ -36,6 +45,8 @@ const toUsageTrackingEvent = (row) => ({
 });
 const getPlanMonthlyLimit = (plan) => constants_1.PLAN_LIMITS[plan];
 exports.getPlanMonthlyLimit = getPlanMonthlyLimit;
+const getPlanFeatureLimit = (plan, featureKey) => constants_1.PLAN_FEATURE_LIMITS[plan][featureKey];
+exports.getPlanFeatureLimit = getPlanFeatureLimit;
 const upsertSubscription = async (client, input) => {
     const { data, error } = await client
         .from('subscriptions')
@@ -73,14 +84,11 @@ const getCurrentSubscriptionByUserId = async (client, userId) => {
 exports.getCurrentSubscriptionByUserId = getCurrentSubscriptionByUserId;
 const getFeatureMonthlyLimit = async (client, userId, featureKey = constants_1.FEATURE_KEYS.contentGeneration) => {
     const subscription = await (0, exports.getCurrentSubscriptionByUserId)(client, userId);
-    if (!subscription) {
-        return constants_1.FEATURE_KEYS.imageGeneration === featureKey
-            ? constants_1.PLAN_LIMITS.free
-            : constants_1.PLAN_LIMITS.free;
-    }
-    return subscription.monthlyLimit;
+    const plan = subscription?.plan ?? 'free';
+    return (0, exports.getPlanFeatureLimit)(plan, featureKey);
 };
 exports.getFeatureMonthlyLimit = getFeatureMonthlyLimit;
+exports.getFeatureLimit = exports.getFeatureMonthlyLimit;
 const recordUsageEvent = async (client, userId, featureKey, metadata = {}) => {
     const { data, error } = await client
         .from('usage_tracking')
@@ -97,8 +105,8 @@ const recordUsageEvent = async (client, userId, featureKey, metadata = {}) => {
     return toUsageTrackingEvent(data);
 };
 exports.recordUsageEvent = recordUsageEvent;
-const getMonthlyUsageCount = async (client, userId, featureKey) => {
-    const { start, end } = getMonthWindow();
+const getUsageCountForWindow = async (client, userId, featureKey, window) => {
+    const { start, end } = window === 'day' ? getDayWindow() : getMonthWindow();
     const { count, error } = await client
         .from('usage_tracking')
         .select('*', { count: 'exact', head: true })
@@ -111,4 +119,7 @@ const getMonthlyUsageCount = async (client, userId, featureKey) => {
     }
     return count ?? 0;
 };
+const getMonthlyUsageCount = async (client, userId, featureKey) => getUsageCountForWindow(client, userId, featureKey, 'month');
 exports.getMonthlyUsageCount = getMonthlyUsageCount;
+const getDailyUsageCount = async (client, userId, featureKey) => getUsageCountForWindow(client, userId, featureKey, 'day');
+exports.getDailyUsageCount = getDailyUsageCount;

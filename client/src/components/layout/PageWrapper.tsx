@@ -33,7 +33,7 @@ const pageMeta: Record<string, { eyebrow: string; title: string; subtitle: strin
   },
   '/app/scheduler': {
     eyebrow: 'Release control',
-    title: 'Stage publishing before the social connections go live.',
+    title: 'Creation shouldn’t wait for connection',
     subtitle:
       'Connect accounts, line up media, and manage post states from one queue.',
   },
@@ -59,7 +59,8 @@ export const PageWrapper = () => {
   const meta = pageMeta[location.pathname] ?? pageMeta['/app/dashboard'];
   const authNotice = (location.state as { authNotice?: string } | null)?.authNotice;
   const isGenerateRoute = location.pathname === '/app/generate';
-  const showWorkspaceHeader = !isGenerateRoute;
+  const isAnalyticsRoute = location.pathname === '/app/analytics';
+  const showWorkspaceHeader = !isGenerateRoute && !isAnalyticsRoute;
 
   useEffect(() => {
     if (typeof window === 'undefined') {
