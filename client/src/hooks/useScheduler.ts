@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { apiRequest } from '../lib/axios';
 import {
   emitUpgradePrompt,
@@ -18,6 +18,16 @@ import type {
 } from '../types';
 
 type SchedulerUiStatus = 'ready' | 'syncing' | 'error';
+
+const isUpcomingScheduledPost = (scheduledFor: string, status: ScheduledPostStatus) => {
+  if (status !== 'scheduled') {
+    return false;
+  }
+
+  const scheduledAtMs = new Date(scheduledFor).getTime();
+
+  return Number.isFinite(scheduledAtMs) && scheduledAtMs > Date.now();
+};
 
 const readFileAsDataUrl = (file: File): Promise<string> =>
   new Promise((resolve, reject) => {
@@ -239,7 +249,11 @@ const awaitMetaOAuthPopupResult = async (
   });
 };
 
-export const useScheduler = () => {
+type UseSchedulerOptions = {
+  pollIntervalMs?: number;
+};
+
+export const useScheduler = (options: UseSchedulerOptions = {}) => {
   const { token } = useAuth();
   const [accounts, setAccounts] = useState<PaginatedResult<SocialAccount> | null>(null);
   const [posts, setPosts] = useState<PaginatedResult<ScheduledPost> | null>(null);
@@ -248,58 +262,75 @@ export const useScheduler = () => {
   const [isUploadingMedia, setIsUploadingMedia] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [schedulerStatus, setSchedulerStatus] = useState<SchedulerUiStatus>('ready');
+  const pollIntervalMs =
+    Number.isFinite(options.pollIntervalMs) && (options.pollIntervalMs ?? 0) >= 0
+      ? options.pollIntervalMs ?? 3_000
+      : 3_000;
+  const upcomingPosts = useMemo(
+    () =>
+      (posts?.items ?? [])
+        .filter((post) => isUpcomingScheduledPost(post.scheduledFor, post.status))
+        .sort(
+          (left, right) =>
+            new Date(left.scheduledFor).getTime() - new Date(right.scheduledFor).getTime()
+        ),
+    [posts?.items]
+  );
 
-  const refresh = async ({ silent = false }: { silent?: boolean } = {}) => {
-    if (!token) {
-      return;
-    }
-
-    if (!silent) {
-      setIsLoading(true);
-      setSchedulerStatus('syncing');
-    }
-
-    try {
-      const [nextAccounts, nextPosts] = await Promise.all([
-        apiRequest<PaginatedResult<SocialAccount>>('/api/scheduler/accounts', { token }),
-        apiRequest<PaginatedResult<ScheduledPost>>('/api/scheduler/posts', { token }),
-      ]);
-      setAccounts(nextAccounts);
-      setPosts(nextPosts);
-      setError(null);
-      setSchedulerStatus((current) =>
-        !silent || current === 'error' ? 'ready' : current
-      );
-    } catch (schedulerError) {
-      const message =
-        schedulerError instanceof Error ? schedulerError.message : 'Failed to load scheduler';
-
-      setError(message);
-      setSchedulerStatus((current) => (current === 'error' ? current : 'error'));
-    } finally {
-      if (!silent) {
-        setIsLoading(false);
+  const refresh = useCallback(
+    async ({ silent = false }: { silent?: boolean } = {}) => {
+      if (!token) {
+        return;
       }
-    }
-  };
+
+      if (!silent) {
+        setIsLoading(true);
+        setSchedulerStatus('syncing');
+      }
+
+      try {
+        const [nextAccounts, nextPosts] = await Promise.all([
+          apiRequest<PaginatedResult<SocialAccount>>('/api/scheduler/accounts', { token }),
+          apiRequest<PaginatedResult<ScheduledPost>>('/api/scheduler/posts', { token }),
+        ]);
+        setAccounts(nextAccounts);
+        setPosts(nextPosts);
+        setError(null);
+        setSchedulerStatus((current) =>
+          !silent || current === 'error' ? 'ready' : current
+        );
+      } catch (schedulerError) {
+        const message =
+          schedulerError instanceof Error ? schedulerError.message : 'Failed to load scheduler';
+
+        setError(message);
+        setSchedulerStatus((current) => (current === 'error' ? current : 'error'));
+      } finally {
+        if (!silent) {
+          setIsLoading(false);
+        }
+      }
+    },
+    [token]
+  );
 
   useEffect(() => {
     void refresh();
-  }, [token]);
+  }, [token, refresh]);
 
   useEffect(() => {
-    if (!token) {
+    if (!token || pollIntervalMs <= 0) {
       return;
     }
 
     const interval = window.setInterval(() => {
       void refresh({ silent: true });
-    }, 3_000);
+    }, pollIntervalMs);
 
     return () => {
       window.clearInterval(interval);
     };
-  }, [token]);
+  }, [token, pollIntervalMs]);
 
   const createAccount = async (input: CreateSocialAccountInput) => {
     if (!token) {
@@ -713,6 +744,7 @@ export const useScheduler = () => {
   return {
     accounts,
     posts,
+    upcomingPosts,
     isLoading,
     isMutating,
     isUploadingMedia,

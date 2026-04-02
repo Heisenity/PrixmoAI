@@ -10,7 +10,7 @@ import {
 } from 'lucide-react';
 import { MediaPreview } from '../scheduler/MediaPreview';
 import type { AnalyticsPostInsight } from '../../types';
-import { formatDateTime } from '../../lib/utils';
+import { formatDateTime, formatPercentage } from '../../lib/utils';
 
 export const AnalyticsPostDrawer = ({
   post,
@@ -68,7 +68,12 @@ export const AnalyticsPostDrawer = ({
             <div className="analytics-post-drawer__timeline">
               <span><CalendarClock size={14} />{post.publishedTime ? formatDateTime(post.publishedTime) : 'Publish time unavailable'}</span>
               <span><Users size={14} />Reach {post.reach.toLocaleString()}</span>
-              <span><TrendingUp size={14} />{post.engagementRate?.toFixed(1) || '0.0'}% engagement</span>
+              <span>
+                <TrendingUp size={14} />
+                {post.engagementRate !== null
+                  ? `${formatPercentage(post.engagementRate)} engagement`
+                  : 'Engagement unavailable'}
+              </span>
             </div>
           </div>
 
@@ -78,7 +83,7 @@ export const AnalyticsPostDrawer = ({
             <div><span>Likes</span><strong>{post.likes.toLocaleString()}</strong></div>
             <div><span>Comments</span><strong>{post.comments.toLocaleString()}</strong></div>
             <div><span>Saves</span><strong>{post.saves.toLocaleString()}</strong></div>
-            <div><span>Shares / Reactions</span><strong>{(post.shares + post.reactions).toLocaleString()}</strong></div>
+            <div><span>Shares</span><strong>{post.shares.toLocaleString()}</strong></div>
             <div><span>Video plays</span><strong>{post.videoPlays ? post.videoPlays.toLocaleString() : '—'}</strong></div>
             <div><span>Replays</span><strong>{post.replays ? post.replays.toLocaleString() : '—'}</strong></div>
             <div><span>Exits</span><strong>{post.exits ? post.exits.toLocaleString() : '—'}</strong></div>

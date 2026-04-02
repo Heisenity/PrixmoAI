@@ -107,9 +107,6 @@ export const PageWrapper = () => {
           className={`workspace-content ${
             isGenerateRoute ? 'workspace-content--generate' : ''
           }`}
-          data-lenis-prevent
-          data-lenis-prevent-wheel
-          data-lenis-prevent-touch
         >
           {authNotice ? <div className="message workspace-content__notice">{authNotice}</div> : null}
           <Outlet />

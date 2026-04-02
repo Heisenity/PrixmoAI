@@ -8,8 +8,9 @@ import {
   RefreshCw,
   Search,
   Sparkles,
+  X,
 } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   AudienceDonutChart,
@@ -25,12 +26,14 @@ import { ErrorMessage } from '../../components/shared/ErrorMessage';
 import { Card } from '../../components/ui/card';
 import { Input } from '../../components/ui/input';
 import { useAnalyticsDashboard } from '../../hooks/useAnalyticsDashboard';
-import { formatDateTime } from '../../lib/utils';
+import { formatDateTime, formatPercentage } from '../../lib/utils';
 import type {
   AnalyticsDashboard,
   AnalyticsPlatformScope,
   AnalyticsPostInsight,
 } from '../../types';
+
+type AnalyticsSelectablePlatform = Exclude<AnalyticsPlatformScope, 'all'>;
 
 const DATE_PRESETS = [
   { id: '7d', label: '7d' },
@@ -40,8 +43,7 @@ const DATE_PRESETS = [
   { id: 'custom', label: 'Custom' },
 ] as const;
 
-const PLATFORM_OPTIONS: Array<{ id: AnalyticsPlatformScope; label: string }> = [
-  { id: 'all', label: 'All' },
+const PLATFORM_OPTIONS: Array<{ id: AnalyticsSelectablePlatform; label: string }> = [
   { id: 'instagram', label: 'Instagram' },
   { id: 'facebook', label: 'Facebook' },
 ];
@@ -52,49 +54,78 @@ const KPI_TITLES: Array<{
 }> = [
   { key: 'impressions', label: 'Total Impressions' },
   { key: 'reach', label: 'Total Reach' },
+  { key: 'engagements', label: 'Total Engagements' },
   { key: 'engagementRate', label: 'Engagement Rate' },
   { key: 'likes', label: 'Likes' },
   { key: 'comments', label: 'Comments' },
   { key: 'saves', label: 'Saves' },
-  { key: 'sharesOrReactions', label: 'Shares / Reactions' },
+  { key: 'shares', label: 'Shares' },
   { key: 'newFollowers', label: 'New Followers' },
   { key: 'postsPublished', label: 'Posts Published' },
 ] as const;
 
 const KPI_TOOLTIPS: Record<(typeof KPI_TITLES)[number]['key'], string> = {
-  impressions: 'Total times your content was displayed across the selected period.',
-  reach: 'Estimated unique accounts reached in the selected period.',
+  impressions:
+    'How many total times your posts were shown in this date range. One account can create multiple impressions.',
+  reach:
+    'How many unique accounts saw your posts at least once in this date range.',
   engagementRate:
-    'Engagements divided by reach using the current PrixmoAI dashboard standard.',
-  likes: 'Total likes or equivalent positive reactions captured for the range.',
-  comments: 'Total comments captured across published posts in the range.',
-  saves: 'Total saves/bookmarks where the platform provides them.',
-  sharesOrReactions:
-    'Combined shares and reactions so cross-platform engagement stays comparable.',
-  newFollowers: 'Follower growth across the selected period versus the previous period.',
-  postsPublished: 'Only posts that were actually published in the selected date range.',
+    'How efficiently your content performed: total engagements divided by total reach.',
+  engagements:
+    'The total number of likes, comments, saves, shares, and reactions across your published posts.',
+  likes:
+    'The total number of likes collected across published posts in this date range.',
+  comments:
+    'The total number of comments left on your published posts in this date range.',
+  saves:
+    'The total number of times people saved your posts where the platform provides save data.',
+  shares:
+    'The total number of times your published posts were shared in this scope. This card tracks shares only, not reactions.',
+  newFollowers:
+    'Net follower growth during this period compared with the previous matching period.',
+  postsPublished:
+    'How many posts were actually published in this date range, not just scheduled.',
 };
 
 const POSTS_PER_PAGE = 10;
 
-const getRelativeLastUpdated = (value: string | null) => {
+const LAST_UPDATED_DATE_FORMATTER = new Intl.DateTimeFormat('en-US', {
+  month: 'short',
+  day: 'numeric',
+  year: 'numeric',
+});
+
+const getRelativeLastUpdated = (value: string | null, now = Date.now()) => {
   if (!value) {
     return 'Waiting for data';
   }
 
-  const diffMs = Date.now() - new Date(value).getTime();
-  const diffMinutes = Math.max(0, Math.round(diffMs / 60000));
+  const timestamp = new Date(value).getTime();
 
-  if (diffMinutes < 1) {
+  if (Number.isNaN(timestamp)) {
+    return 'Waiting for data';
+  }
+
+  const diffMs = Math.max(0, now - timestamp);
+  const diffSeconds = Math.floor(diffMs / 1000);
+
+  if (diffSeconds < 60) {
     return 'Updated just now';
   }
+
+  const diffMinutes = Math.floor(diffSeconds / 60);
 
   if (diffMinutes < 60) {
     return `Updated ${diffMinutes} min ago`;
   }
 
-  const diffHours = Math.round(diffMinutes / 60);
-  return `Updated ${diffHours}h ago`;
+  const diffHours = Math.floor(diffMinutes / 60);
+
+  if (diffHours < 24) {
+    return `Updated ${diffHours} hr ago`;
+  }
+
+  return `Updated ${LAST_UPDATED_DATE_FORMATTER.format(new Date(timestamp))}`;
 };
 
 const getPlatformIcon = (platform: string | null) =>
@@ -118,7 +149,7 @@ const getSortValue = (post: AnalyticsPostInsight, key: string) => {
     case 'engagementRate':
       return post.engagementRate ?? 0;
     case 'shares':
-      return post.shares + post.reactions;
+      return post.shares;
     case 'date':
       return new Date(post.publishedTime || 0).getTime();
     default:
@@ -163,7 +194,7 @@ const exportPostsCsv = (posts: AnalyticsPostInsight[]) => {
       post.saves,
       post.shares,
       post.reactions,
-      post.engagementRate ?? '',
+      formatPercentage(post.engagementRate, 1, ''),
     ]
       .map((value) => `"${String(value).replace(/"/g, '""')}"`)
       .join(',')
@@ -185,7 +216,7 @@ const exportPostsPdf = (posts: AnalyticsPostInsight[], dashboard: AnalyticsDashb
         const value =
           item.key === 'engagementRate'
             ? metric.value !== null
-              ? `${metric.value.toFixed(1)}%`
+              ? formatPercentage(metric.value)
               : '—'
             : metric.value !== null
               ? Intl.NumberFormat('en-US', {
@@ -252,7 +283,7 @@ const exportPostsPdf = (posts: AnalyticsPostInsight[], dashboard: AnalyticsDashb
           .slice(0, 5)
           .map(
             (slot) =>
-              `<span>${slot.day} ${String(slot.hour).padStart(2, '0')}:00 · ${slot.averageEngagementRate.toFixed(1)}%</span>`
+              `<span>${slot.day} ${String(slot.hour).padStart(2, '0')}:00 · ${formatPercentage(slot.averageEngagementRate)}</span>`
           )
           .join('')}
       </div>
@@ -335,7 +366,7 @@ const exportPostsPdf = (posts: AnalyticsPostInsight[], dashboard: AnalyticsDashb
                     <td>${post.caption || ''}</td>
                     <td>${post.impressions}</td>
                     <td>${post.reach}</td>
-                    <td>${post.engagementRate?.toFixed(1) || '0.0'}%</td>
+                    <td>${formatPercentage(post.engagementRate)}</td>
                   </tr>
                 `
               )
@@ -369,11 +400,10 @@ const AnalyticsSkeleton = () => (
 
 export const AnalyticsPage = () => {
   const [preset, setPreset] = useState<'7d' | '14d' | '28d' | '30d' | 'custom'>('30d');
-  const [platformScope, setPlatformScope] = useState<AnalyticsPlatformScope>('all');
+  const [platformScope, setPlatformScope] = useState<AnalyticsSelectablePlatform>('instagram');
   const [customStart, setCustomStart] = useState('');
   const [customEnd, setCustomEnd] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
-  const [contentPlatformFilter, setContentPlatformFilter] = useState<AnalyticsPlatformScope>('all');
   const [postTypeFilter, setPostTypeFilter] = useState('all');
   const [sortKey, setSortKey] = useState('performanceScore');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
@@ -381,22 +411,30 @@ export const AnalyticsPage = () => {
   const [audienceExpanded, setAudienceExpanded] = useState(true);
   const [exportOpen, setExportOpen] = useState(false);
   const [postsPage, setPostsPage] = useState(1);
+  const [emptyPlatformModal, setEmptyPlatformModal] = useState<AnalyticsSelectablePlatform | null>(null);
+  const [platformProbeInFlight, setPlatformProbeInFlight] = useState<AnalyticsSelectablePlatform | null>(null);
 
-  const { dashboard, isLoading, error, refresh } = useAnalyticsDashboard({
+  const {
+    dashboard,
+    isLoading,
+    isRefreshing,
+    lastUpdatedTime,
+    error,
+    refresh,
+    previewDashboard,
+    getCachedDashboard,
+  } =
+    useAnalyticsDashboard({
     preset,
     platform: platformScope,
     start: customStart,
     end: customEnd,
   });
+  const [relativeTimestampNow, setRelativeTimestampNow] = useState(() => Date.now());
 
   const scopedPosts = useMemo(
-    () =>
-      (dashboard?.posts ?? []).filter((post) =>
-        contentPlatformFilter === 'all'
-          ? true
-          : (post.platform as AnalyticsPlatformScope | null) === contentPlatformFilter
-      ),
-    [contentPlatformFilter, dashboard?.posts]
+    () => dashboard?.posts ?? [],
+    [dashboard?.posts]
   );
 
   const supportedPostTypes = useMemo(
@@ -418,8 +456,33 @@ export const AnalyticsPage = () => {
   }, [postTypeFilter, supportedPostTypes]);
 
   useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      setRelativeTimestampNow(Date.now());
+    }, 60_000);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, []);
+
+  useEffect(() => {
     setPostsPage(1);
-  }, [searchQuery, contentPlatformFilter, postTypeFilter, sortKey, sortDirection, dashboard?.platformScope, dashboard?.dateRange.start, dashboard?.dateRange.end]);
+  }, [searchQuery, postTypeFilter, sortKey, sortDirection, dashboard?.platformScope, dashboard?.dateRange.start, dashboard?.dateRange.end]);
+
+  useEffect(() => {
+    if (!dashboard?.connectedPlatforms.length) {
+      return;
+    }
+
+    const availablePlatforms = dashboard.connectedPlatforms.filter(
+      (platform): platform is AnalyticsSelectablePlatform =>
+        platform === 'instagram' || platform === 'facebook'
+    );
+
+    if (!availablePlatforms.includes(platformScope) && availablePlatforms[0]) {
+      setPlatformScope(availablePlatforms[0]);
+    }
+  }, [dashboard?.connectedPlatforms, platformScope]);
 
   const filteredPosts = useMemo(() => {
     const normalizedSearch = searchQuery.trim().toLowerCase();
@@ -463,11 +526,73 @@ export const AnalyticsPage = () => {
     }
   }, [postsPage, totalPostPages]);
 
-  const activePlatformsLabel = dashboard?.connectedPlatforms.length
-    ? dashboard.connectedPlatforms.map((platform) => platform[0].toUpperCase() + platform.slice(1)).join(' · ')
-    : 'No connected analytics sources';
+  const availablePlatforms = useMemo(
+    () =>
+      new Set(
+        (dashboard?.connectedPlatforms ?? []).filter(
+          (platform): platform is AnalyticsSelectablePlatform =>
+            platform === 'instagram' || platform === 'facebook'
+        )
+      ),
+    [dashboard?.connectedPlatforms]
+  );
+  const activePlatformLabel =
+    platformScope === 'instagram' ? 'Instagram' : 'Facebook';
+  const visibleInsights = useMemo(
+    () => (dashboard?.insights ?? []).filter((insight) => insight.id !== 'best-platform'),
+    [dashboard?.insights]
+  );
+  const selectedPlatformUnavailable =
+    dashboard?.connectedPlatforms.length
+      ? !availablePlatforms.has(platformScope)
+      : false;
+  const relativeLastUpdatedLabel = useMemo(
+    () => getRelativeLastUpdated(lastUpdatedTime, relativeTimestampNow),
+    [lastUpdatedTime, relativeTimestampNow]
+  );
+  const handlePlatformChange = useCallback(
+    async (nextPlatform: AnalyticsSelectablePlatform) => {
+      if (nextPlatform === platformScope || platformProbeInFlight) {
+        return;
+      }
+
+      const cachedDashboard = getCachedDashboard({ platform: nextPlatform });
+
+      if (cachedDashboard) {
+        if (!cachedDashboard.posts.length) {
+          setEmptyPlatformModal(nextPlatform);
+          return;
+        }
+
+        setPlatformScope(nextPlatform);
+        return;
+      }
+
+      setPlatformProbeInFlight(nextPlatform);
+
+      try {
+        const nextDashboard = await previewDashboard({ platform: nextPlatform });
+
+        if (!nextDashboard?.posts.length) {
+          setEmptyPlatformModal(nextPlatform);
+          return;
+        }
+
+        setPlatformScope(nextPlatform);
+      } catch {
+        setEmptyPlatformModal(nextPlatform);
+      } finally {
+        setPlatformProbeInFlight(null);
+      }
+    },
+    [getCachedDashboard, platformProbeInFlight, platformScope, previewDashboard]
+  );
 
   if (isLoading && !dashboard) {
+    return <AnalyticsSkeleton />;
+  }
+
+  if (!isLoading && dashboard && selectedPlatformUnavailable) {
     return <AnalyticsSkeleton />;
   }
 
@@ -495,15 +620,15 @@ export const AnalyticsPage = () => {
           <section className="analytics-dashboard__hero">
             <div>
               <p className="section-eyebrow">Analytics intelligence</p>
-              <h2>Understand what is working across Instagram and Facebook.</h2>
+              <h2>Understand what is working on {activePlatformLabel}.</h2>
               <p>
-                PrixmoAI will fill this dashboard as soon as published posts start returning performance data.
+                PrixmoAI will fill this dashboard as soon as your published {activePlatformLabel.toLowerCase()} posts start returning performance data.
               </p>
             </div>
           </section>
           <EmptyState
-            title="No platform analytics yet"
-            description="Published posts with tracked metrics will appear here with trends, best-time recommendations, and content insights."
+            title={`No ${activePlatformLabel} analytics yet`}
+            description={`Published ${activePlatformLabel.toLowerCase()} posts with tracked metrics will appear here with trends, best-time recommendations, and content insights.`}
           />
         </div>
       </div>
@@ -516,83 +641,105 @@ export const AnalyticsPage = () => {
 
       <div className="analytics-dashboard">
         <section className="analytics-dashboard__hero">
-          <div className="analytics-dashboard__hero-copy">
+          <div className="analytics-header">
             <p className="section-eyebrow">Analytics</p>
-            <h2>Read what is working, not just what was posted.</h2>
-            <p>
-              Unified Instagram and Facebook reporting for post performance, audience growth, best-time recommendations, and platform comparison.
-            </p>
-          </div>
-          <div className="analytics-dashboard__controls">
-            <div className="analytics-dashboard__pill-row">
-              {DATE_PRESETS.map((option) => (
-                <button
-                  key={option.id}
-                  type="button"
-                  className={`analytics-pill ${preset === option.id ? 'analytics-pill--active' : ''}`}
-                  onClick={() => setPreset(option.id)}
-                >
-                  {option.label}
-                </button>
-              ))}
+            <div className="analytics-header__copy">
+              <h2>Read what is working, not just what was posted.</h2>
+              <p className="analytics-header__description">
+                Independent {activePlatformLabel} reporting for post performance, audience growth, timing insights, and content recommendations.
+              </p>
             </div>
-            <div className="analytics-dashboard__pill-row">
-              {PLATFORM_OPTIONS.map((option) => (
-                <button
-                  key={option.id}
-                  type="button"
-                  className={`analytics-pill ${platformScope === option.id ? 'analytics-pill--active' : ''}`}
-                  onClick={() => setPlatformScope(option.id)}
-                >
-                  {option.label}
-                </button>
-              ))}
-            </div>
-            {preset === 'custom' ? (
-              <div className="analytics-dashboard__custom-range">
-                <Input type="date" value={customStart} onChange={(event) => setCustomStart(event.target.value)} />
-                <Input type="date" value={customEnd} onChange={(event) => setCustomEnd(event.target.value)} />
+
+            <div className="analytics-toolbar">
+              <div className="analytics-toolbar__filters">
+                <div className="analytics-toolbar__group">
+                  {DATE_PRESETS.map((option) => (
+                    <button
+                      key={option.id}
+                      type="button"
+                      className={`analytics-pill ${preset === option.id ? 'analytics-pill--active' : ''}`}
+                      onClick={() => setPreset(option.id)}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                  {preset === 'custom' ? (
+                    <div className="analytics-dashboard__custom-range">
+                      <Input
+                        type="date"
+                        value={customStart}
+                        onChange={(event) => setCustomStart(event.target.value)}
+                      />
+                      <Input
+                        type="date"
+                        value={customEnd}
+                        onChange={(event) => setCustomEnd(event.target.value)}
+                      />
+                    </div>
+                  ) : null}
+                </div>
+
+                <div className="analytics-toolbar__group">
+                  {PLATFORM_OPTIONS.map((option) => (
+                    <button
+                      key={option.id}
+                      type="button"
+                      className={`analytics-pill ${platformScope === option.id ? 'analytics-pill--active' : ''}`}
+                      disabled={platformProbeInFlight !== null}
+                      onClick={() => {
+                        void handlePlatformChange(option.id);
+                      }}
+                    >
+                      {platformProbeInFlight === option.id ? 'Checking…' : option.label}
+                    </button>
+                  ))}
+                </div>
               </div>
-            ) : null}
-            <div className="analytics-dashboard__actions">
-              <div className={`analytics-export ${exportOpen ? 'analytics-export--open' : ''}`}>
+
+              <div className="analytics-toolbar__actions">
+                <div className={`analytics-export ${exportOpen ? 'analytics-export--open' : ''}`}>
+                  <button
+                    type="button"
+                    className="analytics-pill analytics-pill--icon"
+                    onClick={() => setExportOpen((value) => !value)}
+                  >
+                    <Download size={14} />
+                    Export
+                    <ChevronDown size={14} />
+                  </button>
+                  {exportOpen ? (
+                    <div className="analytics-export__menu">
+                      <button type="button" onClick={() => {
+                        exportPostsCsv(filteredPosts);
+                        setExportOpen(false);
+                      }}>
+                        CSV
+                      </button>
+                      <button type="button" onClick={() => {
+                        exportPostsPdf(filteredPosts, dashboard);
+                        setExportOpen(false);
+                      }}>
+                        PDF
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
                 <button
                   type="button"
                   className="analytics-pill analytics-pill--icon"
-                  onClick={() => setExportOpen((value) => !value)}
+                  disabled={isRefreshing}
+                  onClick={() => {
+                    setExportOpen(false);
+                    void refresh({ sync: true });
+                  }}
                 >
-                  <Download size={14} />
-                  Export
-                  <ChevronDown size={14} />
+                  <RefreshCw size={14} className={isRefreshing ? 'analytics-icon-spin' : ''} />
+                  {isRefreshing ? 'Refreshing' : 'Refresh'}
                 </button>
-                {exportOpen ? (
-                  <div className="analytics-export__menu">
-                    <button type="button" onClick={() => {
-                      exportPostsCsv(filteredPosts);
-                      setExportOpen(false);
-                    }}>
-                      CSV
-                    </button>
-                    <button type="button" onClick={() => {
-                      exportPostsPdf(filteredPosts, dashboard);
-                      setExportOpen(false);
-                    }}>
-                      PDF
-                    </button>
-                  </div>
-                ) : null}
+                <span className="analytics-dashboard__last-updated">
+                  {relativeLastUpdatedLabel}
+                </span>
               </div>
-              <button
-                type="button"
-                className="analytics-pill analytics-pill--icon"
-                onClick={() => void refresh({ sync: true })}
-              >
-                <RefreshCw size={14} />
-                Refresh
-              </button>
-              <span className="analytics-dashboard__last-updated">
-                {getRelativeLastUpdated(dashboard?.lastUpdatedAt || null)}
-              </span>
             </div>
           </div>
         </section>
@@ -615,7 +762,7 @@ export const AnalyticsPage = () => {
             <section className="analytics-chart-grid">
               <DualLineChart
                 title="Impressions and reach over time"
-                subtitle={activePlatformsLabel}
+                subtitle={activePlatformLabel}
                 points={dashboard.trends.impressionsReachSeries}
               />
               <StackedEngagementChart
@@ -634,7 +781,7 @@ export const AnalyticsPage = () => {
                   </div>
                 </div>
                 <div className="analytics-insights-list">
-                  {dashboard.insights.map((insight) => (
+                  {visibleInsights.map((insight) => (
                     <article
                       key={insight.id}
                       className={`analytics-insight-card analytics-insight-card--${insight.tone}`}
@@ -645,33 +792,6 @@ export const AnalyticsPage = () => {
                       </div>
                       <p>{insight.description}</p>
                       <small>{insight.supportingMetric}</small>
-                    </article>
-                  ))}
-                </div>
-              </Card>
-
-              <Card className="analytics-panel analytics-panel--compact">
-                <div className="analytics-panel__header">
-                  <div>
-                    <p className="section-eyebrow">Platform comparison</p>
-                    <h3>Where performance is strongest</h3>
-                  </div>
-                </div>
-                <div className="analytics-platform-comparison">
-                  {dashboard.platformComparison.map((platform) => (
-                    <article key={platform.platform} className="analytics-platform-comparison__row">
-                      <div>
-                        <strong>{platform.label}</strong>
-                        <span>{platform.posts} posts</span>
-                      </div>
-                      <div>
-                        <strong>{platform.engagementRate?.toFixed(1) || '0.0'}%</strong>
-                        <span>Engagement</span>
-                      </div>
-                      <div>
-                        <strong>{platform.score.toFixed(1)}</strong>
-                        <span>Score</span>
-                      </div>
                     </article>
                   ))}
                 </div>
@@ -692,21 +812,6 @@ export const AnalyticsPage = () => {
                       onChange={(event) => setSearchQuery(event.target.value)}
                       placeholder="Search caption, hashtag, keyword"
                     />
-                  </label>
-                  <label className="analytics-select">
-                    <Filter size={14} />
-                    <select
-                      value={contentPlatformFilter}
-                      onChange={(event) =>
-                        setContentPlatformFilter(event.target.value as AnalyticsPlatformScope)
-                      }
-                    >
-                      {PLATFORM_OPTIONS.map((option) => (
-                        <option key={option.id} value={option.id}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </select>
                   </label>
                   <label className="analytics-select">
                     <Filter size={14} />
@@ -791,7 +896,7 @@ export const AnalyticsPage = () => {
                             setSortKey('shares');
                             setSortDirection((current) => (sortKey === 'shares' && current === 'desc' ? 'asc' : 'desc'));
                           }}>
-                            Shares / Reactions
+                            Shares
                           </button>
                         </th>
                         <th>Action</th>
@@ -835,8 +940,8 @@ export const AnalyticsPage = () => {
                             <td>{post.likes.toLocaleString()}</td>
                             <td>{post.comments.toLocaleString()}</td>
                             <td>{post.saves.toLocaleString()}</td>
-                            <td>{post.engagementRate?.toFixed(1) || '0.0'}%</td>
-                            <td>{(post.shares + post.reactions).toLocaleString()}</td>
+                            <td>{formatPercentage(post.engagementRate)}</td>
+                            <td>{post.shares.toLocaleString()}</td>
                             <td>
                               <button type="button" className="analytics-table__action" onClick={() => setSelectedPost(post)}>
                                 View
@@ -917,7 +1022,7 @@ export const AnalyticsPage = () => {
                           <article key={`${slot.day}-${slot.hour}`} className="analytics-top-slot">
                             <strong>{slot.day}</strong>
                             <span>
-                              {String(slot.hour).padStart(2, '0')}:00 · {slot.averageEngagementRate.toFixed(1)}%
+                              {String(slot.hour).padStart(2, '0')}:00 · {formatPercentage(slot.averageEngagementRate)}
                             </span>
                           </article>
                         ))
@@ -1070,6 +1175,63 @@ export const AnalyticsPage = () => {
           </>
         ) : null}
       </div>
+
+      {emptyPlatformModal ? (
+        <div className="generated-image-lightbox analytics-empty-modal" role="dialog" aria-modal="true">
+          <button
+            type="button"
+            className="generated-image-lightbox__backdrop"
+            aria-label="Close empty platform analytics dialog"
+            onClick={() => setEmptyPlatformModal(null)}
+          />
+          <aside className="generated-image-lightbox__panel analytics-empty-modal__panel">
+            <div className="analytics-empty-modal__header">
+              <div>
+                <p className="section-eyebrow">No analytics yet</p>
+                <h3>No posts yet on {emptyPlatformModal === 'instagram' ? 'Instagram' : 'Facebook'}</h3>
+              </div>
+              <button
+                type="button"
+                className="generated-image-card__action"
+                onClick={() => setEmptyPlatformModal(null)}
+                aria-label="Close empty platform analytics dialog"
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <div className="analytics-empty-modal__body">
+              <p>
+                You haven&apos;t published any posts on{' '}
+                {emptyPlatformModal === 'instagram' ? 'Instagram' : 'Facebook'} yet.
+                Publish a post or connect your {emptyPlatformModal === 'instagram' ? 'Instagram' : 'Facebook'} account to see analytics.
+              </p>
+            </div>
+            <div className="analytics-empty-modal__actions">
+              <Link
+                to="/app/scheduler"
+                className="button button--secondary button--sm"
+                onClick={() => setEmptyPlatformModal(null)}
+              >
+                Connect Account
+              </Link>
+              <Link
+                to="/app/generate"
+                className="button button--primary button--sm"
+                onClick={() => setEmptyPlatformModal(null)}
+              >
+                Create Post
+              </Link>
+              <button
+                type="button"
+                className="button button--ghost button--sm"
+                onClick={() => setEmptyPlatformModal(null)}
+              >
+                Close
+              </button>
+            </div>
+          </aside>
+        </div>
+      ) : null}
 
       <AnalyticsPostDrawer
         post={selectedPost}

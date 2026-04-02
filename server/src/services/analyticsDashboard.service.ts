@@ -715,6 +715,44 @@ const buildSparkline = (
     value: selector(point),
   }));
 
+const buildCumulativeSparklineFromRows = (
+  rows: EnrichedAnalyticsRow[],
+  range: DateRangeWindow,
+  selector: (row: EnrichedAnalyticsRow) => number
+): AnalyticsMetricPoint[] => {
+  const dayBuckets = new Map<string, EnrichedAnalyticsRow[]>();
+
+  for (const row of rows) {
+    const bucket = startOfUtcDay(new Date(row.recordedAt)).toISOString();
+    const entries = dayBuckets.get(bucket) ?? [];
+    entries.push(row);
+    dayBuckets.set(bucket, entries);
+  }
+
+  const latestMetricByPost = new Map<string, number>();
+  const points: AnalyticsMetricPoint[] = [];
+
+  for (let cursor = new Date(range.start); cursor < new Date(range.end); cursor = addUtcDays(cursor, 1)) {
+    const bucket = cursor.toISOString();
+    const rowsForDay = dayBuckets.get(bucket) ?? [];
+    const latestRowsForDay = latestByKey(rowsForDay, (row) => row.postKey, (row) => row.recordedAt);
+
+    for (const row of latestRowsForDay) {
+      latestMetricByPost.set(row.postKey, Math.max(0, selector(row)));
+    }
+
+    const totalForDay = [...latestMetricByPost.values()].reduce((total, value) => total + value, 0);
+
+    points.push({
+      date: bucket,
+      label: toDateLabel(bucket),
+      value: totalForDay,
+    });
+  }
+
+  return points;
+};
+
 const buildHeatmap = (posts: AnalyticsPostInsight[]): AnalyticsBestTimeInsight => {
   const buckets = new Map<string, { sum: number; posts: number; dayIndex: number; hour: number }>();
 
@@ -1359,13 +1397,13 @@ export const getAnalyticsDashboard = async (
     impressions: buildMetric(
       sumMetric(currentSnapshots, (row) => row.impressions),
       sumMetric(previousSnapshots, (row) => row.impressions),
-      buildSparkline(trendSeries, (point) => point.impressions),
+      buildCumulativeSparklineFromRows(currentRows, range, (row) => row.impressions),
       platformBreakdownForMetric((row) => row.impressions)
     ),
     reach: buildMetric(
       currentReach,
       previousReach,
-      buildSparkline(trendSeries, (point) => point.reach),
+      buildCumulativeSparklineFromRows(currentRows, range, (row) => row.reach),
       platformBreakdownForMetric((row) => row.reach)
     ),
     engagementRate: buildMetric(
@@ -1377,29 +1415,35 @@ export const getAnalyticsDashboard = async (
         point.reach > 0 ? Number(((point.engagements / point.reach) * 100).toFixed(2)) : 0
       )
     ),
+    engagements: buildMetric(
+      currentEngagements,
+      previousEngagements,
+      buildCumulativeSparklineFromRows(currentRows, range, (row) => row.engagements),
+      platformBreakdownForMetric((row) => row.engagements)
+    ),
     likes: buildMetric(
       sumMetric(currentSnapshots, (row) => row.likes),
       sumMetric(previousSnapshots, (row) => row.likes),
-      buildSparkline(trendSeries, (point) => point.likes),
+      buildCumulativeSparklineFromRows(currentRows, range, (row) => row.likes),
       platformBreakdownForMetric((row) => row.likes)
     ),
     comments: buildMetric(
       sumMetric(currentSnapshots, (row) => row.comments),
       sumMetric(previousSnapshots, (row) => row.comments),
-      buildSparkline(trendSeries, (point) => point.comments),
+      buildCumulativeSparklineFromRows(currentRows, range, (row) => row.comments),
       platformBreakdownForMetric((row) => row.comments)
     ),
     saves: buildMetric(
       sumMetric(currentSnapshots, (row) => row.saves),
       sumMetric(previousSnapshots, (row) => row.saves),
-      buildSparkline(trendSeries, (point) => point.saves),
+      buildCumulativeSparklineFromRows(currentRows, range, (row) => row.saves),
       platformBreakdownForMetric((row) => row.saves)
     ),
-    sharesOrReactions: buildMetric(
-      sumMetric(currentSnapshots, (row) => row.shares + row.reactions),
-      sumMetric(previousSnapshots, (row) => row.shares + row.reactions),
-      buildSparkline(trendSeries, (point) => point.shares + point.reactions),
-      platformBreakdownForMetric((row) => row.shares + row.reactions)
+    shares: buildMetric(
+      sumMetric(currentSnapshots, (row) => row.shares),
+      sumMetric(previousSnapshots, (row) => row.shares),
+      buildCumulativeSparklineFromRows(currentRows, range, (row) => row.shares),
+      platformBreakdownForMetric((row) => row.shares)
     ),
     newFollowers: buildMetric(
       currentFollowerGrowth,

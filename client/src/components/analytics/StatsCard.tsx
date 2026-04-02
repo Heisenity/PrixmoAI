@@ -1,6 +1,7 @@
+import { memo } from 'react';
 import { Card } from '../ui/card';
 
-export const StatsCard = ({
+export const StatsCard = memo(({
   label,
   value,
   hint,
@@ -14,4 +15,4 @@ export const StatsCard = ({
     <strong>{value}</strong>
     <span>{hint}</span>
   </Card>
-);
+));

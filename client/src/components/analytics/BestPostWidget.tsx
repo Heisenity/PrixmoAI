@@ -1,10 +1,11 @@
+import { memo } from 'react';
 import { Card } from '../ui/card';
 import { formatDateTime } from '../../lib/utils';
 import type { AnalyticsRecord } from '../../types';
 import { PostMetricsRow } from './PostMetricsRow';
 import { EmptyState } from '../shared/EmptyState';
 
-export const BestPostWidget = ({
+export const BestPostWidget = memo(({
   post,
 }: {
   post: AnalyticsRecord | null;
@@ -21,4 +22,4 @@ export const BestPostWidget = ({
       title="No best post yet"
       description="Record a few analytics rows and this card will surface the strongest one."
     />
-  );
+  ));

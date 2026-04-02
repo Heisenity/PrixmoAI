@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { memo, useMemo, useState } from 'react';
 import type {
   AnalyticsAudienceBreakdownItem,
   AnalyticsFollowerTrendPoint,
@@ -10,30 +10,44 @@ import type {
 const SVG_WIDTH = 720;
 const SVG_HEIGHT = 260;
 const CHART_PADDING = { top: 20, right: 16, bottom: 30, left: 16 };
+const MINI_SPARKLINE_WIDTH = 120;
+const MINI_SPARKLINE_HEIGHT = 34;
+const MINI_SPARKLINE_PADDING = { top: 4, right: 2, bottom: 4, left: 2 };
 
 const buildPath = (points: Array<{ x: number; y: number }>) =>
   points.map((point, index) => `${index === 0 ? 'M' : 'L'} ${point.x} ${point.y}`).join(' ');
 
-const scalePoints = (values: number[], width: number, height: number) => {
+const scalePoints = (
+  values: number[],
+  width: number,
+  height: number,
+  padding = CHART_PADDING
+) => {
   if (!values.length) {
     return [];
   }
 
   const max = Math.max(...values, 1);
-  const innerWidth = width - CHART_PADDING.left - CHART_PADDING.right;
-  const innerHeight = height - CHART_PADDING.top - CHART_PADDING.bottom;
+  const innerWidth = Math.max(1, width - padding.left - padding.right);
+  const innerHeight = Math.max(1, height - padding.top - padding.bottom);
 
   return values.map((value, index) => ({
     x:
-      CHART_PADDING.left +
+      padding.left +
       (values.length === 1 ? innerWidth / 2 : (innerWidth * index) / (values.length - 1)),
-    y: CHART_PADDING.top + innerHeight - (value / max) * innerHeight,
+    y: padding.top + innerHeight - (value / max) * innerHeight,
   }));
 };
 
-export const MiniSparkline = ({ points }: { points: AnalyticsMetricPoint[] }) => {
+export const MiniSparkline = memo(({ points }: { points: AnalyticsMetricPoint[] }) => {
   const scaled = useMemo(
-    () => scalePoints(points.map((point) => point.value), 120, 34),
+    () =>
+      scalePoints(
+        points.map((point) => point.value),
+        MINI_SPARKLINE_WIDTH,
+        MINI_SPARKLINE_HEIGHT,
+        MINI_SPARKLINE_PADDING
+      ),
     [points]
   );
 
@@ -42,13 +56,84 @@ export const MiniSparkline = ({ points }: { points: AnalyticsMetricPoint[] }) =>
   }
 
   return (
-    <svg viewBox="0 0 120 34" preserveAspectRatio="none" aria-hidden="true">
+    <svg
+      viewBox={`0 0 ${MINI_SPARKLINE_WIDTH} ${MINI_SPARKLINE_HEIGHT}`}
+      preserveAspectRatio="none"
+      aria-hidden="true"
+    >
       <path d={buildPath(scaled)} />
     </svg>
   );
-};
+});
 
-export const DualLineChart = ({
+export const MiniPublishedPostsBars = memo(({ points }: { points: AnalyticsMetricPoint[] }) => {
+  const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
+  const bars = useMemo(() => points.slice(-5), [points]);
+  const maxValue = Math.max(...bars.map((point) => point.value), 1);
+  const MAX_BAR_HEIGHT = 40;
+  const MIN_BAR_HEIGHT = 4;
+
+  if (!bars.length) {
+    return null;
+  }
+
+  return (
+    <div className="analytics-mini-bars" aria-label="Daily published posts for the last 5 days">
+      <div className="analytics-mini-bars__plot">
+        {bars.map((point, index) => {
+          const normalizedHeight = maxValue > 0 ? point.value / maxValue : 0;
+          const barHeight =
+            point.value === 0
+              ? MIN_BAR_HEIGHT
+              : Math.max(MIN_BAR_HEIGHT, normalizedHeight * MAX_BAR_HEIGHT);
+          const isHovered = hoveredIndex === index;
+          const tooltipPositionClass =
+            index >= bars.length - 1
+              ? 'is-right'
+              : index === 0
+                ? 'is-left'
+                : 'is-center';
+
+          return (
+            <button
+              key={`${point.date}-${index}`}
+              type="button"
+              className={`analytics-mini-bars__item ${isHovered ? 'is-hovered' : ''}`}
+              onMouseEnter={() => setHoveredIndex(index)}
+              onMouseLeave={() => setHoveredIndex(null)}
+              onFocus={() => setHoveredIndex(index)}
+              onBlur={() => setHoveredIndex(null)}
+              aria-label={`Posts published: ${point.value}. Date: ${point.label}`}
+            >
+              <span className="analytics-mini-bars__bar-wrap">
+                {isHovered ? (
+                  <span className="analytics-mini-bars__value">{point.value}</span>
+                ) : null}
+                <span
+                  className={`analytics-mini-bars__bar ${point.value === 0 ? 'is-zero' : ''}`}
+                  style={{ height: `${Math.min(barHeight, MAX_BAR_HEIGHT)}px` }}
+                />
+              </span>
+              {isHovered ? (
+                <span className={`analytics-mini-bars__tooltip ${tooltipPositionClass}`}>
+                  <strong>Posts published: {point.value}</strong>
+                  <span>Date: {point.label}</span>
+                </span>
+              ) : null}
+            </button>
+          );
+        })}
+      </div>
+      <div className="analytics-mini-bars__labels" aria-hidden="true">
+        {bars.map((point, index) => (
+          <span key={`${point.date}-label-${index}`}>{point.label}</span>
+        ))}
+      </div>
+    </div>
+  );
+});
+
+export const DualLineChart = memo(({
   title,
   subtitle,
   points,
@@ -146,9 +231,9 @@ export const DualLineChart = ({
       </div>
     </article>
   );
-};
+});
 
-export const StackedEngagementChart = ({
+export const StackedEngagementChart = memo(({
   title,
   subtitle,
   points,
@@ -250,9 +335,9 @@ export const StackedEngagementChart = ({
       <span className="analytics-chart-card__footnote">{subtitle}</span>
     </article>
   );
-};
+});
 
-export const EngagementHeatmap = ({
+export const EngagementHeatmap = memo(({
   cells,
   valueLabel = 'posts',
 }: {
@@ -306,11 +391,11 @@ export const EngagementHeatmap = ({
       ) : null}
     </div>
   );
-};
+});
 
 const DONUT_COLORS = ['#8fd8ff', '#73f0d5', '#facc15', '#fb7185', '#c084fc', '#7dd3fc'];
 
-export const AudienceDonutChart = ({
+export const AudienceDonutChart = memo(({
   items,
 }: {
   items: AnalyticsAudienceBreakdownItem[];
@@ -373,9 +458,9 @@ export const AudienceDonutChart = ({
       </div>
     </div>
   );
-};
+});
 
-export const FollowerGrowthChart = ({
+export const FollowerGrowthChart = memo(({
   points,
 }: {
   points: AnalyticsFollowerTrendPoint[];
@@ -429,4 +514,4 @@ export const FollowerGrowthChart = ({
       ) : null}
     </div>
   );
-};
+});

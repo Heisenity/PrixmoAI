@@ -27,7 +27,9 @@ export const DashboardPage = () => {
   const { catalog } = useBilling();
   const { history: contentHistory, refreshHistory } = useContent();
   const { history: imageHistory, refreshHistory: refreshImageHistory } = useImages();
-  const { posts } = useScheduler();
+  const { upcomingPosts, refresh: refreshScheduler } = useScheduler({
+    pollIntervalMs: 0,
+  });
   const [conversations, setConversations] = useState<GenerateConversation[]>([]);
 
   const subscription = catalog?.currentSubscription;
@@ -50,11 +52,8 @@ export const DashboardPage = () => {
     [overview?.generation.imageGenerationsToday, planDetails.imageLimit]
   );
   const activeScheduledPostCount = useMemo(
-    () =>
-      (posts?.items ?? []).filter(
-        (post) => post.status === 'pending' || post.status === 'scheduled'
-      ).length,
-    [posts?.items]
+    () => upcomingPosts.length,
+    [upcomingPosts]
   );
 
   useEffect(() => {
@@ -70,17 +69,17 @@ export const DashboardPage = () => {
           { token }
         );
         setConversations(nextConversations);
-        await Promise.all([refreshHistory(), refreshImageHistory()]);
+        await Promise.all([
+          refreshHistory(),
+          refreshImageHistory(),
+          refreshScheduler({ silent: true }),
+        ]);
       } catch {
         return;
       }
     };
 
     void refreshRecentData();
-
-    const intervalId = window.setInterval(() => {
-      void refreshRecentData();
-    }, 30000);
 
     const handleFocus = () => {
       void refreshRecentData();
@@ -89,10 +88,9 @@ export const DashboardPage = () => {
     window.addEventListener('focus', handleFocus);
 
     return () => {
-      window.clearInterval(intervalId);
       window.removeEventListener('focus', handleFocus);
     };
-  }, [token, refreshHistory, refreshImageHistory]);
+  }, [token, refreshHistory, refreshImageHistory, refreshScheduler]);
 
   const liveConversationMap = useMemo(
     () => new Map(conversations.map((conversation) => [conversation.id, conversation])),
@@ -287,9 +285,9 @@ export const DashboardPage = () => {
           </div>
           <Link to="/app/scheduler">Manage queue</Link>
         </div>
-        {posts?.items.length ? (
+        {upcomingPosts.length ? (
           <div className="stack-list">
-            {posts.items.slice(0, 4).map((post) => (
+            {upcomingPosts.slice(0, 4).map((post) => (
               <div key={post.id} className="stack-list__item">
                 <strong>{post.caption || 'Untitled post'}</strong>
                 <span>{post.status}</span>
@@ -299,7 +297,7 @@ export const DashboardPage = () => {
           </div>
         ) : (
           <EmptyState
-            title="No posts queued"
+            title="No scheduled posts yet"
             description="Connect a social account and create the first scheduled post."
           />
         )}

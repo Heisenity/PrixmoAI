@@ -1,5 +1,4 @@
-import Lenis from 'lenis';
-import { Suspense, lazy, useEffect } from 'react';
+import { Suspense, lazy } from 'react';
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { AuthProvider } from './hooks/useAuth';
 import { ProtectedRoute } from './components/shared/ProtectedRoute';
@@ -67,40 +66,8 @@ const SettingsPage = lazy(() =>
   }))
 );
 
-const SmoothScrollBridge = () => {
-  useEffect(() => {
-    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-      return;
-    }
-
-    const lenis = new Lenis({
-      duration: 1.05,
-      smoothWheel: true,
-      wheelMultiplier: 0.92,
-      touchMultiplier: 1.1,
-    });
-
-    let frame = 0;
-
-    const raf = (time: number) => {
-      lenis.raf(time);
-      frame = window.requestAnimationFrame(raf);
-    };
-
-    frame = window.requestAnimationFrame(raf);
-
-    return () => {
-      window.cancelAnimationFrame(frame);
-      lenis.destroy();
-    };
-  }, []);
-
-  return null;
-};
-
 const RouterTree = () => (
   <BrowserRouter>
-    <SmoothScrollBridge />
     <Suspense
       fallback={
         <div className="screen-center">

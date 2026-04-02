@@ -34,7 +34,8 @@ import {
   FEATURE_KEYS,
   isMetaFacebookOAuthConfigured,
   isMetaInstagramOAuthConfigured,
-  META_REDIRECT_URI,
+  META_FACEBOOK_REDIRECT_URI,
+  META_INSTAGRAM_REDIRECT_URI,
   META_OAUTH_STATE_TTL_MS,
   SUPABASE_SOURCE_IMAGE_BUCKET,
 } from '../config/constants';
@@ -307,6 +308,7 @@ const buildFacebookSocialAccountFromMetaPage = (
     tokenExpiresAt,
     metadata: {
       connectionSource: 'meta_oauth',
+      oauthApp: 'facebook',
       metaUserId: metaUser?.id ?? null,
       metaUserName: metaUser?.name ?? null,
       metaPageId: page.id,
@@ -953,7 +955,11 @@ export const startMetaOAuth = async (
       data: {
         authUrl,
         // The popup posts back from the server callback origin, not the app origin.
-        popupOrigin: new URL(META_REDIRECT_URI).origin,
+        popupOrigin: new URL(
+          req.body.platform === 'instagram'
+            ? META_INSTAGRAM_REDIRECT_URI
+            : META_FACEBOOK_REDIRECT_URI
+        ).origin,
       },
     });
   } catch (error) {

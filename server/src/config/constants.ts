@@ -36,13 +36,17 @@ export const META_FACEBOOK_APP_ID =
   process.env.META_FACEBOOK_APP_ID || process.env.META_APP_ID || '';
 export const META_FACEBOOK_APP_SECRET =
   process.env.META_FACEBOOK_APP_SECRET || process.env.META_APP_SECRET || '';
-export const META_INSTAGRAM_APP_ID =
-  process.env.META_INSTAGRAM_APP_ID || META_FACEBOOK_APP_ID;
+export const META_INSTAGRAM_APP_ID = process.env.META_INSTAGRAM_APP_ID || '';
 export const META_INSTAGRAM_APP_SECRET =
-  process.env.META_INSTAGRAM_APP_SECRET || META_FACEBOOK_APP_SECRET;
-export const META_REDIRECT_URI =
+  process.env.META_INSTAGRAM_APP_SECRET || '';
+const DEFAULT_META_REDIRECT_URI =
   process.env.META_REDIRECT_URI ||
   `${SERVER_PUBLIC_URL}/api/scheduler/oauth/meta/callback`;
+export const META_FACEBOOK_REDIRECT_URI =
+  process.env.META_FACEBOOK_REDIRECT_URI || DEFAULT_META_REDIRECT_URI;
+export const META_INSTAGRAM_REDIRECT_URI =
+  process.env.META_INSTAGRAM_REDIRECT_URI || DEFAULT_META_REDIRECT_URI;
+export const META_REDIRECT_URI = DEFAULT_META_REDIRECT_URI;
 export const META_OAUTH_CONFIG_ID =
   process.env.META_OAUTH_CONFIG_ID || process.env.META_CONFIG_ID || '';
 export const META_OAUTH_STATE_SECRET = process.env.META_OAUTH_STATE_SECRET || '';
@@ -66,6 +70,8 @@ export const META_INSTAGRAM_OAUTH_SCOPES = toScopeList(
   [
     'instagram_business_basic',
     'instagram_business_content_publish',
+    'instagram_business_manage_comments',
+    'instagram_business_manage_insights',
   ]
 );
 export const META_OAUTH_STATE_TTL_MS = Number(
@@ -97,8 +103,8 @@ export const isMetaFacebookOAuthConfigured = Boolean(
     META_OAUTH_STATE_SECRET
 );
 export const isMetaInstagramOAuthConfigured = Boolean(
-  ((META_INSTAGRAM_APP_ID && META_INSTAGRAM_APP_SECRET) ||
-    (META_FACEBOOK_APP_ID && META_FACEBOOK_APP_SECRET)) &&
+  META_INSTAGRAM_APP_ID &&
+    META_INSTAGRAM_APP_SECRET &&
     META_OAUTH_STATE_SECRET
 );
 

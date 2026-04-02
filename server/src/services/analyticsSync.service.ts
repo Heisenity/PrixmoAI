@@ -3,6 +3,7 @@ import {
   ANALYTICS_SYNC_LOOKBACK_DAYS,
   ANALYTICS_SYNC_POLL_MS,
   META_GRAPH_VERSION,
+  META_OAUTH_DEBUG,
   isMetaOAuthConfigured,
 } from '../config/constants';
 import {
@@ -91,6 +92,8 @@ type SyncScheduledPost = {
 type GraphInsightResponse = {
   data?: Array<{
     name?: string;
+    value?: unknown;
+    total_value?: unknown;
     values?: Array<{
       value?: unknown;
       end_time?: string;
@@ -100,6 +103,8 @@ type GraphInsightResponse = {
     message?: string;
   };
 };
+
+type GraphInsightItem = NonNullable<GraphInsightResponse['data']>[number];
 
 type AnalyticsSyncSummary = {
   postsDiscovered: number;
@@ -406,6 +411,35 @@ const instagramGraphFetch = <T>(
   params: Record<string, string | number | boolean | undefined | null>
 ) => fetchGraphJson<T>(INSTAGRAM_GRAPH_BASE_URL, path, params);
 
+const extractGraphInsightValue = (insight: GraphInsightItem | null) => {
+  if (!insight) {
+    return undefined;
+  }
+
+  const values = Array.isArray(insight.values) ? insight.values : [];
+  const firstDefinedValue = values.find((entry) => entry?.value !== undefined)?.value;
+
+  if (firstDefinedValue !== undefined) {
+    return firstDefinedValue;
+  }
+
+  if (insight.value !== undefined) {
+    return insight.value;
+  }
+
+  const totalValue = toRecord(insight.total_value);
+
+  if (totalValue.value !== undefined) {
+    return totalValue.value;
+  }
+
+  if (insight.total_value !== undefined) {
+    return insight.total_value;
+  }
+
+  return undefined;
+};
+
 const fetchInsightMetrics = async (
   fetcher: <T>(
     path: string,
@@ -417,6 +451,8 @@ const fetchInsightMetrics = async (
   extraParams: Record<string, string | number | boolean | undefined | null> = {}
 ) => {
   const values: Record<string, unknown> = {};
+  const rawResponses: Partial<Record<string, GraphInsightResponse>> = {};
+  const errors: Partial<Record<string, string>> = {};
 
   for (const metric of metrics) {
     try {
@@ -425,18 +461,25 @@ const fetchInsightMetrics = async (
         metric,
         ...extraParams,
       });
+      rawResponses[metric] = response;
       const insight = Array.isArray(response.data) ? response.data[0] : null;
-      const latestValue = insight?.values?.[0]?.value;
+      const latestValue = extractGraphInsightValue(insight);
 
       if (latestValue !== undefined) {
         values[metric] = latestValue;
       }
-    } catch {
+    } catch (error) {
+      errors[metric] =
+        error instanceof Error ? error.message : 'Meta analytics request failed.';
       continue;
     }
   }
 
-  return values;
+  return {
+    values,
+    rawResponses,
+    errors,
+  };
 };
 
 const getInstagramFetcher = (account: SyncSocialAccount) => {
@@ -450,6 +493,35 @@ const getInstagramFetcher = (account: SyncSocialAccount) => {
     ? instagramGraphFetch
     : metaGraphFetch;
 };
+
+const isDirectInstagramLogin = (account: SyncSocialAccount) => {
+  const metadata = readMetadata(account.metadata);
+  return metadata.instagramLoginType === 'instagram_business_login';
+};
+
+const getInstagramAnalyticsAccessToken = (account: SyncSocialAccount) => {
+  const metadata = readMetadata(account.metadata);
+  const loginType =
+    typeof metadata.instagramLoginType === 'string'
+      ? metadata.instagramLoginType
+      : 'facebook_login';
+
+  if (loginType === 'instagram_business_login') {
+    return account.accessToken;
+  }
+
+  return account.refreshToken || account.accessToken;
+};
+
+const getAlternateInstagramFetcher = (
+  account: SyncSocialAccount,
+  primaryFetcher: typeof metaGraphFetch | typeof instagramGraphFetch
+) =>
+  isDirectInstagramLogin(account)
+    ? null
+    : primaryFetcher === instagramGraphFetch
+      ? metaGraphFetch
+      : instagramGraphFetch;
 
 const getInstagramPostType = (
   mediaType: string | null | undefined,
@@ -525,38 +597,76 @@ const fetchInstagramPostAnalytics = async (
       ? metadata.metaInstagramAccountId
       : null;
   const mediaId = post.externalPostId;
-  const fetcher = getInstagramFetcher(account);
+  const primaryFetcher = getInstagramFetcher(account);
+  const fallbackFetcher = getAlternateInstagramFetcher(account, primaryFetcher);
+  const analyticsAccessToken = getInstagramAnalyticsAccessToken(account);
 
-  if (!instagramAccountId || !account.accessToken || !mediaId) {
+  if (!instagramAccountId || !analyticsAccessToken || !mediaId) {
     return buildFallbackAnalyticsPayload(account, post, new Date().toISOString());
   }
 
-  const media = await fetcher<Record<string, unknown>>(`/${mediaId}`, {
-    access_token: account.accessToken,
+  const media = await primaryFetcher<Record<string, unknown>>(`/${mediaId}`, {
+    access_token: analyticsAccessToken,
     fields:
       'id,caption,media_type,media_product_type,media_url,thumbnail_url,timestamp,like_count,comments_count',
   });
-  const insights = await fetchInsightMetrics(
-    fetcher,
+  const requestedInsightMetrics = [
+    'impressions',
+    'reach',
+    'saved',
+    'shares',
+    'video_views',
+    'plays',
+    'replays',
+    'exits',
+    'total_interactions',
+  ];
+  const {
+    values: primaryInsights,
+    rawResponses: primaryInsightPayloads,
+    errors: primaryInsightErrors,
+  } = await fetchInsightMetrics(
+    primaryFetcher,
     `/${mediaId}`,
-    account.accessToken,
-    [
-      'impressions',
-      'reach',
-      'saved',
-      'shares',
-      'video_views',
-      'plays',
-      'replays',
-      'exits',
-    ]
+    analyticsAccessToken,
+    requestedInsightMetrics
   );
+  const missingInsightMetrics = requestedInsightMetrics.filter(
+    (metric) =>
+      primaryInsights[metric] === undefined &&
+      primaryInsightPayloads[metric] === undefined
+  );
+  const {
+    values: fallbackInsights,
+    rawResponses: fallbackInsightPayloads,
+    errors: fallbackInsightErrors,
+  } =
+    missingInsightMetrics.length > 0 && fallbackFetcher
+      ? await fetchInsightMetrics(
+          fallbackFetcher,
+          `/${mediaId}`,
+          analyticsAccessToken,
+          missingInsightMetrics
+        )
+      : { values: {}, rawResponses: {}, errors: {} };
+  const insights = {
+    ...primaryInsights,
+    ...fallbackInsights,
+  };
+  const insightPayloads = {
+    ...primaryInsightPayloads,
+    ...fallbackInsightPayloads,
+  };
+  const insightErrors = {
+    ...primaryInsightErrors,
+    ...fallbackInsightErrors,
+  };
 
   let topComments: string[] = [];
 
   try {
-    const comments = await fetcher<{ data?: unknown[] }>(`/${mediaId}/comments`, {
-      access_token: account.accessToken,
+    const comments = await primaryFetcher<{ data?: unknown[] }>(`/${mediaId}/comments`, {
+      access_token: analyticsAccessToken,
       fields: 'text,like_count,timestamp',
       limit: 5,
     });
@@ -567,21 +677,157 @@ const fetchInstagramPostAnalytics = async (
 
   const likes = toNumber(media.like_count);
   const comments = toNumber(media.comments_count);
+  const instagramPostType = getInstagramPostType(
+    typeof media.media_type === 'string' ? media.media_type : null,
+    typeof media.media_product_type === 'string' ? media.media_product_type : null,
+    post.mediaType
+  );
   const saves = toNumber(insights.saved);
   const shares = toNumber(insights.shares);
   const reach = toNumber(insights.reach);
-  const engagements = likes + comments + saves + shares;
+  const totalInteractions = toNumber(insights.total_interactions);
+  const hasSavedMetric =
+    insights.saved !== undefined || insightPayloads.saved !== undefined;
+  const hasShareMetric =
+    insights.shares !== undefined || insightPayloads.shares !== undefined;
+  const savedMetricUnavailable = !hasSavedMetric || insightErrors.saved !== undefined;
+  const shareMetricUnavailable = !hasShareMetric || insightErrors.shares !== undefined;
+
+  const derivedSaves =
+    totalInteractions > 0 && savedMetricUnavailable && !shareMetricUnavailable
+      ? Math.max(0, totalInteractions - likes - comments - shares)
+      : 0;
+  const shouldUseDerivedSaves = saves === 0 && derivedSaves > 0;
+  const resolvedSaves = shouldUseDerivedSaves ? derivedSaves : saves;
+
+  const derivedShares =
+    totalInteractions > 0 && shareMetricUnavailable && !savedMetricUnavailable
+      ? Math.max(0, totalInteractions - likes - comments - resolvedSaves)
+      : 0;
+  const shouldUseDerivedShares = shares === 0 && derivedShares > 0;
+  const resolvedShares = shouldUseDerivedShares ? derivedShares : shares;
+  const unresolvedInteractionGap = Math.max(
+    0,
+    totalInteractions - likes - comments - resolvedSaves - resolvedShares
+  );
+  const engagements = likes + comments + resolvedSaves + resolvedShares;
+
+  if (
+    META_OAUTH_DEBUG &&
+    (instagramPostType === 'image' || instagramPostType === 'reel') &&
+    resolvedSaves === 0
+  ) {
+    console.warn(
+      `[analytics-sync] Instagram saves returned 0 for eligible media ${mediaId}`,
+      {
+        postId: post.id,
+        platform: account.platform,
+        mediaType: typeof media.media_type === 'string' ? media.media_type : null,
+        mediaProductType:
+          typeof media.media_product_type === 'string'
+            ? media.media_product_type
+            : null,
+        insights,
+        insightErrors,
+        sharesInsightPayload: insightPayloads.shares ?? null,
+        savedInsightPayload: insightPayloads.saved ?? null,
+        totalInteractions,
+        derivedSaves,
+      }
+    );
+  }
+
+  if (
+    META_OAUTH_DEBUG &&
+    shouldUseDerivedSaves
+  ) {
+    console.warn(
+      `[analytics-sync] Instagram saves derived from total interactions for media ${mediaId}`,
+      {
+        postId: post.id,
+        platform: account.platform,
+        likes,
+        comments,
+        shares: resolvedShares,
+        totalInteractions,
+        derivedSaves,
+        savedInsightPayload: insightPayloads.saved ?? null,
+        savedInsightError: insightErrors.saved ?? null,
+      }
+    );
+  }
+
+  if (
+    META_OAUTH_DEBUG &&
+    (instagramPostType === 'image' || instagramPostType === 'reel') &&
+    resolvedShares === 0
+  ) {
+    console.warn(
+      `[analytics-sync] Instagram shares returned 0 for eligible media ${mediaId}`,
+      {
+        postId: post.id,
+        platform: account.platform,
+        mediaType: typeof media.media_type === 'string' ? media.media_type : null,
+        mediaProductType:
+          typeof media.media_product_type === 'string'
+            ? media.media_product_type
+            : null,
+        insights,
+        insightErrors,
+        sharesInsightPayload: insightPayloads.shares ?? null,
+        totalInteractions,
+        derivedShares,
+        unresolvedInteractionGap,
+      }
+    );
+  }
+
+  if (META_OAUTH_DEBUG && shouldUseDerivedShares) {
+    console.warn(
+      `[analytics-sync] Instagram shares derived from total interactions for media ${mediaId}`,
+      {
+        postId: post.id,
+        platform: account.platform,
+        likes,
+        comments,
+        saves: resolvedSaves,
+        totalInteractions,
+        derivedShares,
+        sharesInsightPayload: insightPayloads.shares ?? null,
+        sharesInsightError: insightErrors.shares ?? null,
+      }
+    );
+  }
+
+  if (
+    META_OAUTH_DEBUG &&
+    totalInteractions > 0 &&
+    unresolvedInteractionGap > 0
+  ) {
+    console.warn(
+      `[analytics-sync] Instagram total interactions did not reconcile cleanly for media ${mediaId}`,
+      {
+        postId: post.id,
+        platform: account.platform,
+        likes,
+        comments,
+        saves: resolvedSaves,
+        shares: resolvedShares,
+        totalInteractions,
+        unresolvedInteractionGap,
+        savedInsightPayload: insightPayloads.saved ?? null,
+        sharesInsightPayload: insightPayloads.shares ?? null,
+        insightErrors,
+      }
+    );
+  }
 
   return {
     scheduledPostId: post.id,
     contentId: post.contentId,
     platform: 'instagram',
     postExternalId: String(media.id ?? mediaId),
-    postType: getInstagramPostType(
-      typeof media.media_type === 'string' ? media.media_type : null,
-      typeof media.media_product_type === 'string' ? media.media_product_type : null,
-      post.mediaType
-    ),
+    postType: instagramPostType,
     caption:
       typeof media.caption === 'string' && media.caption.trim()
         ? media.caption
@@ -600,8 +846,8 @@ const fetchInstagramPostAnalytics = async (
     impressions: toNumber(insights.impressions),
     likes,
     comments,
-    shares,
-    saves,
+    shares: resolvedShares,
+    saves: resolvedSaves,
     reactions: 0,
     videoPlays: toNumber(insights.video_views ?? insights.plays),
     replays: toNumber(insights.replays),
@@ -670,7 +916,7 @@ const fetchFacebookPostAnalytics = async (
       fields:
         'id,description,created_time,picture,reactions.summary(total_count).limit(0),comments.summary(total_count).limit(0)',
     });
-    const insights = await fetchInsightMetrics(
+    const { values: insights } = await fetchInsightMetrics(
       metaGraphFetch,
       `/${post.externalPostId}`,
       account.accessToken,
@@ -703,6 +949,20 @@ const fetchFacebookPostAnalytics = async (
       toRecord(toRecord(video.comments).summary).total_count
     );
     const reach = toNumber(insights.total_video_impressions_unique);
+    let shares = 0;
+
+    try {
+      const videoShareSnapshot = await metaGraphFetch<Record<string, unknown>>(
+        `/${post.externalPostId}`,
+        {
+          access_token: account.accessToken,
+          fields: 'shares',
+        }
+      );
+      shares = toNumber(toRecord(videoShareSnapshot.shares).count);
+    } catch {
+      shares = 0;
+    }
 
     return {
       scheduledPostId: post.id,
@@ -724,7 +984,7 @@ const fetchFacebookPostAnalytics = async (
       likes: 0,
       comments,
       saves: 0,
-      shares: 0,
+      shares,
       reactions,
       videoPlays: toNumber(insights.total_video_views),
       replays: 0,
@@ -735,7 +995,7 @@ const fetchFacebookPostAnalytics = async (
       completionRate: null,
       followersAtPostTime: null,
       engagementRate:
-        reach > 0 ? Number((((comments + reactions) / reach) * 100).toFixed(2)) : null,
+        reach > 0 ? Number((((comments + shares + reactions) / reach) * 100).toFixed(2)) : null,
       publishedTime: toIsoString(video.created_time) ?? post.publishedAt,
       topComments,
       recordedAt: new Date().toISOString(),
@@ -747,7 +1007,7 @@ const fetchFacebookPostAnalytics = async (
     fields:
       'id,message,created_time,full_picture,shares,reactions.summary(total_count).limit(0),comments.summary(total_count).limit(0),attachments{media,target,url,unshimmed_url,media_type,type}',
   });
-  const insights = await fetchInsightMetrics(
+  const { values: insights } = await fetchInsightMetrics(
     metaGraphFetch,
     `/${post.externalPostId}`,
     account.accessToken,
@@ -865,26 +1125,27 @@ const fetchInstagramAudienceSnapshot = async (
       ? metadata.metaInstagramAccountId
       : null;
   const fetcher = getInstagramFetcher(account);
+  const analyticsAccessToken = getInstagramAnalyticsAccessToken(account);
 
-  if (!instagramAccountId || !account.accessToken) {
+  if (!instagramAccountId || !analyticsAccessToken) {
     return null;
   }
 
   const profile = await fetcher<Record<string, unknown>>(`/${instagramAccountId}`, {
-    access_token: account.accessToken,
+    access_token: analyticsAccessToken,
     fields: 'id,followers_count,media_count',
   });
-  const dayInsights = await fetchInsightMetrics(
+  const { values: dayInsights } = await fetchInsightMetrics(
     fetcher,
     `/${instagramAccountId}`,
-    account.accessToken,
+    analyticsAccessToken,
     ['follower_count', 'impressions', 'reach', 'profile_views'],
     { period: 'day' }
   );
-  const lifetimeInsights = await fetchInsightMetrics(
+  const { values: lifetimeInsights } = await fetchInsightMetrics(
     fetcher,
     `/${instagramAccountId}`,
-    account.accessToken,
+    analyticsAccessToken,
     ['audience_gender_age', 'audience_city', 'online_followers'],
     { period: 'lifetime' }
   );
@@ -923,7 +1184,7 @@ const fetchFacebookAudienceSnapshot = async (
     access_token: account.accessToken,
     fields: 'id,followers_count,fan_count',
   });
-  const pageInsights = await fetchInsightMetrics(
+  const { values: pageInsights } = await fetchInsightMetrics(
     metaGraphFetch,
     `/${pageId}`,
     account.accessToken,

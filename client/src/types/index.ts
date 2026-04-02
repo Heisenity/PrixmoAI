@@ -249,10 +249,11 @@ export interface AnalyticsOverviewMetrics {
   impressions: AnalyticsMetricValue;
   reach: AnalyticsMetricValue;
   engagementRate: AnalyticsMetricValue;
+  engagements: AnalyticsMetricValue;
   likes: AnalyticsMetricValue;
   comments: AnalyticsMetricValue;
   saves: AnalyticsMetricValue;
-  sharesOrReactions: AnalyticsMetricValue;
+  shares: AnalyticsMetricValue;
   newFollowers: AnalyticsMetricValue;
   postsPublished: AnalyticsMetricValue;
 }

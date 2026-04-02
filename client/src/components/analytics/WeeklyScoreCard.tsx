@@ -1,8 +1,9 @@
+import { memo } from 'react';
 import { ArrowDownRight, ArrowUpRight, Minus } from 'lucide-react';
 import { Card } from '../ui/card';
 import type { WeeklyAnalyticsComparison } from '../../types';
 
-export const WeeklyScoreCard = ({
+export const WeeklyScoreCard = memo(({
   comparison,
 }: {
   comparison: WeeklyAnalyticsComparison;
@@ -26,4 +27,4 @@ export const WeeklyScoreCard = ({
       </span>
     </Card>
   );
-};
+});

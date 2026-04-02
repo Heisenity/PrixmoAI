@@ -4,14 +4,15 @@ import {
   META_FACEBOOK_OAUTH_SCOPES,
   META_FACEBOOK_APP_ID,
   META_FACEBOOK_APP_SECRET,
+  META_FACEBOOK_REDIRECT_URI,
   META_GRAPH_VERSION,
   META_INSTAGRAM_APP_ID,
   META_INSTAGRAM_APP_SECRET,
   META_INSTAGRAM_OAUTH_SCOPES,
+  META_INSTAGRAM_REDIRECT_URI,
   META_OAUTH_DEBUG,
   META_OAUTH_STATE_SECRET,
   META_OAUTH_STATE_TTL_MS,
-  META_REDIRECT_URI,
   isMetaFacebookOAuthConfigured,
   isMetaInstagramOAuthConfigured,
   isMetaOAuthConfigured,
@@ -291,52 +292,36 @@ export const buildFacebookNoPagesMessage = (debug?: MetaFacebookDebugInfo) => {
 
 const getDirectInstagramOAuthScopes = () =>
   META_INSTAGRAM_OAUTH_SCOPES.map((scope) => {
-    if (scope === 'instagram_business_basic') {
-      return 'instagram_basic';
+    if (scope === 'instagram_basic') {
+      return 'instagram_business_basic';
     }
 
-    if (scope === 'instagram_business_content_publish') {
-      return 'instagram_content_publish';
+    if (scope === 'instagram_content_publish') {
+      return 'instagram_business_content_publish';
     }
 
-    return scope;
-  });
-
-const getInstagramConsentScopes = () =>
-  META_INSTAGRAM_OAUTH_SCOPES.map((scope) => {
-    if (scope === 'instagram_business_basic' || scope === 'instagram_basic') {
-      return 'business_basic';
+    if (scope === 'instagram_manage_comments') {
+      return 'instagram_business_manage_comments';
     }
 
-    if (
-      scope === 'instagram_business_content_publish' ||
-      scope === 'instagram_content_publish'
-    ) {
-      return 'business_content_publish';
-    }
-
-    if (
-      scope === 'instagram_business_manage_comments' ||
-      scope === 'instagram_manage_comments'
-    ) {
-      return 'business_manage_comments';
-    }
-
-    if (
-      scope === 'instagram_business_manage_insights' ||
-      scope === 'instagram_manage_insights'
-    ) {
+    if (scope === 'instagram_manage_insights') {
       return 'instagram_business_manage_insights';
     }
 
     return scope;
   });
 
-const getInstagramLoginClientId = () =>
-  META_INSTAGRAM_APP_ID || META_FACEBOOK_APP_ID;
+const getInstagramConsentScopes = () =>
+  uniqueStrings(getDirectInstagramOAuthScopes());
 
-const getInstagramLoginClientSecret = () =>
-  META_INSTAGRAM_APP_SECRET || META_FACEBOOK_APP_SECRET;
+const getInstagramLoginClientId = () => META_INSTAGRAM_APP_ID;
+
+const getInstagramLoginClientSecret = () => META_INSTAGRAM_APP_SECRET;
+
+const getMetaOAuthRedirectUri = (platform: MetaPlatform) =>
+  platform === 'instagram'
+    ? META_INSTAGRAM_REDIRECT_URI
+    : META_FACEBOOK_REDIRECT_URI;
 
 const toProfileUrl = (platform: MetaPlatform, accountId: string, fallback?: string | null) => {
   if (fallback?.trim()) {
@@ -568,7 +553,7 @@ const exchangeCodeForShortLivedUserToken = async (
   metaGraphFetch<MetaTokenResponse>('/oauth/access_token', {
     client_id: META_FACEBOOK_APP_ID,
     client_secret: META_FACEBOOK_APP_SECRET,
-    redirect_uri: META_REDIRECT_URI,
+    redirect_uri: getMetaOAuthRedirectUri('facebook'),
     code,
   });
 
@@ -579,7 +564,7 @@ const exchangeInstagramCodeForShortLivedUserToken = async (
     client_id: getInstagramLoginClientId(),
     client_secret: getInstagramLoginClientSecret(),
     grant_type: 'authorization_code',
-    redirect_uri: META_REDIRECT_URI,
+    redirect_uri: getMetaOAuthRedirectUri('instagram'),
     code,
   });
 
@@ -1049,7 +1034,7 @@ export const buildMetaOAuthUrl = (state: string) => {
       'params_json',
       JSON.stringify({
         client_id: instagramClientId,
-        redirect_uri: META_REDIRECT_URI,
+        redirect_uri: getMetaOAuthRedirectUri('instagram'),
         response_type: 'code',
         state,
         scope: getInstagramConsentScopes().join('-'),
@@ -1064,7 +1049,7 @@ export const buildMetaOAuthUrl = (state: string) => {
 
   const authUrl = new URL(META_AUTH_URL);
   authUrl.searchParams.set('client_id', META_FACEBOOK_APP_ID);
-  authUrl.searchParams.set('redirect_uri', META_REDIRECT_URI);
+  authUrl.searchParams.set('redirect_uri', getMetaOAuthRedirectUri('facebook'));
   authUrl.searchParams.set('state', state);
   authUrl.searchParams.set('response_type', 'code');
   authUrl.searchParams.set('scope', getFacebookOAuthScopes().join(','));
@@ -1288,6 +1273,7 @@ export const verifyClaimedMetaAccount = (input: {
           tokenExpiresAt: input.exchange.tokenExpiresAt,
           metadata: {
             connectionSource: 'meta_oauth',
+            oauthApp: 'facebook',
             metaUserId: input.exchange.metaUser?.id ?? null,
             metaUserName: input.exchange.metaUser?.name ?? null,
             metaPageId: match.id,
@@ -1347,6 +1333,7 @@ export const verifyClaimedMetaAccount = (input: {
         tokenExpiresAt: input.exchange.tokenExpiresAt,
         metadata: {
           connectionSource: 'meta_oauth',
+          oauthApp: 'instagram',
           metaUserId: input.exchange.instagramProfile.id,
           metaUserName: input.exchange.instagramProfile.name ?? null,
           metaInstagramAccountId: input.exchange.instagramProfile.id,
@@ -1354,6 +1341,7 @@ export const verifyClaimedMetaAccount = (input: {
           metaInstagramProfilePictureUrl:
             input.exchange.instagramProfile.profile_picture_url ?? null,
           instagramLoginType: 'instagram_business_login',
+          instagramApiMode: 'instagram_login',
           profileUrl,
           verificationClaim: {
             accountId: input.claim.accountId,

@@ -15,6 +15,18 @@ export const formatCompactNumber = (value: number) =>
     maximumFractionDigits: 1,
   }).format(value);
 
+export const formatPercentage = (
+  value?: number | null,
+  decimals = 1,
+  fallback = '—'
+) => {
+  if (value === null || value === undefined || !Number.isFinite(value)) {
+    return fallback;
+  }
+
+  return `${value.toFixed(decimals)}%`;
+};
+
 export const formatCurrency = (valueInPaise: number, currency = 'INR') =>
   new Intl.NumberFormat('en-IN', {
     style: 'currency',
