@@ -62,6 +62,7 @@ import type {
   GenerateConversationMessage,
   GeneratedImage as GeneratedImageRecord,
   ReelScript as ReelScriptType,
+  SchedulerGeneratedMediaIntent,
 } from '../../types';
 
 type WorkspaceMode = 'copy' | 'image';
@@ -158,6 +159,25 @@ const toStringArray = (value: unknown): string[] =>
         .map((entry) => entry.trim())
         .filter(Boolean)
     : [];
+
+const normalizeHashtag = (value: string) => (value.startsWith('#') ? value : `#${value}`);
+
+const buildScheduleCaption = (
+  captions: CaptionVariant[],
+  hashtags: string[]
+): string | null => {
+  const primaryCaption =
+    captions[0]?.shortCaption?.trim() ||
+    captions[0]?.mainCopy?.trim() ||
+    captions[0]?.hook?.trim() ||
+    '';
+  const hashtagBlock = hashtags.length
+    ? hashtags.map((tag) => normalizeHashtag(tag.trim())).join(' ')
+    : '';
+  const combined = [primaryCaption, hashtagBlock].filter(Boolean).join('\n\n').trim();
+
+  return combined || null;
+};
 
 const toReelScript = (value: unknown): ReelScriptType | null => {
   const record = toRecord(value);
@@ -460,6 +480,28 @@ const AssistantAssets = ({
     ? toReelScript(scriptAsset.payload.reelScript)
     : null;
   const image = imageAsset ? toGeneratedImage(imageAsset.payload) : null;
+  const scheduleIntent: SchedulerGeneratedMediaIntent | null = image
+    ? {
+        intentId: `${image.id}:${Date.now()}`,
+        generatedImageId: image.id,
+        contentId: image.contentId,
+        conversationId: image.conversationId,
+        mediaUrl: image.generatedImageUrl,
+        mediaType: 'image',
+        prompt: image.prompt,
+        title:
+          captions[0]?.hook?.trim() ||
+          image.prompt?.trim() ||
+          'Generated image from PrixmoAI',
+        caption: buildScheduleCaption(captions, hashtags),
+        createdAt: image.createdAt,
+        metadata: {
+          backgroundStyle: image.backgroundStyle,
+          provider: image.provider ?? null,
+          sourceImageUrl: image.sourceImageUrl,
+        },
+      }
+    : null;
 
   if (!captions.length && !hashtags.length && !reelScript && !image) {
     return null;
@@ -471,7 +513,11 @@ const AssistantAssets = ({
       {hashtags.length ? <HashtagDisplay hashtags={hashtags} /> : null}
       {reelScript ? <ReelScript script={reelScript} /> : null}
       {image ? (
-        <GeneratedImage image={image} showWatermark={showImageWatermark} />
+        <GeneratedImage
+          image={image}
+          showWatermark={showImageWatermark}
+          scheduleIntent={scheduleIntent}
+        />
       ) : null}
     </div>
   );

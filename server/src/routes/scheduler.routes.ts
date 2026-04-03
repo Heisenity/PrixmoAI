@@ -1,27 +1,43 @@
 import { Router } from 'express';
 import { authMiddleware } from '../middleware/auth.middleware';
 import {
+  addScheduleBatchItems,
   cancelPostSchedule,
+  cancelScheduleItemRecord,
+  createScheduleBatchDraft,
+  createSchedulerMediaAsset,
   createPostSchedule,
   createConnectedSocialAccount,
+  deleteScheduleBatchDraft,
   deletePostSchedule,
   finalizePendingMetaFacebookPages,
+  getScheduleBatch,
   handleMetaOAuthCallback,
+  listScheduleBatches,
+  listScheduleItems,
   listPendingMetaFacebookPages,
   listConnectedSocialAccounts,
   listScheduledPosts,
   removeConnectedSocialAccount,
   startMetaOAuth,
+  submitScheduleBatch,
+  updateScheduleItemRecord,
   updateConnectedSocialAccount,
   updatePostSchedule,
   updatePostScheduleStatus,
 } from '../controllers/scheduler.controller';
 import { validate } from '../middleware/validate.middleware';
 import {
+  addBatchItemsSchema,
+  createMediaAssetSchema,
+  createScheduleBatchSchema,
   createScheduledPostSchema,
   createSocialAccountSchema,
   finalizeMetaFacebookPagesSchema,
+  listScheduleBatchesSchema,
+  listScheduledItemsSchema,
   startMetaOAuthSchema,
+  updateScheduledItemSchema,
   updateScheduledPostSchema,
   updateScheduledPostStatusSchema,
   updateSocialAccountSchema,
@@ -62,6 +78,48 @@ router.patch(
   updateConnectedSocialAccount
 );
 router.delete('/accounts/:id', authMiddleware, removeConnectedSocialAccount);
+
+router.post(
+  '/media-assets',
+  authMiddleware,
+  validate(createMediaAssetSchema),
+  createSchedulerMediaAsset
+);
+
+router.post(
+  '/batches',
+  authMiddleware,
+  validate(createScheduleBatchSchema),
+  createScheduleBatchDraft
+);
+router.get(
+  '/batches',
+  authMiddleware,
+  validate(listScheduleBatchesSchema),
+  listScheduleBatches
+);
+router.get('/batches/:id', authMiddleware, getScheduleBatch);
+router.delete('/batches/:id', authMiddleware, deleteScheduleBatchDraft);
+router.post(
+  '/batches/:id/items',
+  authMiddleware,
+  validate(addBatchItemsSchema),
+  addScheduleBatchItems
+);
+router.post('/batches/:id/submit', authMiddleware, submitScheduleBatch);
+router.get(
+  '/items',
+  authMiddleware,
+  validate(listScheduledItemsSchema),
+  listScheduleItems
+);
+router.patch(
+  '/items/:id',
+  authMiddleware,
+  validate(updateScheduledItemSchema),
+  updateScheduleItemRecord
+);
+router.post('/items/:id/cancel', authMiddleware, cancelScheduleItemRecord);
 
 router.post(
   '/posts',

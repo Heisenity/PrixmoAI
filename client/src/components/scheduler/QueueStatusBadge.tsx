@@ -1,9 +1,10 @@
 import { cn } from '../../lib/utils';
-import type { ScheduledPostStatus } from '../../types';
+import type { ScheduledItemStatus, ScheduledPostStatus } from '../../types';
 
-const STATUS_LABELS: Record<ScheduledPostStatus, string> = {
+const STATUS_LABELS: Record<ScheduledPostStatus | ScheduledItemStatus, string> = {
   pending: 'Pending',
   scheduled: 'Scheduled',
+  publishing: 'Publishing',
   published: 'Published',
   failed: 'Failed',
   cancelled: 'Cancelled',
@@ -13,7 +14,7 @@ export const QueueStatusBadge = ({
   status,
   className,
 }: {
-  status: ScheduledPostStatus;
+  status: ScheduledPostStatus | ScheduledItemStatus;
   className?: string;
 }) => (
   <span

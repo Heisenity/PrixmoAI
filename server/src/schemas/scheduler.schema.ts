@@ -3,6 +3,22 @@ import { z } from 'zod';
 const socialPlatformSchema = z.enum(['instagram', 'facebook', 'linkedin', 'x']);
 const metaOAuthPlatformSchema = z.enum(['instagram', 'facebook']);
 const schedulerMediaTypeSchema = z.enum(['image', 'video']);
+const scheduleBatchStatusSchema = z.enum([
+  'draft',
+  'queued',
+  'partial',
+  'completed',
+  'failed',
+]);
+const scheduledItemStatusSchema = z.enum([
+  'pending',
+  'scheduled',
+  'publishing',
+  'published',
+  'failed',
+  'cancelled',
+]);
+const mediaAssetSourceTypeSchema = z.enum(['upload', 'url', 'generated']);
 
 const optionalNullableString = z
   .string()
@@ -98,6 +114,68 @@ export const updateScheduledPostStatusSchema = z.object({
   publishedAt: z.string().datetime().nullable().optional(),
 });
 
+export const createMediaAssetSchema = z.object({
+  sourceType: mediaAssetSourceTypeSchema,
+  mediaType: schedulerMediaTypeSchema,
+  originalUrl: z.url({ error: 'Invalid original media URL' }).nullable().optional(),
+  storageUrl: z.url({ error: 'Invalid storage media URL' }),
+  thumbnailUrl: z.url({ error: 'Invalid thumbnail URL' }).nullable().optional(),
+  filename: optionalNullableString,
+  mimeType: optionalNullableString,
+  sizeBytes: z.number().int().nonnegative().nullable().optional(),
+  width: z.number().int().positive().nullable().optional(),
+  height: z.number().int().positive().nullable().optional(),
+  durationSeconds: z.number().nonnegative().nullable().optional(),
+  contentId: z.string().uuid('Invalid content ID').nullable().optional(),
+  generatedImageId: z.string().uuid('Invalid generated image ID').nullable().optional(),
+  metadata: metadataSchema,
+});
+
+export const createScheduleBatchSchema = z.object({
+  batchName: optionalNullableString,
+  status: scheduleBatchStatusSchema.optional(),
+});
+
+export const createScheduledItemSchema = z.object({
+  mediaAssetId: z.string().uuid('Invalid media asset ID'),
+  socialAccountId: z.string().uuid('Invalid social account ID'),
+  platform: socialPlatformSchema,
+  accountId: z.string().trim().min(1, 'Account ID is required'),
+  caption: optionalNullableString,
+  scheduledAt: z.string().datetime('Invalid scheduled time'),
+  status: scheduledItemStatusSchema.optional(),
+});
+
+export const addBatchItemsSchema = z.object({
+  items: z.array(createScheduledItemSchema).min(1, 'Add at least one scheduled item'),
+});
+
+export const updateScheduledItemSchema = z
+  .object({
+    mediaAssetId: z.string().uuid('Invalid media asset ID').optional(),
+    socialAccountId: z.string().uuid('Invalid social account ID').optional(),
+    platform: socialPlatformSchema.optional(),
+    accountId: z.string().trim().min(1).optional(),
+    caption: optionalNullableString,
+    scheduledAt: z.string().datetime('Invalid scheduled time').optional(),
+    status: scheduledItemStatusSchema.optional(),
+  })
+  .refine((value) => Object.keys(value).length > 0, {
+    message: 'At least one field is required',
+  });
+
+export const listScheduledItemsSchema = z.object({
+  page: z.string().trim().optional(),
+  limit: z.string().trim().optional(),
+  status: scheduledItemStatusSchema.optional(),
+});
+
+export const listScheduleBatchesSchema = z.object({
+  page: z.string().trim().optional(),
+  limit: z.string().trim().optional(),
+  status: scheduleBatchStatusSchema.optional(),
+});
+
 export type CreateSocialAccountBody = z.infer<typeof createSocialAccountSchema>;
 export type StartMetaOAuthBody = z.infer<typeof startMetaOAuthSchema>;
 export type FinalizeMetaFacebookPagesBody = z.infer<
@@ -109,3 +187,10 @@ export type UpdateScheduledPostBody = z.infer<typeof updateScheduledPostSchema>;
 export type UpdateScheduledPostStatusBody = z.infer<
   typeof updateScheduledPostStatusSchema
 >;
+export type CreateMediaAssetBody = z.infer<typeof createMediaAssetSchema>;
+export type CreateScheduleBatchBody = z.infer<typeof createScheduleBatchSchema>;
+export type CreateScheduledItemBody = z.infer<typeof createScheduledItemSchema>;
+export type AddBatchItemsBody = z.infer<typeof addBatchItemsSchema>;
+export type UpdateScheduledItemBody = z.infer<typeof updateScheduledItemSchema>;
+export type ListScheduledItemsQuery = z.infer<typeof listScheduledItemsSchema>;
+export type ListScheduleBatchesQuery = z.infer<typeof listScheduleBatchesSchema>;

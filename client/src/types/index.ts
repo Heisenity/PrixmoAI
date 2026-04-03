@@ -32,6 +32,20 @@ export type ScheduledPostStatus =
   | 'published'
   | 'failed'
   | 'cancelled';
+export type ScheduleBatchStatus =
+  | 'draft'
+  | 'queued'
+  | 'partial'
+  | 'completed'
+  | 'failed';
+export type MediaAssetSourceType = 'upload' | 'url' | 'generated';
+export type ScheduledItemStatus =
+  | 'pending'
+  | 'scheduled'
+  | 'publishing'
+  | 'published'
+  | 'failed'
+  | 'cancelled';
 export type SchedulerMediaType = 'image' | 'video';
 export type WeeklyDirection = 'up' | 'down' | 'flat';
 
@@ -151,6 +165,20 @@ export interface GeneratedImage {
   provider?: string;
 }
 
+export interface SchedulerGeneratedMediaIntent {
+  intentId: string;
+  generatedImageId: string;
+  contentId: string | null;
+  conversationId: string | null;
+  mediaUrl: string;
+  mediaType: SchedulerMediaType;
+  prompt: string | null;
+  title: string | null;
+  caption: string | null;
+  createdAt: string;
+  metadata?: Record<string, unknown>;
+}
+
 export interface GenerateImageInput {
   contentId?: string;
   sourceImageUrl?: string;
@@ -170,6 +198,120 @@ export interface UploadedSourceImage {
   path: string;
   mediaType: SchedulerMediaType;
   contentType: string;
+}
+
+export interface MediaAsset {
+  id: string;
+  userId: string;
+  sourceType: MediaAssetSourceType;
+  mediaType: SchedulerMediaType;
+  originalUrl: string | null;
+  storageUrl: string;
+  thumbnailUrl: string | null;
+  filename: string | null;
+  mimeType: string | null;
+  sizeBytes: number | null;
+  width: number | null;
+  height: number | null;
+  durationSeconds: number | null;
+  contentId: string | null;
+  generatedImageId: string | null;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+}
+
+export interface ScheduleBatch {
+  id: string;
+  userId: string;
+  batchName: string | null;
+  status: ScheduleBatchStatus;
+  itemCount?: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ScheduledItemLog {
+  id: string;
+  scheduledItemId: string;
+  eventType: string;
+  message: string;
+  payloadJson: Record<string, unknown> | null;
+  createdAt: string;
+}
+
+export interface ScheduledItem {
+  id: string;
+  batchId: string;
+  userId: string;
+  mediaAssetId: string;
+  scheduledPostId: string | null;
+  platform: SocialPlatform;
+  accountId: string;
+  socialAccountId: string;
+  caption: string | null;
+  scheduledAt: string;
+  status: ScheduledItemStatus;
+  attemptCount: number;
+  lastError: string | null;
+  idempotencyKey: string;
+  createdAt: string;
+  updatedAt: string;
+  mediaAsset?: MediaAsset;
+  socialAccount?: SocialAccount;
+}
+
+export interface ScheduleBatchDetail {
+  batch: ScheduleBatch;
+  items: ScheduledItem[];
+}
+
+export interface CreateMediaAssetInput {
+  sourceType: MediaAssetSourceType;
+  mediaType: SchedulerMediaType;
+  originalUrl?: string | null;
+  storageUrl: string;
+  thumbnailUrl?: string | null;
+  filename?: string | null;
+  mimeType?: string | null;
+  sizeBytes?: number | null;
+  width?: number | null;
+  height?: number | null;
+  durationSeconds?: number | null;
+  contentId?: string | null;
+  generatedImageId?: string | null;
+  metadata?: Record<string, unknown>;
+}
+
+export interface ResolvedExternalMedia {
+  sourceUrl: string;
+  resolvedUrl: string;
+  mediaType: SchedulerMediaType;
+  contentType: string;
+  wasExtracted: boolean;
+}
+
+export interface CreateScheduleBatchInput {
+  batchName?: string | null;
+  status?: ScheduleBatchStatus;
+}
+
+export interface CreateScheduledItemInput {
+  mediaAssetId: string;
+  socialAccountId: string;
+  platform: SocialPlatform;
+  accountId: string;
+  caption?: string | null;
+  scheduledAt: string;
+  status?: ScheduledItemStatus;
+  scheduledPostId?: string | null;
+  attemptCount?: number;
+  lastError?: string | null;
+  idempotencyKey?: string;
+}
+
+export interface UpdateScheduledItemInput
+  extends Partial<CreateScheduledItemInput> {
+  status?: ScheduledItemStatus;
 }
 
 export interface GenerateConversation {

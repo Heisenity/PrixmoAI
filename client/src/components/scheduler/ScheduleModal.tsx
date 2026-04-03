@@ -1,7 +1,6 @@
 import { Eye, EyeOff, ImagePlus, Trash2, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import type { ScheduledPost, SchedulerMediaType } from '../../types';
-import { ErrorMessage } from '../shared/ErrorMessage';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { MediaPreview } from './MediaPreview';
@@ -28,6 +27,19 @@ const isSchedulableDateTimeValue = (value: string, nowMs: number) => {
   const scheduledAtMs = new Date(value).getTime();
 
   return Number.isFinite(scheduledAtMs) && scheduledAtMs > nowMs + SCHEDULE_MIN_BUFFER_MS;
+};
+
+const isCompleteDateTimeLocalValue = (value: string) =>
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(value);
+
+const getScheduleDateTimeValidationMessage = (value: string, nowMs: number) => {
+  if (!value || !isCompleteDateTimeLocalValue(value)) {
+    return SCHEDULE_TIME_VALIDATION_MESSAGE;
+  }
+
+  return isSchedulableDateTimeValue(value, nowMs)
+    ? null
+    : SCHEDULE_TIME_VALIDATION_MESSAGE;
 };
 
 const inferMediaTypeFromUrl = (value: string): SchedulerMediaType | null => {
@@ -132,6 +144,10 @@ export const ScheduleModal = ({
 
   const minimumScheduleDateTime = getMinimumScheduleDateTimeValue(liveNow);
   const isScheduledTimeValid = isSchedulableDateTimeValue(scheduledFor, liveNow);
+  const scheduledForValidationMessage = getScheduleDateTimeValidationMessage(
+    scheduledFor,
+    liveNow
+  );
 
   const resolveMediaUrl = async () => {
     const normalized = mediaUrlInput.trim();
@@ -225,13 +241,21 @@ export const ScheduleModal = ({
             type="datetime-local"
             value={scheduledFor}
             min={minimumScheduleDateTime}
+            error={validationError || scheduledForValidationMessage}
             onChange={(event) => {
+              const input = event.currentTarget;
               const nextValue = event.target.value;
               setScheduledFor(nextValue);
+              setValidationError(getScheduleDateTimeValidationMessage(nextValue, Date.now()));
+              if (isCompleteDateTimeLocalValue(nextValue)) {
+                window.requestAnimationFrame(() => {
+                  input.blur();
+                });
+              }
+            }}
+            onBlur={(event) => {
               setValidationError(
-                nextValue && !isSchedulableDateTimeValue(nextValue, Date.now())
-                  ? SCHEDULE_TIME_VALIDATION_MESSAGE
-                  : null
+                getScheduleDateTimeValidationMessage(event.target.value, Date.now())
               );
             }}
           />
@@ -337,7 +361,6 @@ export const ScheduleModal = ({
           ) : null}
 
           <div className="scheduler-edit-modal__actions">
-            <ErrorMessage message={validationError} />
             <Button type="button" variant="ghost" onClick={onClose}>
               Close
             </Button>

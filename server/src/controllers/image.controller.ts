@@ -12,6 +12,7 @@ import { requireUserClient } from '../db/supabase';
 import type {
   GenerateImageInput,
   ImportSourceImageUrlInput,
+  ResolveSourceImageUrlInput,
   UploadSourceImageInput,
 } from '../schemas/image.schema';
 import {
@@ -20,6 +21,7 @@ import {
 } from '../services/imageRuntimePolicy.service';
 import {
   importExternalSourceImage,
+  resolveExternalSourceImage,
   uploadSourceImage as uploadSourceImageToStorage,
 } from '../services/storage.service';
 import type { BrandProfile } from '../types';
@@ -373,6 +375,40 @@ export const importSourceImageUrl = async (
   } catch (error) {
     const message =
       error instanceof Error ? error.message : 'Failed to import source media';
+
+    return res.status(
+      message === 'Invalid media URL' || message === 'No preview available for this link'
+        ? 400
+        : 502
+    ).json({
+      status: 'error',
+      message,
+    });
+  }
+};
+
+export const resolveSourceImageUrl = async (
+  req: AuthenticatedRequest<{}, unknown, ResolveSourceImageUrlInput>,
+  res: Response
+) => {
+  if (!req.user?.id) {
+    return res.status(401).json({
+      status: 'fail',
+      message: 'Unauthorized',
+    });
+  }
+
+  try {
+    const resolvedSourceImage = await resolveExternalSourceImage(req.body.url);
+
+    return res.status(200).json({
+      status: 'success',
+      message: 'Source media resolved successfully',
+      data: resolvedSourceImage,
+    });
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : 'Failed to resolve source media';
 
     return res.status(
       message === 'Invalid media URL' || message === 'No preview available for this link'

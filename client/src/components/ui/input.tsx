@@ -5,9 +5,10 @@ import { cn } from '../../lib/utils';
 type InputProps = InputHTMLAttributes<HTMLInputElement> & {
   label?: string;
   hint?: string;
+  error?: string | null;
 };
 
-export const Input = ({ label, hint, className, id, ...props }: InputProps) => {
+export const Input = ({ label, hint, error, className, id, ...props }: InputProps) => {
   const fallbackId = useId();
   const inputId = id ?? fallbackId;
 
@@ -26,8 +27,13 @@ export const Input = ({ label, hint, className, id, ...props }: InputProps) => {
           ) : null}
         </span>
       ) : null}
-      <input id={inputId} className={cn('field__control', className)} {...props} />
-      {hint ? <span className="field__hint">{hint}</span> : null}
+      <input
+        id={inputId}
+        className={cn('field__control', error && 'field__control--invalid', className)}
+        aria-invalid={Boolean(error)}
+        {...props}
+      />
+      {error ? <span className="field__error">{error}</span> : hint ? <span className="field__hint">{hint}</span> : null}
     </label>
   );
 };

@@ -58,6 +58,9 @@ export const importSourceImageUrlSchema = z.object({
   url: z.string().trim().url('Invalid media URL'),
 });
 
+export const resolveSourceImageUrlSchema = importSourceImageUrlSchema;
+
 export type GenerateImageInput = z.infer<typeof generateImageSchema>;
 export type UploadSourceImageInput = z.infer<typeof uploadSourceImageSchema>;
 export type ImportSourceImageUrlInput = z.infer<typeof importSourceImageUrlSchema>;
+export type ResolveSourceImageUrlInput = z.infer<typeof resolveSourceImageUrlSchema>;

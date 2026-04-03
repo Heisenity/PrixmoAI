@@ -1,6 +1,6 @@
 import path from 'path';
 import { SUPABASE_SOURCE_IMAGE_BUCKET } from '../config/constants';
-import type { SchedulerMediaType } from '../types';
+import type { ResolvedExternalMedia, SchedulerMediaType } from '../types';
 import { requireSupabaseAdmin } from '../db/supabase';
 
 const MAX_SOURCE_IMAGE_BYTES = 6 * 1024 * 1024;
@@ -79,6 +79,14 @@ const getSizeValidationMessage = (contentType: string) =>
   inferMediaTypeFromContentType(contentType) === 'video'
     ? 'Uploaded video must be 50MB or smaller'
     : 'Uploaded image must be 6MB or smaller';
+
+const mediaRequestHeaders = {
+  Accept: 'image/*,video/*,text/html;q=0.9,*/*;q=0.8',
+  'Accept-Language': 'en-US,en;q=0.9',
+  'Cache-Control': 'no-cache',
+  'User-Agent':
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36',
+};
 
 const decodeHtmlEntities = (value: string) =>
   value
@@ -240,6 +248,21 @@ const assertAllowedMediaType = (contentType: string) => {
   return normalizedContentType;
 };
 
+const fetchExternalMediaResponse = async (url: string, method: 'HEAD' | 'GET') => {
+  try {
+    return await fetch(url, {
+      method,
+      redirect: 'follow',
+      headers: mediaRequestHeaders,
+    });
+  } catch {
+    throw new Error('Unable to download media from the provided URL');
+  }
+};
+
+const readResponseContentType = (response: globalThis.Response) =>
+  response.headers.get('content-type')?.split(';')[0]?.trim().toLowerCase() ?? null;
+
 const parseMediaDataUrl = (dataUrl: string) => {
   const match = dataUrl.match(DATA_URL_PATTERN);
 
@@ -392,14 +415,14 @@ export const uploadSourceImage = async (
   });
 };
 
-export const importExternalSourceImage = async (
-  userId: string,
+export const resolveExternalSourceImage = async (
   sourceUrl: string
-): Promise<UploadedSourceImage> => {
-  const importFromUrl = async (
+): Promise<ResolvedExternalMedia> => {
+  const resolveFromUrl = async (
     url: string,
-    depth: number
-  ): Promise<UploadedSourceImage> => {
+    depth: number,
+    wasExtracted: boolean
+  ): Promise<ResolvedExternalMedia> => {
     if (depth > 2) {
       throw new Error('No preview available for this link');
     }
@@ -407,35 +430,42 @@ export const importExternalSourceImage = async (
     const embeddedMediaUrl = extractEmbeddedMediaUrlFromPageUrl(url);
 
     if (embeddedMediaUrl && embeddedMediaUrl !== url) {
-      return importFromUrl(embeddedMediaUrl, depth + 1);
+      return resolveFromUrl(embeddedMediaUrl, depth + 1, true);
     }
 
-    let response: globalThis.Response;
+    let headResponse: globalThis.Response | null = null;
 
     try {
-      response = await fetch(url, {
-        method: 'GET',
-        redirect: 'follow',
-        headers: {
-          Accept: 'image/*,video/*,text/html;q=0.9,*/*;q=0.8',
-          'Accept-Language': 'en-US,en;q=0.9',
-          'Cache-Control': 'no-cache',
-          'User-Agent':
-            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36',
-        },
-      });
+      headResponse = await fetchExternalMediaResponse(url, 'HEAD');
     } catch {
-      throw new Error('Unable to download media from the provided URL');
+      headResponse = null;
     }
+
+    if (headResponse?.ok) {
+      const headContentType = readResponseContentType(headResponse);
+
+      if (
+        headContentType &&
+        (headContentType.startsWith('image/') || headContentType.startsWith('video/'))
+      ) {
+        const contentType = assertAllowedMediaType(headContentType);
+        return {
+          sourceUrl,
+          resolvedUrl: headResponse.url || url,
+          mediaType: inferMediaTypeFromContentType(contentType),
+          contentType,
+          wasExtracted,
+        };
+      }
+    }
+
+    const response = await fetchExternalMediaResponse(url, 'GET');
 
     if (!response.ok) {
       throw new Error('Unable to download media from the provided URL');
     }
 
-    const contentTypeHeader = response.headers
-      .get('content-type')
-      ?.split(';')[0]
-      ?.trim();
+    const contentTypeHeader = readResponseContentType(response);
 
     if (contentTypeHeader?.startsWith('text/html')) {
       const html = await response.text();
@@ -445,7 +475,7 @@ export const importExternalSourceImage = async (
         throw new Error('No preview available for this link');
       }
 
-      return importFromUrl(previewMediaUrl, depth + 1);
+      return resolveFromUrl(previewMediaUrl, depth + 1, true);
     }
 
     if (
@@ -457,23 +487,48 @@ export const importExternalSourceImage = async (
     }
 
     const contentType = assertAllowedMediaType(contentTypeHeader);
-    const declaredLength = Number.parseInt(response.headers.get('content-length') || '', 10);
 
-    if (
-      Number.isFinite(declaredLength) &&
-      declaredLength > getMaxBytesForContentType(contentType)
-    ) {
-      throw new Error(getSizeValidationMessage(contentType));
-    }
-
-    const fileBuffer = Buffer.from(await response.arrayBuffer());
-
-    return uploadSourceImageBuffer(userId, {
-      fileName: inferRemoteFileName(response.url || url, contentType),
+    return {
+      sourceUrl,
+      resolvedUrl: response.url || url,
+      mediaType: inferMediaTypeFromContentType(contentType),
       contentType,
-      fileBuffer,
-    });
+      wasExtracted,
+    };
   };
 
-  return importFromUrl(sourceUrl, 0);
+  return resolveFromUrl(sourceUrl, 0, false);
+};
+
+export const importExternalSourceImage = async (
+  userId: string,
+  sourceUrl: string
+): Promise<UploadedSourceImage> => {
+  const resolvedMedia = await resolveExternalSourceImage(sourceUrl);
+  const response = await fetchExternalMediaResponse(resolvedMedia.resolvedUrl, 'GET');
+
+  if (!response.ok) {
+    throw new Error('Unable to download media from the provided URL');
+  }
+
+  const contentTypeHeader = readResponseContentType(response);
+  const contentType = assertAllowedMediaType(
+    contentTypeHeader || resolvedMedia.contentType
+  );
+  const declaredLength = Number.parseInt(response.headers.get('content-length') || '', 10);
+
+  if (
+    Number.isFinite(declaredLength) &&
+    declaredLength > getMaxBytesForContentType(contentType)
+  ) {
+    throw new Error(getSizeValidationMessage(contentType));
+  }
+
+  const fileBuffer = Buffer.from(await response.arrayBuffer());
+
+  return uploadSourceImageBuffer(userId, {
+    fileName: inferRemoteFileName(resolvedMedia.resolvedUrl, contentType),
+    contentType,
+    fileBuffer,
+  });
 };

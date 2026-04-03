@@ -4,6 +4,23 @@ import type { User } from '@supabase/supabase-js';
 import { getGeneratedContentById } from '../db/queries/content';
 import { getGeneratedImageById } from '../db/queries/images';
 import {
+  appendScheduledItemLog,
+  createMediaAsset,
+  createScheduleBatch,
+  createScheduledItem,
+  deleteScheduleBatch,
+  getMediaAssetById,
+  getScheduleBatchesByUser,
+  getScheduleBatchById,
+  getScheduleBatchDetail,
+  getScheduledItemById,
+  getScheduledItemsByBatch,
+  getScheduledItemsByUser,
+  syncScheduledItemStatusByScheduledPostId,
+  updateScheduleBatch,
+  updateScheduledItem,
+} from '../db/queries/scheduleBatches';
+import {
   SCHEDULED_POST_ACTION_BLOCKED_REASON,
   createScheduledPost,
   deleteScheduledPost,
@@ -40,15 +57,25 @@ import {
   SUPABASE_SOURCE_IMAGE_BUCKET,
 } from '../config/constants';
 import type {
+  CreateMediaAssetInput,
+  MediaAsset,
   CreateSocialAccountInput,
+  ScheduleBatchStatus,
   SchedulerMediaType,
   SocialPlatform,
 } from '../types';
 import type {
+  AddBatchItemsBody,
+  CreateMediaAssetBody,
+  CreateScheduleBatchBody,
   CreateScheduledPostBody,
+  CreateScheduledItemBody,
   CreateSocialAccountBody,
   FinalizeMetaFacebookPagesBody,
+  ListScheduleBatchesQuery,
+  ListScheduledItemsQuery,
   StartMetaOAuthBody,
+  UpdateScheduledItemBody,
   UpdateScheduledPostBody,
   UpdateScheduledPostStatusBody,
   UpdateSocialAccountBody,
@@ -103,7 +130,11 @@ const RESERVED_PROFILE_SEGMENTS = new Set([
   'hashtag',
 ]);
 const SCHEDULE_MIN_BUFFER_MS = 5_000;
-const SCHEDULE_TIME_VALIDATION_MESSAGE = 'Please select a future date and time.';
+const SCHEDULE_TIME_VALIDATION_MESSAGE = 'Scheduled time must be in the future';
+const INSTAGRAM_FEED_MIN_RATIO = 0.8;
+const INSTAGRAM_FEED_MAX_RATIO = 1.91;
+const INSTAGRAM_REELS_TARGET_RATIO = 9 / 16;
+const INSTAGRAM_REELS_TOLERANCE = 0.08;
 
 type MetaInstagramAccountRecord = {
   id: string;
@@ -506,6 +537,55 @@ const ensureScheduledPostHasMedia = (
   }
 };
 
+const readRecord = (value: unknown): Record<string, unknown> =>
+  value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+
+const readInstagramPreparationWarning = (mediaAsset: MediaAsset) => {
+  const metadata = readRecord(mediaAsset.metadata);
+  const instagramPreparation = readRecord(metadata.instagramPreparation);
+  const warning = instagramPreparation.warning;
+
+  return typeof warning === 'string' && warning.trim() ? warning : null;
+};
+
+const isInstagramVideoAspectRatioSupported = (ratio: number) =>
+  (ratio >= INSTAGRAM_FEED_MIN_RATIO && ratio <= INSTAGRAM_FEED_MAX_RATIO) ||
+  Math.abs(ratio - INSTAGRAM_REELS_TARGET_RATIO) <= INSTAGRAM_REELS_TOLERANCE;
+
+const ensureInstagramMediaAssetReady = (mediaAsset: MediaAsset) => {
+  if (!mediaAsset.width || !mediaAsset.height) {
+    return;
+  }
+
+  const ratio = mediaAsset.width / mediaAsset.height;
+
+  if (mediaAsset.mediaType === 'image') {
+    if (ratio >= INSTAGRAM_FEED_MIN_RATIO && ratio <= INSTAGRAM_FEED_MAX_RATIO) {
+      return;
+    }
+
+    const metadata = readRecord(mediaAsset.metadata);
+    const instagramPreparation = readRecord(metadata.instagramPreparation);
+
+    if (instagramPreparation.status === 'adjusted') {
+      return;
+    }
+
+    throw new Error(
+      'This image aspect ratio is not supported by Instagram yet. PrixmoAI needs to auto-adjust it before scheduling.'
+    );
+  }
+
+  if (mediaAsset.mediaType === 'video' && !isInstagramVideoAspectRatioSupported(ratio)) {
+    throw new Error(
+      readInstagramPreparationWarning(mediaAsset) ||
+        'This Instagram video needs a supported aspect ratio before it can be scheduled.'
+    );
+  }
+};
+
 const ensureFutureDate = (isoDate: string, fieldName = 'scheduledFor') => {
   const parsed = new Date(isoDate);
 
@@ -791,6 +871,100 @@ const resolveScheduledPostDefaults = async (
     mediaUrl: resolvedMedia.mediaUrl,
     mediaType: resolvedMedia.mediaType,
   };
+};
+
+const deriveScheduleBatchStatus = (
+  statuses: string[],
+  currentStatus?: ScheduleBatchStatus
+): ScheduleBatchStatus => {
+  if (!statuses.length) {
+    return currentStatus ?? 'draft';
+  }
+
+  const nonCancelled = statuses.filter((status) => status !== 'cancelled');
+
+  if (!nonCancelled.length) {
+    return 'failed';
+  }
+
+  if (nonCancelled.every((status) => status === 'published')) {
+    return 'completed';
+  }
+
+  if (nonCancelled.every((status) => status === 'failed')) {
+    return 'failed';
+  }
+
+  if (
+    nonCancelled.some((status) => status === 'published') &&
+    nonCancelled.some((status) => status !== 'published')
+  ) {
+    return 'partial';
+  }
+
+  if (
+    nonCancelled.some((status) =>
+      ['scheduled', 'pending', 'publishing'].includes(status)
+    )
+  ) {
+    if (
+      currentStatus === 'draft' &&
+      nonCancelled.every((status) => status === 'pending')
+    ) {
+      return 'draft';
+    }
+
+    return 'queued';
+  }
+
+  return currentStatus ?? 'draft';
+};
+
+const syncBatchStatusFromItems = async (
+  client: ReturnType<typeof requireUserClient>,
+  userId: string,
+  batchId: string
+) => {
+  const detail = await getScheduleBatchDetail(client, userId, batchId);
+
+  if (!detail) {
+    return null;
+  }
+
+  const nextStatus = deriveScheduleBatchStatus(
+    detail.items.map((item) => item.status),
+    detail.batch.status
+  );
+
+  if (nextStatus !== detail.batch.status) {
+    return await updateScheduleBatch(client, userId, batchId, {
+      status: nextStatus,
+    });
+  }
+
+  return detail.batch;
+};
+
+const assertNoDuplicateScheduledItems = (
+  items: Array<{
+    mediaAssetId: string;
+    socialAccountId: string;
+    scheduledAt: string;
+  }>
+) => {
+  const seen = new Set<string>();
+
+  for (const item of items) {
+    const key = `${item.mediaAssetId}:${item.socialAccountId}:${item.scheduledAt}`;
+
+    if (seen.has(key)) {
+      throw new Error(
+        'Duplicate schedule conflict detected. Remove the identical platform and time slot before submitting.'
+      );
+    }
+
+    seen.add(key);
+  }
 };
 
 export const createConnectedSocialAccount = async (
@@ -1525,6 +1699,606 @@ export const removeConnectedSocialAccount = async (
   }
 };
 
+export const createSchedulerMediaAsset = async (
+  req: AuthenticatedRequest<{}, unknown, CreateMediaAssetBody>,
+  res: Response
+) => {
+  if (!req.user?.id) {
+    return res.status(401).json({
+      status: 'fail',
+      message: 'Unauthorized',
+    });
+  }
+
+  try {
+    const client = requireUserClient(req.accessToken);
+
+    if (req.body.contentId) {
+      const content = await getGeneratedContentById(client, req.user.id, req.body.contentId);
+
+      if (!content) {
+        return res.status(404).json({
+          status: 'fail',
+          message: 'Generated content item not found',
+        });
+      }
+    }
+
+    if (req.body.generatedImageId) {
+      const image = await getGeneratedImageById(
+        client,
+        req.user.id,
+        req.body.generatedImageId
+      );
+
+      if (!image) {
+        return res.status(404).json({
+          status: 'fail',
+          message: 'Generated image item not found',
+        });
+      }
+    }
+
+    const asset = await createMediaAsset(client, req.user.id, req.body as CreateMediaAssetInput);
+
+    return res.status(201).json({
+      status: 'success',
+      message: 'Media asset created successfully',
+      data: asset,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      status: 'error',
+      message:
+        error instanceof Error ? error.message : 'Failed to create media asset',
+    });
+  }
+};
+
+export const createScheduleBatchDraft = async (
+  req: AuthenticatedRequest<{}, unknown, CreateScheduleBatchBody>,
+  res: Response
+) => {
+  if (!req.user?.id) {
+    return res.status(401).json({
+      status: 'fail',
+      message: 'Unauthorized',
+    });
+  }
+
+  try {
+    const client = requireUserClient(req.accessToken);
+    const batch = await createScheduleBatch(client, req.user.id, {
+      batchName: req.body.batchName ?? null,
+      status: req.body.status ?? 'draft',
+    });
+
+    return res.status(201).json({
+      status: 'success',
+      message: 'Schedule batch created successfully',
+      data: batch,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      status: 'error',
+      message:
+        error instanceof Error ? error.message : 'Failed to create schedule batch',
+    });
+  }
+};
+
+export const getScheduleBatch = async (
+  req: AuthenticatedRequest<{ id: string }>,
+  res: Response
+) => {
+  if (!req.user?.id) {
+    return res.status(401).json({
+      status: 'fail',
+      message: 'Unauthorized',
+    });
+  }
+
+  try {
+    const client = requireUserClient(req.accessToken);
+    const detail = await getScheduleBatchDetail(client, req.user.id, req.params.id);
+
+    if (!detail) {
+      return res.status(404).json({
+        status: 'fail',
+        message: 'Schedule batch not found',
+      });
+    }
+
+    return res.status(200).json({
+      status: 'success',
+      data: detail,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      status: 'error',
+      message:
+        error instanceof Error ? error.message : 'Failed to fetch schedule batch',
+    });
+  }
+};
+
+export const deleteScheduleBatchDraft = async (
+  req: AuthenticatedRequest<{ id: string }>,
+  res: Response
+) => {
+  if (!req.user?.id) {
+    return res.status(401).json({
+      status: 'fail',
+      message: 'Unauthorized',
+    });
+  }
+
+  try {
+    const client = requireUserClient(req.accessToken);
+    const batch = await getScheduleBatchById(client, req.user.id, req.params.id);
+
+    if (!batch) {
+      return res.status(404).json({
+        status: 'fail',
+        message: 'Schedule batch not found',
+      });
+    }
+
+    await deleteScheduleBatch(client, req.user.id, req.params.id);
+
+    return res.status(200).json({
+      status: 'success',
+      message: 'Draft deleted successfully',
+    });
+  } catch (error) {
+    return res.status(500).json({
+      status: 'error',
+      message:
+        error instanceof Error ? error.message : 'Failed to delete schedule batch',
+    });
+  }
+};
+
+export const listScheduleBatches = async (
+  req: AuthenticatedRequest<{}, unknown, unknown, ListScheduleBatchesQuery>,
+  res: Response
+) => {
+  if (!req.user?.id) {
+    return res.status(401).json({
+      status: 'fail',
+      message: 'Unauthorized',
+    });
+  }
+
+  try {
+    const client = requireUserClient(req.accessToken);
+    const result = await getScheduleBatchesByUser(client, req.user.id, {
+      page: parsePositiveInt(req.query.page, 1),
+      limit: parsePositiveInt(req.query.limit, 24),
+      status: req.query.status ?? null,
+    });
+
+    return res.status(200).json({
+      status: 'success',
+      data: result,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      status: 'error',
+      message:
+        error instanceof Error ? error.message : 'Failed to fetch schedule batches',
+    });
+  }
+};
+
+export const addScheduleBatchItems = async (
+  req: AuthenticatedRequest<{ id: string }, unknown, AddBatchItemsBody>,
+  res: Response
+) => {
+  if (!req.user?.id) {
+    return res.status(401).json({
+      status: 'fail',
+      message: 'Unauthorized',
+    });
+  }
+
+  try {
+    assertNoDuplicateScheduledItems(req.body.items);
+
+    const client = requireUserClient(req.accessToken);
+    const batch = await getScheduleBatchById(client, req.user.id, req.params.id);
+
+    if (!batch) {
+      return res.status(404).json({
+        status: 'fail',
+        message: 'Schedule batch not found',
+      });
+    }
+
+    const existingItems = await getScheduledItemsByBatch(client, req.user.id, req.params.id);
+    assertNoDuplicateScheduledItems([
+      ...existingItems.map((item) => ({
+        mediaAssetId: item.mediaAssetId,
+        socialAccountId: item.socialAccountId,
+        scheduledAt: item.scheduledAt,
+      })),
+      ...req.body.items.map((item) => ({
+        mediaAssetId: item.mediaAssetId,
+        socialAccountId: item.socialAccountId,
+        scheduledAt: item.scheduledAt,
+      })),
+    ]);
+
+    const createdItems = [];
+
+    for (const item of req.body.items) {
+      ensureFutureDate(item.scheduledAt, 'scheduledAt');
+
+      const [mediaAsset, socialAccount] = await Promise.all([
+        getMediaAssetById(client, req.user.id, item.mediaAssetId),
+        getSocialAccountById(client, req.user.id, item.socialAccountId),
+      ]);
+
+      if (!mediaAsset) {
+        throw new Error('Media asset not found');
+      }
+
+      if (!socialAccount) {
+        throw new Error('Social account not found');
+      }
+
+      if (socialAccount.platform === 'instagram') {
+        ensureInstagramMediaAssetReady(mediaAsset);
+      }
+
+      createdItems.push(
+        await createScheduledItem(client, req.user.id, req.params.id, {
+          mediaAssetId: item.mediaAssetId,
+          socialAccountId: item.socialAccountId,
+          platform: item.platform,
+          accountId: item.accountId,
+          caption: item.caption ?? null,
+          scheduledAt: item.scheduledAt,
+          status: item.status ?? 'pending',
+        })
+      );
+    }
+
+    await syncBatchStatusFromItems(client, req.user.id, req.params.id);
+
+    return res.status(201).json({
+      status: 'success',
+      message: 'Scheduled items added successfully',
+      data: createdItems,
+    });
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : 'Failed to add scheduled items';
+
+    return res.status(
+      message.includes('not found') ||
+        message === SCHEDULE_TIME_VALIDATION_MESSAGE ||
+        message.includes('Duplicate schedule conflict') ||
+        message.includes('supported')
+        ? 400
+        : 500
+    ).json({
+      status:
+        message.includes('not found') ||
+        message === SCHEDULE_TIME_VALIDATION_MESSAGE ||
+        message.includes('Duplicate schedule conflict') ||
+        message.includes('supported')
+          ? 'fail'
+          : 'error',
+      message,
+    });
+  }
+};
+
+export const submitScheduleBatch = async (
+  req: AuthenticatedRequest<{ id: string }>,
+  res: Response
+) => {
+  if (!req.user?.id) {
+    return res.status(401).json({
+      status: 'fail',
+      message: 'Unauthorized',
+    });
+  }
+
+  try {
+    const client = requireUserClient(req.accessToken);
+    const detail = await getScheduleBatchDetail(client, req.user.id, req.params.id);
+
+    if (!detail) {
+      return res.status(404).json({
+        status: 'fail',
+        message: 'Schedule batch not found',
+      });
+    }
+
+    if (!detail.items.length) {
+      return res.status(400).json({
+        status: 'fail',
+        message: 'Add at least one scheduled item before submitting the batch.',
+      });
+    }
+
+    const mirroredItems = [];
+
+    for (const item of detail.items) {
+      if (item.status === 'cancelled' || item.scheduledPostId) {
+        continue;
+      }
+
+      ensureFutureDate(item.scheduledAt, 'scheduledAt');
+
+      const socialAccount = item.socialAccount ??
+        (await getSocialAccountById(client, req.user.id, item.socialAccountId));
+      const mediaAsset = item.mediaAsset ??
+        (await getMediaAssetById(client, req.user.id, item.mediaAssetId));
+
+      if (!socialAccount || !mediaAsset) {
+        throw new Error('Scheduled item is missing its linked media or social account.');
+      }
+
+      if (socialAccount.platform === 'instagram') {
+        ensureInstagramMediaAssetReady(mediaAsset);
+      }
+
+      ensureMetaScheduledPostCanPublish(
+        item.platform,
+        socialAccount,
+        mediaAsset.storageUrl,
+        mediaAsset.mediaType
+      );
+      ensureScheduledPostHasMedia(mediaAsset.storageUrl, mediaAsset.mediaType);
+
+      const scheduledPost = await createScheduledPost(client, req.user.id, {
+        socialAccountId: item.socialAccountId,
+        contentId: mediaAsset.contentId,
+        generatedImageId: mediaAsset.generatedImageId,
+        platform: item.platform,
+        caption: item.caption,
+        mediaUrl: mediaAsset.storageUrl,
+        mediaType: mediaAsset.mediaType,
+        scheduledFor: item.scheduledAt,
+        status: 'scheduled',
+      });
+
+      const updatedItem = await updateScheduledItem(client, req.user.id, item.id, {
+        scheduledPostId: scheduledPost.id,
+        status: 'scheduled',
+        lastError: null,
+      });
+
+      await appendScheduledItemLog(client, {
+        scheduledItemId: updatedItem.id,
+        eventType: 'submitted',
+        message: 'Scheduled item mirrored into the publishing queue.',
+        payloadJson: {
+          scheduledPostId: scheduledPost.id,
+        },
+      });
+
+      mirroredItems.push(updatedItem);
+    }
+
+    const batch = await updateScheduleBatch(client, req.user.id, req.params.id, {
+      status: 'queued',
+    });
+
+    return res.status(200).json({
+      status: 'success',
+      message: 'Schedule batch submitted successfully',
+      data: {
+        batch,
+        items: mirroredItems,
+      },
+    });
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : 'Failed to submit schedule batch';
+
+    return res.status(
+      message === SCHEDULE_TIME_VALIDATION_MESSAGE ||
+      message.includes('missing') ||
+      message.includes('supported')
+        ? 400
+        : 500
+    ).json({
+      status:
+        message === SCHEDULE_TIME_VALIDATION_MESSAGE ||
+        message.includes('missing') ||
+        message.includes('supported')
+          ? 'fail'
+          : 'error',
+      message,
+    });
+  }
+};
+
+export const listScheduleItems = async (
+  req: AuthenticatedRequest<{}, unknown, unknown, ListScheduledItemsQuery>,
+  res: Response
+) => {
+  if (!req.user?.id) {
+    return res.status(401).json({
+      status: 'fail',
+      message: 'Unauthorized',
+    });
+  }
+
+  try {
+    const client = requireUserClient(req.accessToken);
+    const items = await getScheduledItemsByUser(client, req.user.id, {
+      page: parsePositiveInt(req.query.page, 1),
+      limit: parsePositiveInt(req.query.limit, 50),
+      status: req.query.status ?? null,
+    });
+
+    return res.status(200).json({
+      status: 'success',
+      data: items,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      status: 'error',
+      message:
+        error instanceof Error ? error.message : 'Failed to fetch scheduled items',
+    });
+  }
+};
+
+export const updateScheduleItemRecord = async (
+  req: AuthenticatedRequest<{ id: string }, unknown, UpdateScheduledItemBody>,
+  res: Response
+) => {
+  if (!req.user?.id) {
+    return res.status(401).json({
+      status: 'fail',
+      message: 'Unauthorized',
+    });
+  }
+
+  try {
+    const client = requireUserClient(req.accessToken);
+    const existingItem = await getScheduledItemById(client, req.user.id, req.params.id);
+
+    if (!existingItem) {
+      return res.status(404).json({
+        status: 'fail',
+        message: 'Scheduled item not found',
+      });
+    }
+
+    if (req.body.scheduledAt) {
+      ensureFutureDate(req.body.scheduledAt, 'scheduledAt');
+    }
+
+    const updatedItem = await updateScheduledItem(client, req.user.id, req.params.id, {
+      mediaAssetId: req.body.mediaAssetId,
+      socialAccountId: req.body.socialAccountId,
+      platform: req.body.platform,
+      accountId: req.body.accountId,
+      caption: req.body.caption,
+      scheduledAt: req.body.scheduledAt,
+      status: req.body.status,
+    });
+
+    if (existingItem.scheduledPostId) {
+      const mediaAsset = await getMediaAssetById(
+        client,
+        req.user.id,
+        updatedItem.mediaAssetId
+      );
+
+      if (!mediaAsset) {
+        throw new Error('Media asset not found');
+      }
+
+      await updateScheduledPost(client, req.user.id, existingItem.scheduledPostId, {
+        socialAccountId: updatedItem.socialAccountId,
+        contentId: mediaAsset.contentId,
+        generatedImageId: mediaAsset.generatedImageId,
+        platform: updatedItem.platform,
+        caption: updatedItem.caption,
+        mediaUrl: mediaAsset.storageUrl,
+        mediaType: mediaAsset.mediaType,
+        scheduledFor: updatedItem.scheduledAt,
+        status:
+          updatedItem.status === 'cancelled'
+            ? 'cancelled'
+            : updatedItem.status === 'published' || updatedItem.status === 'failed'
+              ? updatedItem.status
+              : 'scheduled',
+      });
+    }
+
+    await syncBatchStatusFromItems(client, req.user.id, updatedItem.batchId);
+
+    return res.status(200).json({
+      status: 'success',
+      message: 'Scheduled item updated successfully',
+      data: updatedItem,
+    });
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : 'Failed to update scheduled item';
+
+    return res.status(message === SCHEDULE_TIME_VALIDATION_MESSAGE ? 400 : 500).json({
+      status: message === SCHEDULE_TIME_VALIDATION_MESSAGE ? 'fail' : 'error',
+      message,
+    });
+  }
+};
+
+export const cancelScheduleItemRecord = async (
+  req: AuthenticatedRequest<{ id: string }>,
+  res: Response
+) => {
+  if (!req.user?.id) {
+    return res.status(401).json({
+      status: 'fail',
+      message: 'Unauthorized',
+    });
+  }
+
+  try {
+    const client = requireUserClient(req.accessToken);
+    const existingItem = await getScheduledItemById(client, req.user.id, req.params.id);
+
+    if (!existingItem) {
+      return res.status(404).json({
+        status: 'fail',
+        message: 'Scheduled item not found',
+      });
+    }
+
+    if (existingItem.scheduledPostId) {
+      const scheduledPost = await getScheduledPostById(
+        client,
+        req.user.id,
+        existingItem.scheduledPostId
+      );
+
+      if (scheduledPost && ['pending', 'scheduled'].includes(scheduledPost.status)) {
+        await updateScheduledPostStatus(
+          client,
+          req.user.id,
+          scheduledPost.id,
+          'cancelled',
+          null
+        );
+      }
+    }
+
+    const updatedItem = await updateScheduledItem(client, req.user.id, req.params.id, {
+      status: 'cancelled',
+      lastError: null,
+    });
+
+    await appendScheduledItemLog(client, {
+      scheduledItemId: updatedItem.id,
+      eventType: 'cancelled',
+      message: 'Scheduled item cancelled.',
+    });
+    await syncBatchStatusFromItems(client, req.user.id, updatedItem.batchId);
+
+    return res.status(200).json({
+      status: 'success',
+      message: 'Scheduled item cancelled successfully',
+      data: updatedItem,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      status: 'error',
+      message:
+        error instanceof Error ? error.message : 'Failed to cancel scheduled item',
+    });
+  }
+};
+
 export const createPostSchedule = async (
   req: AuthenticatedRequest<{}, unknown, CreateScheduledPostBody>,
   res: Response
@@ -1714,6 +2488,16 @@ export const updatePostSchedule = async (
       }
     );
 
+    await syncScheduledItemStatusByScheduledPostId(client, updatedPost.id, {
+      status:
+        updatedPost.status === 'published' || updatedPost.status === 'failed'
+          ? updatedPost.status
+          : updatedPost.status === 'cancelled'
+            ? 'cancelled'
+            : 'scheduled',
+      lastError: updatedPost.lastError,
+    }).catch(() => null);
+
     return res.status(200).json({
       status: 'success',
       message: 'Scheduled post updated successfully',
@@ -1795,6 +2579,28 @@ export const updatePostScheduleStatus = async (
       publishedAt
     );
 
+    const syncedItems = await syncScheduledItemStatusByScheduledPostId(
+      client,
+      updatedPost.id,
+      {
+        status:
+          req.body.status === 'scheduled' || req.body.status === 'pending'
+            ? 'scheduled'
+            : req.body.status === 'cancelled'
+              ? 'cancelled'
+              : req.body.status,
+        lastError: updatedPost.lastError,
+      }
+    ).catch(() => []);
+
+    if (syncedItems.length) {
+      await Promise.all(
+        syncedItems.map((item) =>
+          syncBatchStatusFromItems(client, req.user!.id, item.batchId).catch(() => null)
+        )
+      );
+    }
+
     return res.status(200).json({
       status: 'success',
       message: 'Scheduled post status updated successfully',
@@ -1851,6 +2657,23 @@ export const cancelPostSchedule = async (
       'cancelled',
       null
     );
+
+    const syncedItems = await syncScheduledItemStatusByScheduledPostId(
+      client,
+      updatedPost.id,
+      {
+        status: 'cancelled',
+        lastError: null,
+      }
+    ).catch(() => []);
+
+    if (syncedItems.length) {
+      await Promise.all(
+        syncedItems.map((item) =>
+          syncBatchStatusFromItems(client, req.user!.id, item.batchId).catch(() => null)
+        )
+      );
+    }
 
     return res.status(200).json({
       status: 'success',

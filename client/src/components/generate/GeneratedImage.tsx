@@ -3,15 +3,21 @@ import { useEffect, useState } from 'react';
 import { useAuth } from '../../hooks/useAuth';
 import { API_BASE_URL } from '../../lib/constants';
 import { Card } from '../ui/card';
-import type { GeneratedImage as GeneratedImageRecord } from '../../types';
+import type {
+  GeneratedImage as GeneratedImageRecord,
+  SchedulerGeneratedMediaIntent,
+} from '../../types';
 import { formatDateTime } from '../../lib/utils';
+import { ScheduleGeneratedImageAction } from './ScheduleGeneratedImageAction';
 
 export const GeneratedImage = ({
   image,
   showWatermark = false,
+  scheduleIntent = null,
 }: {
   image: GeneratedImageRecord;
   showWatermark?: boolean;
+  scheduleIntent?: SchedulerGeneratedMediaIntent | null;
 }) => {
   const { token } = useAuth();
   const [watermarkedAssetUrl, setWatermarkedAssetUrl] = useState<string | null>(null);
@@ -111,6 +117,9 @@ export const GeneratedImage = ({
           </span>
         </div>
         <div className="generated-image-card__actions">
+          {scheduleIntent ? (
+            <ScheduleGeneratedImageAction intent={scheduleIntent} />
+          ) : null}
           <button
             type="button"
             className="generated-image-card__action"

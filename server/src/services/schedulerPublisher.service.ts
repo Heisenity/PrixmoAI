@@ -8,6 +8,10 @@ import {
   getScheduledPostById,
   updateScheduledPost,
 } from '../db/queries/scheduledPosts';
+import {
+  appendScheduledItemLog,
+  syncScheduledItemStatusByScheduledPostId,
+} from '../db/queries/scheduleBatches';
 import { getSocialAccountById } from '../db/queries/socialAccounts';
 import {
   isSupabaseAdminConfigured,
@@ -33,6 +37,21 @@ const markPostFailure = async (
     lastError: message,
     publishedAt: null,
   });
+
+  const syncedItems = await syncScheduledItemStatusByScheduledPostId(client, postId, {
+    status: 'failed',
+    lastError: message,
+  }).catch(() => []);
+
+  await Promise.all(
+    syncedItems.map((item) =>
+      appendScheduledItemLog(client, {
+        scheduledItemId: item.id,
+        eventType: 'publish_failed',
+        message,
+      }).catch(() => null)
+    )
+  );
 };
 
 const processScheduledPost = async (postId: string, userId: string) => {
@@ -44,6 +63,12 @@ const processScheduledPost = async (postId: string, userId: string) => {
   }
 
   try {
+    await syncScheduledItemStatusByScheduledPostId(client, post.id, {
+      status: 'publishing',
+      attemptCount: post.publishAttemptedAt ? 1 : 1,
+      lastError: null,
+    }).catch(() => []);
+
     const socialAccount = await getSocialAccountById(
       client,
       post.userId,
@@ -73,6 +98,26 @@ const processScheduledPost = async (postId: string, userId: string) => {
       publishedAt: published.publishedAt,
       lastError: null,
     });
+
+    const syncedItems = await syncScheduledItemStatusByScheduledPostId(client, post.id, {
+      status: 'published',
+      attemptCount: 1,
+      lastError: null,
+    }).catch(() => []);
+
+    await Promise.all(
+      syncedItems.map((item) =>
+        appendScheduledItemLog(client, {
+          scheduledItemId: item.id,
+          eventType: 'published',
+          message: 'Scheduled item published successfully.',
+          payloadJson: {
+            externalPostId: published.externalPostId,
+            publishedAt: published.publishedAt,
+          },
+        }).catch(() => null)
+      )
+    );
 
     try {
       await syncAnalyticsForUser(client, post.userId, {

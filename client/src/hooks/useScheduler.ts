@@ -6,18 +6,31 @@ import {
 } from '../lib/upgradePrompt';
 import { useAuth } from './useAuth';
 import type {
+  CreateMediaAssetInput,
+  CreateScheduleBatchInput,
+  CreateScheduledItemInput,
   CreateScheduledPostInput,
   CreateSocialAccountInput,
+  MediaAsset,
   MetaOAuthPopupResult,
   PendingMetaFacebookPageSelection,
   PaginatedResult,
+  ResolvedExternalMedia,
+  ScheduleBatch,
+  ScheduleBatchDetail,
   ScheduledPost,
+  ScheduledItem,
+  ScheduledItemStatus,
   ScheduledPostStatus,
   SocialAccount,
+  UpdateScheduledItemInput,
   UploadedSourceImage,
 } from '../types';
 
 type SchedulerUiStatus = 'ready' | 'syncing' | 'error';
+type SchedulerMediaRequestOptions = {
+  surfaceGlobalError?: boolean;
+};
 
 const isUpcomingScheduledPost = (scheduledFor: string, status: ScheduledPostStatus) => {
   if (status !== 'scheduled') {
@@ -257,6 +270,7 @@ export const useScheduler = (options: UseSchedulerOptions = {}) => {
   const { token } = useAuth();
   const [accounts, setAccounts] = useState<PaginatedResult<SocialAccount> | null>(null);
   const [posts, setPosts] = useState<PaginatedResult<ScheduledPost> | null>(null);
+  const [items, setItems] = useState<PaginatedResult<ScheduledItem> | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isMutating, setIsMutating] = useState(false);
   const [isUploadingMedia, setIsUploadingMedia] = useState(false);
@@ -289,12 +303,14 @@ export const useScheduler = (options: UseSchedulerOptions = {}) => {
       }
 
       try {
-        const [nextAccounts, nextPosts] = await Promise.all([
+        const [nextAccounts, nextPosts, nextItems] = await Promise.all([
           apiRequest<PaginatedResult<SocialAccount>>('/api/scheduler/accounts', { token }),
           apiRequest<PaginatedResult<ScheduledPost>>('/api/scheduler/posts', { token }),
+          apiRequest<PaginatedResult<ScheduledItem>>('/api/scheduler/items', { token }),
         ]);
         setAccounts(nextAccounts);
         setPosts(nextPosts);
+        setItems(nextItems);
         setError(null);
         setSchedulerStatus((current) =>
           !silent || current === 'error' ? 'ready' : current
@@ -535,6 +551,267 @@ export const useScheduler = (options: UseSchedulerOptions = {}) => {
     }
   };
 
+  const createMediaAssetRecord = async (input: CreateMediaAssetInput) => {
+    if (!token) {
+      throw new Error('Sign in again to manage media assets.');
+    }
+
+    setError(null);
+    setIsMutating(true);
+
+    try {
+      return await apiRequest<MediaAsset>('/api/scheduler/media-assets', {
+        method: 'POST',
+        token,
+        body: input,
+      });
+    } catch (mutationError) {
+      const message =
+        mutationError instanceof Error
+          ? mutationError.message
+          : 'Failed to create media asset';
+      setError(message);
+      setSchedulerStatus('error');
+      throw new Error(message);
+    } finally {
+      setIsMutating(false);
+    }
+  };
+
+  const createBatch = async (input: CreateScheduleBatchInput) => {
+    if (!token) {
+      throw new Error('Sign in again to create schedule batches.');
+    }
+
+    setError(null);
+    setIsMutating(true);
+
+    try {
+      const created = await apiRequest<ScheduleBatch>('/api/scheduler/batches', {
+        method: 'POST',
+        token,
+        body: input,
+      });
+      await refresh({ silent: true });
+      return created;
+    } catch (mutationError) {
+      const message =
+        mutationError instanceof Error
+          ? mutationError.message
+          : 'Failed to create schedule batch';
+      setError(message);
+      setSchedulerStatus('error');
+      throw new Error(message);
+    } finally {
+      setIsMutating(false);
+    }
+  };
+
+  const getBatch = async (batchId: string) => {
+    if (!token) {
+      throw new Error('Sign in again to view schedule batches.');
+    }
+
+    try {
+      return await apiRequest<ScheduleBatchDetail>(`/api/scheduler/batches/${batchId}`, {
+        token,
+      });
+    } catch (mutationError) {
+      const message =
+        mutationError instanceof Error
+          ? mutationError.message
+          : 'Failed to load schedule batch';
+      throw new Error(message);
+    }
+  };
+
+  const deleteBatch = async (batchId: string) => {
+    if (!token) {
+      throw new Error('Sign in again to manage drafts.');
+    }
+
+    setError(null);
+    setIsMutating(true);
+
+    try {
+      await apiRequest<void>(`/api/scheduler/batches/${batchId}`, {
+        method: 'DELETE',
+        token,
+      });
+      await refresh({ silent: true });
+    } catch (mutationError) {
+      const message =
+        mutationError instanceof Error
+          ? mutationError.message
+          : 'Failed to delete draft';
+      setError(message);
+      setSchedulerStatus('error');
+      throw new Error(message);
+    } finally {
+      setIsMutating(false);
+    }
+  };
+
+  const listBatches = async (options: {
+    page?: number;
+    limit?: number;
+    status?: ScheduleBatch['status'];
+  } = {}) => {
+    if (!token) {
+      throw new Error('Sign in again to view saved drafts.');
+    }
+
+    try {
+      const params = new URLSearchParams();
+
+      if (options.page) {
+        params.set('page', String(options.page));
+      }
+
+      if (options.limit) {
+        params.set('limit', String(options.limit));
+      }
+
+      if (options.status) {
+        params.set('status', options.status);
+      }
+
+      const query = params.toString();
+
+      return await apiRequest<PaginatedResult<ScheduleBatch>>(
+        `/api/scheduler/batches${query ? `?${query}` : ''}`,
+        {
+          token,
+        }
+      );
+    } catch (mutationError) {
+      const message =
+        mutationError instanceof Error
+          ? mutationError.message
+          : 'Failed to load schedule batches';
+      throw new Error(message);
+    }
+  };
+
+  const addBatchItems = async (batchId: string, nextItems: CreateScheduledItemInput[]) => {
+    if (!token) {
+      throw new Error('Sign in again to add scheduled items.');
+    }
+
+    setError(null);
+    setIsMutating(true);
+
+    try {
+      const created = await apiRequest<ScheduledItem[]>(`/api/scheduler/batches/${batchId}/items`, {
+        method: 'POST',
+        token,
+        body: {
+          items: nextItems,
+        },
+      });
+      await refresh({ silent: true });
+      return created;
+    } catch (mutationError) {
+      const message =
+        mutationError instanceof Error
+          ? mutationError.message
+          : 'Failed to add scheduled items';
+      setError(message);
+      setSchedulerStatus('error');
+      throw new Error(message);
+    } finally {
+      setIsMutating(false);
+    }
+  };
+
+  const submitBatch = async (batchId: string) => {
+    if (!token) {
+      throw new Error('Sign in again to submit schedule batches.');
+    }
+
+    setError(null);
+    setIsMutating(true);
+
+    try {
+      const result = await apiRequest<{ batch: ScheduleBatch; items: ScheduledItem[] }>(
+        `/api/scheduler/batches/${batchId}/submit`,
+        {
+          method: 'POST',
+          token,
+        }
+      );
+      await refresh({ silent: true });
+      return result;
+    } catch (mutationError) {
+      const message =
+        mutationError instanceof Error
+          ? mutationError.message
+          : 'Failed to submit schedule batch';
+      setError(message);
+      setSchedulerStatus('error');
+      throw new Error(message);
+    } finally {
+      setIsMutating(false);
+    }
+  };
+
+  const updateItem = async (itemId: string, input: UpdateScheduledItemInput) => {
+    if (!token) {
+      throw new Error('Sign in again to update scheduled items.');
+    }
+
+    setError(null);
+    setIsMutating(true);
+
+    try {
+      const updated = await apiRequest<ScheduledItem>(`/api/scheduler/items/${itemId}`, {
+        method: 'PATCH',
+        token,
+        body: input,
+      });
+      await refresh({ silent: true });
+      return updated;
+    } catch (mutationError) {
+      const message =
+        mutationError instanceof Error
+          ? mutationError.message
+          : 'Failed to update scheduled item';
+      setError(message);
+      setSchedulerStatus('error');
+      throw new Error(message);
+    } finally {
+      setIsMutating(false);
+    }
+  };
+
+  const cancelItem = async (itemId: string) => {
+    if (!token) {
+      throw new Error('Sign in again to cancel scheduled items.');
+    }
+
+    setError(null);
+    setIsMutating(true);
+
+    try {
+      const updated = await apiRequest<ScheduledItem>(`/api/scheduler/items/${itemId}/cancel`, {
+        method: 'POST',
+        token,
+      });
+      await refresh({ silent: true });
+      return updated;
+    } catch (mutationError) {
+      const message =
+        mutationError instanceof Error
+          ? mutationError.message
+          : 'Failed to cancel scheduled item';
+      setError(message);
+      setSchedulerStatus('error');
+      throw new Error(message);
+    } finally {
+      setIsMutating(false);
+    }
+  };
+
   const updateStatus = async (postId: string, status: ScheduledPostStatus) => {
     if (!token) {
       throw new Error('Sign in again to update post status.');
@@ -658,7 +935,22 @@ export const useScheduler = (options: UseSchedulerOptions = {}) => {
     }
   };
 
-  const uploadPostMedia = async (file: File) => {
+  const maybeSurfaceMediaError = (
+    message: string,
+    options?: SchedulerMediaRequestOptions
+  ) => {
+    if (options?.surfaceGlobalError === false) {
+      return;
+    }
+
+    setError(message);
+    setSchedulerStatus('error');
+  };
+
+  const uploadPostMedia = async (
+    file: File,
+    options?: SchedulerMediaRequestOptions
+  ) => {
     if (!token) {
       throw new Error('Sign in again to upload post media.');
     }
@@ -704,15 +996,45 @@ export const useScheduler = (options: UseSchedulerOptions = {}) => {
     } catch (uploadError) {
       const message =
         uploadError instanceof Error ? uploadError.message : 'Failed to upload post media';
-      setError(message);
-      setSchedulerStatus('error');
+      maybeSurfaceMediaError(message, options);
       throw new Error(message);
     } finally {
       setIsUploadingMedia(false);
     }
   };
 
-  const importExternalMediaUrl = async (url: string) => {
+  const resolveExternalMediaUrl = async (
+    url: string,
+    options?: SchedulerMediaRequestOptions
+  ) => {
+    if (!token) {
+      throw new Error('Sign in again to resolve media.');
+    }
+
+    setError(null);
+
+    try {
+      const resolved = await apiRequest<ResolvedExternalMedia>('/api/images/resolve-source-url', {
+        method: 'POST',
+        token,
+        body: {
+          url: url.trim(),
+        },
+      });
+
+      return resolved;
+    } catch (resolveError) {
+      const message =
+        resolveError instanceof Error ? resolveError.message : 'Failed to resolve media URL';
+      maybeSurfaceMediaError(message, options);
+      throw new Error(message);
+    }
+  };
+
+  const importExternalMediaUrl = async (
+    url: string,
+    options?: SchedulerMediaRequestOptions
+  ) => {
     if (!token) {
       throw new Error('Sign in again to import media.');
     }
@@ -733,8 +1055,7 @@ export const useScheduler = (options: UseSchedulerOptions = {}) => {
     } catch (importError) {
       const message =
         importError instanceof Error ? importError.message : 'Failed to import media URL';
-      setError(message);
-      setSchedulerStatus('error');
+      maybeSurfaceMediaError(message, options);
       throw new Error(message);
     } finally {
       setIsUploadingMedia(false);
@@ -744,6 +1065,7 @@ export const useScheduler = (options: UseSchedulerOptions = {}) => {
   return {
     accounts,
     posts,
+    items,
     upcomingPosts,
     isLoading,
     isMutating,
@@ -757,11 +1079,21 @@ export const useScheduler = (options: UseSchedulerOptions = {}) => {
     loadPendingMetaFacebookPages,
     finalizePendingMetaFacebookPages,
     createPost,
+    createMediaAssetRecord,
+    createBatch,
+    getBatch,
+    deleteBatch,
+    listBatches,
+    addBatchItems,
+    submitBatch,
+    updateItem,
+    cancelItem,
     updatePost,
     updateStatus,
     cancelPost,
     disconnectAccount,
     uploadPostMedia,
+    resolveExternalMediaUrl,
     importExternalMediaUrl,
   };
 };

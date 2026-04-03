@@ -859,6 +859,16 @@ img {
   font-size: 0.8rem;
 }
 
+.field__error {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.38rem;
+  color: #ffb3b3;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  animation: field-error-in 180ms ease;
+}
+
 .field__control {
   width: 100%;
   min-height: 50px;
@@ -880,6 +890,29 @@ img {
   outline: none;
   border-color: rgba(143, 216, 255, 0.48);
   box-shadow: 0 0 0 4px rgba(143, 216, 255, 0.08);
+}
+
+.field__control--invalid {
+  border-color: rgba(255, 125, 125, 0.34);
+  box-shadow: 0 0 0 1px rgba(255, 125, 125, 0.05) inset;
+}
+
+.field__control--invalid:focus {
+  border-color: rgba(255, 125, 125, 0.38);
+  box-shadow:
+    0 0 0 1px rgba(255, 125, 125, 0.06) inset,
+    0 0 0 4px rgba(255, 125, 125, 0.08);
+}
+
+@keyframes field-error-in {
+  from {
+    opacity: 0;
+    transform: translateY(-2px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .message {
@@ -2961,6 +2994,12 @@ img {
   background: rgba(143, 216, 255, 0.08);
 }
 
+.queue-status-badge--publishing {
+  color: #fff1d1;
+  border-color: rgba(255, 205, 120, 0.24);
+  background: rgba(255, 205, 120, 0.1);
+}
+
 .queue-status-badge--published {
   color: #d9fff0;
   border-color: rgba(115, 240, 213, 0.2);
@@ -3013,6 +3052,521 @@ img {
 .scheduler-composer-panel {
   display: grid;
   gap: 1.35rem;
+}
+
+.scheduler-bulk-builder {
+  display: grid;
+  gap: 1rem;
+}
+
+.scheduler-bulk-builder__media-inputs {
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
+  gap: 0.85rem;
+  align-items: start;
+}
+
+.scheduler-bulk-builder__header-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.scheduler-bulk-builder__top {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.85rem;
+  align-items: end;
+}
+
+.scheduler-bulk-builder__summary {
+  display: grid;
+  gap: 0.18rem;
+  min-width: 170px;
+  padding: 0.72rem 0.88rem;
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.028);
+}
+
+.scheduler-draft-trigger {
+  position: relative;
+  transition:
+    transform 140ms ease,
+    border-color 140ms ease,
+    box-shadow 140ms ease;
+}
+
+.scheduler-draft-trigger:hover:not(:disabled) {
+  transform: translateY(-1px) scale(1.02);
+  border-color: rgba(143, 216, 255, 0.22);
+  box-shadow: 0 10px 26px rgba(64, 132, 255, 0.12);
+}
+
+.scheduler-draft-trigger__badge {
+  position: absolute;
+  top: -0.35rem;
+  right: -0.4rem;
+  min-width: 1.15rem;
+  height: 1.15rem;
+  padding: 0 0.28rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: linear-gradient(135deg, rgba(125, 224, 208, 0.95), rgba(143, 216, 255, 0.92));
+  color: #071018;
+  font-size: 0.68rem;
+  font-weight: 700;
+  line-height: 1;
+  box-shadow: 0 10px 24px rgba(113, 199, 255, 0.18);
+}
+
+.scheduler-bulk-builder__summary strong {
+  font-size: 1rem;
+}
+
+.scheduler-bulk-builder__summary span,
+.scheduler-bulk-builder__validation {
+  color: var(--text-soft);
+  font-size: 0.84rem;
+}
+
+.scheduler-toast-stack {
+  position: fixed;
+  top: 1.3rem;
+  right: 1.3rem;
+  z-index: 140;
+  width: min(390px, calc(100vw - 2rem));
+  display: grid;
+  gap: 0.72rem;
+  pointer-events: none;
+}
+
+.scheduler-toast {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 0.8rem;
+  padding: 0.9rem 0.95rem;
+  border-radius: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(10, 14, 22, 0.86);
+  color: var(--text-main);
+  box-shadow:
+    0 18px 44px rgba(2, 6, 12, 0.42),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  backdrop-filter: blur(18px);
+  pointer-events: auto;
+  animation: scheduler-toast-enter 280ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.scheduler-toast--success {
+  border-color: rgba(115, 240, 213, 0.22);
+  background:
+    radial-gradient(circle at top right, rgba(115, 240, 213, 0.12), transparent 44%),
+    rgba(10, 18, 21, 0.9);
+}
+
+.scheduler-toast--error {
+  border-color: rgba(255, 125, 125, 0.22);
+  background:
+    radial-gradient(circle at top right, rgba(255, 125, 125, 0.14), transparent 44%),
+    rgba(23, 14, 18, 0.92);
+  box-shadow:
+    0 18px 44px rgba(2, 6, 12, 0.42),
+    0 0 0 1px rgba(255, 125, 125, 0.06),
+    0 0 28px rgba(137, 34, 47, 0.14);
+}
+
+.scheduler-toast--warning {
+  border-color: rgba(255, 198, 117, 0.22);
+  background:
+    radial-gradient(circle at top right, rgba(255, 198, 117, 0.14), transparent 44%),
+    rgba(23, 18, 10, 0.92);
+}
+
+.scheduler-toast--info {
+  border-color: rgba(143, 216, 255, 0.18);
+  background:
+    radial-gradient(circle at top right, rgba(143, 216, 255, 0.12), transparent 44%),
+    rgba(11, 16, 24, 0.92);
+}
+
+.scheduler-toast--exiting {
+  animation: scheduler-toast-exit 260ms ease forwards;
+}
+
+.scheduler-toast__icon {
+  width: 2.1rem;
+  height: 2.1rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.scheduler-toast__copy {
+  display: grid;
+  gap: 0.22rem;
+  min-width: 0;
+}
+
+.scheduler-toast__copy strong {
+  font-size: 0.94rem;
+}
+
+.scheduler-toast__copy span {
+  color: var(--text-soft);
+  font-size: 0.84rem;
+  line-height: 1.55;
+}
+
+.scheduler-toast__close {
+  width: 2rem;
+  height: 2rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text-soft);
+  transition:
+    color 140ms ease,
+    background 140ms ease,
+    transform 140ms ease;
+}
+
+.scheduler-toast__close:hover {
+  color: var(--text-main);
+  background: rgba(255, 255, 255, 0.08);
+  transform: scale(1.02);
+}
+
+.scheduler-url-import {
+  display: grid;
+  gap: 0.7rem;
+  padding: 0.9rem;
+  border-radius: 22px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background:
+    radial-gradient(circle at top right, rgba(143, 216, 255, 0.06), transparent 48%),
+    rgba(255, 255, 255, 0.025);
+}
+
+.scheduler-url-import__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.6rem;
+}
+
+.scheduler-url-import__hint,
+.scheduler-url-import__error {
+  color: var(--text-soft);
+  font-size: 0.82rem;
+}
+
+.scheduler-url-import__hint {
+  max-width: 20rem;
+  text-align: right;
+}
+
+.scheduler-url-import__controls {
+  display: block;
+}
+
+.scheduler-url-import__status-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.8rem;
+  padding: 0.82rem 0.88rem;
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  background: rgba(255, 255, 255, 0.022);
+}
+
+.scheduler-url-import__status-copy {
+  min-width: 0;
+  display: grid;
+  gap: 0.18rem;
+}
+
+.scheduler-url-import__status-copy strong {
+  display: block;
+  font-size: 0.92rem;
+}
+
+.scheduler-url-import__error {
+  margin: 0;
+}
+
+.scheduler-bulk-assets {
+  display: grid;
+  gap: 1rem;
+}
+
+.scheduler-bulk-asset-card {
+  display: grid;
+  gap: 0.9rem;
+  padding: 0.95rem;
+  border-radius: 22px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background:
+    radial-gradient(circle at top, rgba(143, 216, 255, 0.05), transparent 58%),
+    rgba(255, 255, 255, 0.025);
+}
+
+.scheduler-bulk-asset-card__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.85rem;
+}
+
+.scheduler-bulk-asset-card__identity {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  min-width: 0;
+}
+
+.scheduler-bulk-asset-card__copy {
+  display: grid;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+.scheduler-bulk-asset-card__copy strong {
+  overflow-wrap: anywhere;
+}
+
+.scheduler-bulk-asset-card__copy span,
+.scheduler-bulk-slot__platform,
+.scheduler-bulk-matrix__media span {
+  color: var(--text-soft);
+  font-size: 0.82rem;
+}
+
+.scheduler-bulk-asset-card__actions,
+.scheduler-bulk-slot__actions,
+.scheduler-bulk-builder__submit-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+}
+
+.scheduler-bulk-asset-card__preview {
+  padding-top: 0.2rem;
+}
+
+.scheduler-bulk-asset-card__body {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.scheduler-instagram-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.48rem;
+  width: fit-content;
+  max-width: 100%;
+  padding: 0.56rem 0.72rem;
+  border-radius: 14px;
+  border: 1px solid rgba(143, 216, 255, 0.14);
+  background: rgba(143, 216, 255, 0.08);
+  color: #dff5ff;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.scheduler-instagram-note span {
+  color: inherit;
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
+.scheduler-instagram-note--warning {
+  border-color: rgba(255, 184, 121, 0.2);
+  background: rgba(255, 184, 121, 0.1);
+  color: #ffe2c4;
+}
+
+.scheduler-bulk-slots {
+  display: grid;
+  gap: 0.8rem;
+}
+
+.scheduler-bulk-slot {
+  display: grid;
+  gap: 0.72rem;
+  padding: 0.88rem;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.025);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.scheduler-bulk-slot__header,
+.scheduler-bulk-slot__footer,
+.scheduler-bulk-builder__footer,
+.scheduler-bulk-matrix__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8rem;
+}
+
+.scheduler-bulk-slot__fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.8rem;
+}
+
+.scheduler-bulk-builder__footer {
+  margin-top: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.scheduler-bulk-matrix {
+  display: grid;
+  gap: 0.7rem;
+  padding-top: 0.1rem;
+}
+
+.scheduler-bulk-matrix__header h3 {
+  margin: 0;
+}
+
+.scheduler-bulk-matrix__list {
+  display: grid;
+  gap: 0.7rem;
+}
+
+.scheduler-bulk-matrix__row {
+  padding: 0.72rem 0.88rem;
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  background: rgba(255, 255, 255, 0.022);
+}
+
+.scheduler-bulk-matrix__row > span {
+  min-width: 0;
+  color: var(--text-main);
+  font-size: 0.86rem;
+  overflow-wrap: anywhere;
+}
+
+.scheduler-bulk-matrix__media {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-width: 0;
+}
+
+.scheduler-bulk-matrix__media div {
+  display: grid;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.scheduler-bulk-matrix__media strong {
+  overflow-wrap: anywhere;
+}
+
+.scheduler-bulk-empty {
+  padding-block: 0.95rem;
+}
+
+.scheduler-drafts-modal {
+  width: min(760px, 100%);
+}
+
+.scheduler-drafts-list {
+  display: grid;
+  gap: 0.8rem;
+}
+
+.scheduler-draft-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.9rem 1rem;
+  border-radius: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.024);
+  cursor: pointer;
+  transition:
+    border-color 160ms ease,
+    background 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.scheduler-draft-row:hover,
+.scheduler-draft-row:focus-visible {
+  outline: none;
+  border-color: rgba(143, 216, 255, 0.18);
+  background: rgba(255, 255, 255, 0.038);
+  box-shadow: 0 12px 28px rgba(10, 17, 28, 0.18);
+}
+
+.scheduler-draft-row__copy {
+  display: grid;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+.scheduler-draft-row__copy strong {
+  overflow-wrap: anywhere;
+}
+
+.scheduler-draft-row__copy span {
+  color: var(--text-soft);
+  font-size: 0.82rem;
+}
+
+.scheduler-draft-row__actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.65rem;
+  flex-wrap: wrap;
+}
+
+@keyframes scheduler-toast-enter {
+  from {
+    opacity: 0;
+    transform: translate3d(18px, 0, 0) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+@keyframes scheduler-toast-exit {
+  from {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translate3d(14px, 0, 0) scale(0.98);
+  }
+}
+
+@keyframes scheduler-helper-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .scheduler-queue-panel {
@@ -3092,6 +3646,14 @@ img {
 
 .scheduler-channel-modal__panel--disconnect {
   width: min(700px, 100%);
+}
+
+.scheduler-generated-media-modal {
+  width: min(680px, 100%);
+}
+
+.scheduler-generated-media-modal__summary span {
+  overflow-wrap: anywhere;
 }
 
 .scheduler-channel-modal__header {
@@ -3824,10 +4386,36 @@ img {
 }
 
 .scheduler-upload {
+  position: relative;
   transition:
     border-color 180ms ease,
     background 180ms ease,
     transform 180ms ease;
+}
+
+.scheduler-upload__helper {
+  position: absolute;
+  top: 1rem;
+  right: 1rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.42rem;
+  max-width: min(28rem, 48%);
+  padding: 0.46rem 0.65rem;
+  border-radius: 999px;
+  border: 1px solid rgba(143, 216, 255, 0.1);
+  background: rgba(143, 216, 255, 0.05);
+  color: rgba(215, 230, 245, 0.72);
+  font-size: 0.74rem;
+  line-height: 1.2;
+  white-space: nowrap;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02);
+  animation: scheduler-helper-fade-in 220ms ease;
+}
+
+.scheduler-upload__helper svg {
+  flex-shrink: 0;
+  color: rgba(163, 213, 255, 0.82);
 }
 
 .scheduler-upload--active {
@@ -3837,6 +4425,14 @@ img {
 }
 
 @media (max-width: 900px) {
+  .scheduler-upload__helper {
+    position: static;
+    margin-bottom: 0.7rem;
+    max-width: 100%;
+    white-space: normal;
+    justify-self: start;
+  }
+
   .scheduler-channel-shell__header,
   .scheduler-channel-disconnect__actions {
     flex-direction: column;
@@ -3845,9 +4441,17 @@ img {
 
   .scheduler-channel-card,
   .scheduler-inline-media__summary,
-  .queue-post-item__row {
+  .queue-post-item__row,
+  .scheduler-bulk-builder__media-inputs,
+  .scheduler-bulk-builder__top,
+  .scheduler-bulk-asset-card__header,
+  .scheduler-bulk-slot__fields,
+  .scheduler-bulk-slot__footer,
+  .scheduler-bulk-builder__footer,
+  .scheduler-bulk-matrix__row {
     grid-template-columns: 1fr;
     align-items: start;
+    display: grid;
   }
 
   .scheduler-channel-card {
@@ -3856,12 +4460,32 @@ img {
 
   .scheduler-channel-card__actions,
   .queue-post-item__actions,
-  .scheduler-inline-media__actions {
+  .scheduler-inline-media__actions,
+  .scheduler-bulk-asset-card__actions,
+  .scheduler-bulk-slot__actions,
+  .scheduler-bulk-builder__submit-group {
     justify-content: flex-start;
+  }
+
+  .scheduler-url-import__header,
+  .scheduler-url-import__status-card,
+  .scheduler-url-import__controls {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .scheduler-url-import__hint {
+    max-width: none;
+    text-align: left;
   }
 
   .scheduler-channel-modal__grid {
     grid-template-columns: 1fr;
+  }
+
+  .scheduler-draft-row {
+    flex-direction: column;
+    align-items: stretch;
   }
 
   .scheduler-channel-selector__rail {
@@ -3900,6 +4524,10 @@ img {
 
   .scheduler-channel-card {
     min-height: unset;
+  }
+
+  .scheduler-bulk-builder__summary {
+    min-width: 0;
   }
 
   .scheduler-queue__tabs {
@@ -5786,6 +6414,8 @@ img {
   display: inline-flex;
   align-items: center;
   gap: 0.45rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .generated-image-card__action {
@@ -5807,6 +6437,62 @@ img {
 .generated-image-card__action:hover {
   color: var(--text-main);
   background: rgba(255, 255, 255, 0.06);
+}
+
+.generated-image-card__schedule {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  min-height: 34px;
+  padding: 0 0.82rem;
+  border-radius: 999px;
+  border: 1px solid rgba(143, 216, 255, 0.2);
+  background:
+    linear-gradient(135deg, rgba(143, 216, 255, 0.16), rgba(115, 240, 213, 0.1)),
+    rgba(255, 255, 255, 0.03);
+  color: #eaf7ff;
+  box-shadow: 0 10px 24px rgba(110, 194, 224, 0.12);
+  transition:
+    transform 180ms ease,
+    box-shadow 180ms ease,
+    border-color 180ms ease,
+    background 180ms ease,
+    color 180ms ease;
+}
+
+.generated-image-card__schedule span {
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.generated-image-card__schedule svg {
+  transition: transform 180ms ease;
+}
+
+.generated-image-card__schedule:hover:not(:disabled) {
+  transform: translateY(-1px) scale(1.01);
+  border-color: rgba(143, 216, 255, 0.32);
+  background:
+    linear-gradient(135deg, rgba(143, 216, 255, 0.22), rgba(115, 240, 213, 0.16)),
+    rgba(255, 255, 255, 0.05);
+  box-shadow: 0 14px 28px rgba(110, 194, 224, 0.16);
+  color: #ffffff;
+}
+
+.generated-image-card__schedule:hover:not(:disabled) svg {
+  transform: translateX(1px);
+}
+
+.generated-image-card__schedule:active:not(:disabled) {
+  transform: translateY(0) scale(0.985);
+}
+
+.generated-image-card__schedule:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  box-shadow: none;
 }
 
 .generated-image-card__action--disabled {

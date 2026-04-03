@@ -31,9 +31,10 @@ const formatValidationIssue = (issue: ZodIssue) => {
 export const validate = (schema: ZodType) => 
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      // 1. Validate the body against the schema
-      // .parse() will throw an error if validation fails
-      await schema.parseAsync(req.body);
+      const target =
+        req.method === 'GET' || req.method === 'HEAD' ? req.query : req.body;
+
+      await schema.parseAsync(target);
       
       next();
     } catch (error) {
