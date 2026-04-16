@@ -25,6 +25,7 @@ import {
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
+import { BlackHoleCanvas } from '../../components/home/BlackHoleCanvas';
 import { MediaThumbnail } from '../../components/scheduler/MediaThumbnail';
 import { MediaPreview } from '../../components/scheduler/MediaPreview';
 import { QueuePostItem } from '../../components/scheduler/QueuePostItem';
@@ -35,6 +36,7 @@ import { Button } from '../../components/ui/button';
 import { Card } from '../../components/ui/card';
 import { Input } from '../../components/ui/input';
 import { Select } from '../../components/ui/select';
+import { useAuth } from '../../hooks/useAuth';
 import { useScheduler } from '../../hooks/useScheduler';
 import {
   fetchMediaBlob,
@@ -168,6 +170,8 @@ const getPlatformBadgeIcon = (platform: SocialPlatform) =>
 const QUEUE_ACTION_BUFFER_MS = 4_000;
 const SCHEDULE_MIN_BUFFER_MS = 5_000;
 const SCHEDULE_TIME_VALIDATION_MESSAGE = 'Please select a future date and time.';
+const SCHEDULER_PLANNER_PERSISTENCE_TTL_MS = 6 * 60 * 60 * 1000;
+const SCHEDULER_PLANNER_STORAGE_KEY_PREFIX = 'prixmoai.scheduler.planner.v1';
 
 const queueTabs: Array<{
   id: QueueTabId;
@@ -326,6 +330,16 @@ type SchedulerLocationState = {
   generatedMediaIntent?: SchedulerGeneratedMediaIntent | null;
 };
 
+type PersistedSchedulerPlannerState = {
+  ownerUserId: string;
+  savedAt: string;
+  expiresAt: string;
+  batchName: string;
+  activeBatchId: string | null;
+  isPlannerDirty: boolean;
+  plannerAssets: PlannerAsset[];
+};
+
 type PlannerSlot = {
   id: string;
   socialAccountId: string;
@@ -337,6 +351,7 @@ type PlannerSlot = {
 
 type PlannerAsset = {
   id: string;
+  dedupeKey: string;
   mediaAssetId: string;
   sourceType: 'upload' | 'generated' | 'url';
   mediaType: SchedulerMediaType;
@@ -379,6 +394,115 @@ const createLocalPlannerId = () => {
   return `planner-${Math.random().toString(36).slice(2, 10)}`;
 };
 
+const RECENT_TOAST_DEDUPE_WINDOW_MS = 1_500;
+
+const schedulerGeneratedIntentProcessingIds = new Set<string>();
+const schedulerGeneratedIntentHandledIds = new Set<string>();
+
+const logSchedulerDebug = (
+  event: string,
+  payload?: Record<string, unknown>
+) => {
+  if (!import.meta.env.DEV) {
+    return;
+  }
+
+  console.info('[scheduler-debug]', event, payload ?? {});
+};
+
+const buildUploadFileDedupeKey = (file: File) =>
+  `upload:${file.name}:${file.size}:${file.lastModified}:${file.type}`;
+
+const buildUrlDedupeKey = (value: string) => `url:${value.trim().toLowerCase()}`;
+
+const buildGeneratedIntentDedupeKey = (intent: SchedulerGeneratedMediaIntent) =>
+  `generated:${intent.generatedImageId}:${intent.mediaUrl}`;
+
+const derivePlannerAssetDedupeKey = (mediaAsset: MediaAsset) => {
+  if (mediaAsset.sourceType === 'generated') {
+    return `generated:${mediaAsset.generatedImageId ?? mediaAsset.storageUrl}`;
+  }
+
+  if (mediaAsset.sourceType === 'url') {
+    return buildUrlDedupeKey(mediaAsset.originalUrl ?? mediaAsset.storageUrl);
+  }
+
+  return `upload:${mediaAsset.filename ?? mediaAsset.storageUrl}:${mediaAsset.sizeBytes ?? 0}:${mediaAsset.mimeType ?? ''}`;
+};
+
+const getSchedulerPlannerStorageKey = (userId: string) =>
+  `${SCHEDULER_PLANNER_STORAGE_KEY_PREFIX}:${userId}`;
+
+const readPersistedSchedulerPlannerState = (
+  userId: string
+): PersistedSchedulerPlannerState | null => {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+
+  try {
+    const rawValue = window.localStorage.getItem(getSchedulerPlannerStorageKey(userId));
+
+    if (!rawValue) {
+      return null;
+    }
+
+    const parsed = JSON.parse(rawValue) as PersistedSchedulerPlannerState | null;
+
+    if (
+      !parsed ||
+      parsed.ownerUserId !== userId ||
+      typeof parsed.savedAt !== 'string' ||
+      typeof parsed.expiresAt !== 'string' ||
+      typeof parsed.batchName !== 'string' ||
+      !Array.isArray(parsed.plannerAssets)
+    ) {
+      window.localStorage.removeItem(getSchedulerPlannerStorageKey(userId));
+      return null;
+    }
+
+    if (new Date(parsed.expiresAt).getTime() <= Date.now()) {
+      window.localStorage.removeItem(getSchedulerPlannerStorageKey(userId));
+      return null;
+    }
+
+    return parsed;
+  } catch {
+    window.localStorage.removeItem(getSchedulerPlannerStorageKey(userId));
+    return null;
+  }
+};
+
+const writePersistedSchedulerPlannerState = (
+  userId: string,
+  state: Omit<PersistedSchedulerPlannerState, 'ownerUserId' | 'savedAt' | 'expiresAt'>
+) => {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  const now = Date.now();
+  const payload: PersistedSchedulerPlannerState = {
+    ownerUserId: userId,
+    savedAt: new Date(now).toISOString(),
+    expiresAt: new Date(now + SCHEDULER_PLANNER_PERSISTENCE_TTL_MS).toISOString(),
+    ...state,
+  };
+
+  window.localStorage.setItem(
+    getSchedulerPlannerStorageKey(userId),
+    JSON.stringify(payload)
+  );
+};
+
+const clearPersistedSchedulerPlannerState = (userId: string | null | undefined) => {
+  if (typeof window === 'undefined' || !userId) {
+    return;
+  }
+
+  window.localStorage.removeItem(getSchedulerPlannerStorageKey(userId));
+};
+
 const buildPlannerSlot = (
   scheduledAt: string,
   socialAccountId = ''
@@ -417,6 +541,7 @@ const buildPlannerAssetFromMediaAsset = ({
   title,
   scheduledAt,
   defaultSocialAccountId,
+  dedupeKey,
 }: {
   mediaAsset: MediaAsset;
   caption?: string | null;
@@ -424,9 +549,11 @@ const buildPlannerAssetFromMediaAsset = ({
   title?: string | null;
   scheduledAt: string;
   defaultSocialAccountId?: string;
+  dedupeKey?: string;
 }): PlannerAsset => ({
   ...readPlannerAssetInstagramMetadata(mediaAsset.metadata),
   id: createLocalPlannerId(),
+  dedupeKey: dedupeKey ?? derivePlannerAssetDedupeKey(mediaAsset),
   mediaAssetId: mediaAsset.id,
   sourceType: mediaAsset.sourceType,
   mediaType: mediaAsset.mediaType,
@@ -451,6 +578,7 @@ const buildPlannerAssetFromMediaAsset = ({
 
 export const SchedulerPage = () => {
   const location = useLocation();
+  const { user } = useAuth();
   const scheduler = useScheduler();
   const [oauthError, setOauthError] = useState<string | null>(null);
   const [oauthNotice, setOauthNotice] = useState<string | null>(null);
@@ -505,6 +633,12 @@ export const SchedulerPage = () => {
   const mediaUrlResolveRequestId = useRef(0);
   const activeMediaUrlImportRef = useRef<string | null>(null);
   const hasLoadedDraftsRef = useRef(false);
+  const plannerAssetKeysRef = useRef<Set<string>>(new Set());
+  const activePlannerImportKeysRef = useRef<Set<string>>(new Set());
+  const recentToastTimestampsRef = useRef<Record<string, number>>({});
+  const generatedIntentEffectRunsRef = useRef(0);
+  const hasHydratedPersistedPlannerRef = useRef(false);
+  const hydratedPlannerUserIdRef = useRef<string | null>(null);
   const schedulerToastTimersRef = useRef<
     Record<string, { exitTimer: number; removeTimer: number }>
   >({});
@@ -554,6 +688,78 @@ export const SchedulerPage = () => {
       window.clearInterval(interval);
     };
   }, []);
+
+  useEffect(() => {
+    const nextUserId = user?.id ?? null;
+
+    if (hydratedPlannerUserIdRef.current !== nextUserId) {
+      hydratedPlannerUserIdRef.current = nextUserId;
+      hasHydratedPersistedPlannerRef.current = false;
+    }
+  }, [user?.id]);
+
+  useEffect(() => {
+    plannerAssetKeysRef.current = new Set(plannerAssets.map((asset) => asset.dedupeKey));
+  }, [plannerAssets]);
+
+  useEffect(() => {
+    if (!user?.id || hasHydratedPersistedPlannerRef.current) {
+      return;
+    }
+
+    const routeState = (location.state as SchedulerLocationState | null) ?? null;
+    const routeIntent = parseSchedulerGeneratedMediaIntent(routeState?.generatedMediaIntent);
+    const storedGeneratedIntent = readSchedulerGeneratedMediaIntent();
+
+    if (routeIntent || storedGeneratedIntent) {
+      hasHydratedPersistedPlannerRef.current = true;
+      return;
+    }
+
+    const persistedPlanner = readPersistedSchedulerPlannerState(user.id);
+    hasHydratedPersistedPlannerRef.current = true;
+
+    if (!persistedPlanner) {
+      return;
+    }
+
+    setBatchName(persistedPlanner.batchName);
+    setPlannerAssets(
+      persistedPlanner.plannerAssets.map((asset) => ({
+        ...asset,
+        isPreviewOpen: false,
+      }))
+    );
+    setActiveBatchId(persistedPlanner.activeBatchId);
+    setIsPlannerDirty(persistedPlanner.isPlannerDirty);
+    setComposerError(null);
+    setComposerNotice(null);
+    logSchedulerDebug('planner restored from local persistence', {
+      userId: user.id,
+      assetCount: persistedPlanner.plannerAssets.length,
+      activeBatchId: persistedPlanner.activeBatchId,
+      expiresAt: persistedPlanner.expiresAt,
+    });
+    setPlannerToast('Recovered your scheduler media from this browser.');
+  }, [location.state, user?.id]);
+
+  useEffect(() => {
+    if (!user?.id || !hasHydratedPersistedPlannerRef.current) {
+      return;
+    }
+
+    if (!plannerAssets.length && !batchName.trim() && !activeBatchId) {
+      clearPersistedSchedulerPlannerState(user.id);
+      return;
+    }
+
+    writePersistedSchedulerPlannerState(user.id, {
+      batchName,
+      plannerAssets,
+      activeBatchId,
+      isPlannerDirty,
+    });
+  }, [activeBatchId, batchName, isPlannerDirty, plannerAssets, user?.id]);
 
   const removeSchedulerToast = useCallback((toastId: string) => {
     const timers = schedulerToastTimersRef.current[toastId];
@@ -605,6 +811,22 @@ export const SchedulerPage = () => {
       title: string;
       message: string;
     }) => {
+      const signature = `${type}:${title}:${message}`;
+      const now = Date.now();
+      const previousTimestamp = recentToastTimestampsRef.current[signature];
+
+      if (
+        previousTimestamp &&
+        now - previousTimestamp < RECENT_TOAST_DEDUPE_WINDOW_MS
+      ) {
+        logSchedulerDebug('toast skipped as duplicate', {
+          signature,
+        });
+        return;
+      }
+
+      recentToastTimestampsRef.current[signature] = now;
+
       const toastId = createLocalPlannerId();
 
       setSchedulerToasts((current) => [
@@ -908,43 +1130,120 @@ export const SchedulerPage = () => {
       notice: string,
       mode: 'append' | 'replace' = 'append'
     ) => {
+      const dedupeKey = buildGeneratedIntentDedupeKey(intent);
+
+      if (schedulerGeneratedIntentHandledIds.has(intent.intentId)) {
+        logSchedulerDebug('generated media skipped because intent already handled', {
+          intentId: intent.intentId,
+          dedupeKey,
+        });
+        return;
+      }
+
+      if (schedulerGeneratedIntentProcessingIds.has(intent.intentId)) {
+        logSchedulerDebug('generated media skipped because intent is already processing', {
+          intentId: intent.intentId,
+          dedupeKey,
+        });
+        return;
+      }
+
+      if (
+        mode === 'append' &&
+        (plannerAssetKeysRef.current.has(dedupeKey) ||
+          activePlannerImportKeysRef.current.has(dedupeKey))
+      ) {
+        logSchedulerDebug('generated media skipped as duplicate', {
+          intentId: intent.intentId,
+          dedupeKey,
+        });
+        schedulerGeneratedIntentHandledIds.add(intent.intentId);
+        clearSchedulerGeneratedMediaIntent();
+        setAppliedGeneratedMediaIntentId(intent.intentId);
+        setPendingGeneratedMediaIntent(null);
+        return;
+      }
+
+      schedulerGeneratedIntentProcessingIds.add(intent.intentId);
+      activePlannerImportKeysRef.current.add(dedupeKey);
+      logSchedulerDebug('generated media upload started', {
+        intentId: intent.intentId,
+        dedupeKey,
+        mode,
+      });
+
       const availableAccounts = scheduler.accounts?.items ?? [];
-      const mediaAsset = await createPreparedPlannerMediaAsset({
-        sourceType: 'generated',
-        sourceUrl: intent.mediaUrl,
-        fallbackFileName: intent.title ?? 'generated-media',
-        title: intent.title ?? 'Generated media',
-        prompt: intent.prompt,
-        contentId: intent.contentId,
-        generatedImageId: intent.generatedImageId,
-        metadata: {
-          conversationId: intent.conversationId,
-          ...(intent.metadata ?? {}),
-        },
-      });
+      try {
+        const mediaAsset = await createPreparedPlannerMediaAsset({
+          sourceType: 'generated',
+          sourceUrl: intent.mediaUrl,
+          fallbackFileName: intent.title ?? 'generated-media',
+          title: intent.title ?? 'Generated media',
+          prompt: intent.prompt,
+          contentId: intent.contentId,
+          generatedImageId: intent.generatedImageId,
+          metadata: {
+            conversationId: intent.conversationId,
+            ...(intent.metadata ?? {}),
+          },
+        });
 
-      const nextAsset = buildPlannerAssetFromMediaAsset({
-        mediaAsset,
-        caption: intent.caption,
-        prompt: intent.prompt,
-        title: intent.title ?? 'Generated media',
-        scheduledAt: defaultDateTime,
-        defaultSocialAccountId: availableAccounts[0]?.id,
-      });
+        logSchedulerDebug('generated media upload succeeded', {
+          intentId: intent.intentId,
+          dedupeKey,
+          mediaAssetId: mediaAsset.id,
+        });
 
-      setComposerError(null);
-      setComposerNotice(notice);
-      setPlannerAssets((current) =>
-        mode === 'replace' ? [nextAsset] : [...current, nextAsset]
-      );
-      setPendingGeneratedMediaIntent(null);
-      setAppliedGeneratedMediaIntentId(intent.intentId);
-      setDismissedGeneratedMediaIntentId(null);
-      setIsPlannerDirty(true);
-      setActiveBatchId(null);
-      writeSchedulerGeneratedMediaIntent(intent);
+        const nextAsset = buildPlannerAssetFromMediaAsset({
+          mediaAsset,
+          caption: intent.caption,
+          prompt: intent.prompt,
+          title: intent.title ?? 'Generated media',
+          scheduledAt: defaultDateTime,
+          defaultSocialAccountId: availableAccounts[0]?.id,
+          dedupeKey,
+        });
+
+        logSchedulerDebug('schedule row created', {
+          mediaAssetId: mediaAsset.id,
+          dedupeKey,
+          slotCount: nextAsset.slots.length,
+          sourceType: 'generated',
+        });
+
+        setComposerError(null);
+        setComposerNotice(notice);
+        setPlannerAssets((current) =>
+          mode === 'replace' ? [nextAsset] : [...current, nextAsset]
+        );
+        setPendingGeneratedMediaIntent(null);
+        setAppliedGeneratedMediaIntentId(intent.intentId);
+        setDismissedGeneratedMediaIntentId(null);
+        setIsPlannerDirty(true);
+        setActiveBatchId(null);
+        clearSchedulerGeneratedMediaIntent();
+        schedulerGeneratedIntentHandledIds.add(intent.intentId);
+      } catch (generatedError) {
+        logSchedulerDebug('generated media apply failed', {
+          intentId: intent.intentId,
+          dedupeKey,
+          message:
+            generatedError instanceof Error
+              ? generatedError.message
+              : 'Unknown generated media error',
+        });
+        setComposerNotice(null);
+        setComposerError(
+          generatedError instanceof Error
+            ? generatedError.message
+            : 'Failed to add generated media to the batch.'
+        );
+      } finally {
+        activePlannerImportKeysRef.current.delete(dedupeKey);
+        schedulerGeneratedIntentProcessingIds.delete(intent.intentId);
+      }
     },
-    [createPreparedPlannerMediaAsset, defaultDateTime, scheduler]
+    [createPreparedPlannerMediaAsset, defaultDateTime, scheduler.accounts?.items]
   );
 
   useEffect(() => {
@@ -955,14 +1254,30 @@ export const SchedulerPage = () => {
     const storedIntent = readSchedulerGeneratedMediaIntent();
     const nextIntent = routeIntent ?? storedIntent;
 
+    generatedIntentEffectRunsRef.current += 1;
+
     if (!nextIntent) {
       return;
     }
 
+    logSchedulerDebug('generated media effect re-ran', {
+      run: generatedIntentEffectRunsRef.current,
+      intentId: nextIntent.intentId,
+      plannerAssetCount: plannerAssets.length,
+      appliedIntentId: appliedGeneratedMediaIntentId,
+      dismissedIntentId: dismissedGeneratedMediaIntentId,
+      pendingIntentId: pendingGeneratedMediaIntent?.intentId ?? null,
+      isProcessing: schedulerGeneratedIntentProcessingIds.has(nextIntent.intentId),
+      isHandled: schedulerGeneratedIntentHandledIds.has(nextIntent.intentId),
+      locationKey: location.key,
+    });
+
     if (
       nextIntent.intentId === appliedGeneratedMediaIntentId ||
       nextIntent.intentId === dismissedGeneratedMediaIntentId ||
-      nextIntent.intentId === pendingGeneratedMediaIntent?.intentId
+      nextIntent.intentId === pendingGeneratedMediaIntent?.intentId ||
+      schedulerGeneratedIntentProcessingIds.has(nextIntent.intentId) ||
+      schedulerGeneratedIntentHandledIds.has(nextIntent.intentId)
     ) {
       return;
     }
@@ -999,6 +1314,7 @@ export const SchedulerPage = () => {
   const importMediaUrlToPlanner = useCallback(
     async (rawValue: string) => {
       const normalized = rawValue.trim();
+      const dedupeKey = buildUrlDedupeKey(normalized);
 
       if (!normalized) {
         setResolvedMediaPreview(null);
@@ -1012,19 +1328,41 @@ export const SchedulerPage = () => {
         return;
       }
 
-      if (activeMediaUrlImportRef.current === normalized) {
+      if (
+        activeMediaUrlImportRef.current === normalized ||
+        activePlannerImportKeysRef.current.has(dedupeKey)
+      ) {
+        logSchedulerDebug('media url skipped because import is already in progress', {
+          dedupeKey,
+          url: normalized,
+        });
+        return;
+      }
+
+      if (plannerAssetKeysRef.current.has(dedupeKey)) {
+        logSchedulerDebug('media url skipped as duplicate', {
+          dedupeKey,
+          url: normalized,
+        });
+        setMediaUrlValidationMessage('This media link is already in the batch.');
         return;
       }
 
       const requestId = mediaUrlResolveRequestId.current + 1;
       mediaUrlResolveRequestId.current = requestId;
       activeMediaUrlImportRef.current = normalized;
+      activePlannerImportKeysRef.current.add(dedupeKey);
 
       setComposerError(null);
       setComposerNotice(null);
       setMediaUrlValidationMessage(null);
       setIsResolvingMediaUrl(true);
       setIsImportingMediaUrl(true);
+
+      logSchedulerDebug('media url import started', {
+        dedupeKey,
+        url: normalized,
+      });
 
       try {
         const directMediaType = inferMediaTypeFromUrl(normalized);
@@ -1061,17 +1399,28 @@ export const SchedulerPage = () => {
           return;
         }
 
+        logSchedulerDebug('media url import succeeded', {
+          dedupeKey,
+          mediaAssetId: mediaAsset.id,
+          url: normalized,
+        });
+
         clearSchedulerGeneratedMediaIntent();
         setDismissedGeneratedMediaIntentId(null);
-        setPlannerAssets((current) => [
-          ...current,
-          buildPlannerAssetFromMediaAsset({
-            mediaAsset,
-            title: resolvedFileName,
-            scheduledAt: defaultDateTime,
-            defaultSocialAccountId: scheduler.accounts?.items?.[0]?.id ?? '',
-          }),
-        ]);
+        const nextAsset = buildPlannerAssetFromMediaAsset({
+          mediaAsset,
+          title: resolvedFileName,
+          scheduledAt: defaultDateTime,
+          defaultSocialAccountId: scheduler.accounts?.items?.[0]?.id ?? '',
+          dedupeKey,
+        });
+        logSchedulerDebug('schedule row created', {
+          mediaAssetId: mediaAsset.id,
+          dedupeKey,
+          slotCount: nextAsset.slots.length,
+          sourceType: 'url',
+        });
+        setPlannerAssets((current) => [...current, nextAsset]);
         setComposerNotice('Media link added to the planner.');
         markPlannerDirty();
         resetMediaUrlComposer();
@@ -1091,6 +1440,7 @@ export const SchedulerPage = () => {
           if (activeMediaUrlImportRef.current === normalized) {
             activeMediaUrlImportRef.current = null;
           }
+          activePlannerImportKeysRef.current.delete(dedupeKey);
         }
       }
     },
@@ -1421,6 +1771,7 @@ export const SchedulerPage = () => {
     clearSchedulerGeneratedMediaIntent();
     setAppliedGeneratedMediaIntentId(null);
     setDismissedGeneratedMediaIntentId(null);
+    clearPersistedSchedulerPlannerState(user?.id);
   };
 
   const buildPlannerAssetsFromBatchDetail = useCallback(
@@ -1450,6 +1801,7 @@ export const SchedulerPage = () => {
         return {
           ...readPlannerAssetInstagramMetadata(mediaAsset.metadata),
           id: createLocalPlannerId(),
+          dedupeKey: derivePlannerAssetDedupeKey(mediaAsset),
           mediaAssetId: mediaAsset.id,
           sourceType: mediaAsset.sourceType,
           mediaType: mediaAsset.mediaType,
@@ -1640,8 +1992,32 @@ export const SchedulerPage = () => {
       setComposerNotice(null);
 
       const createdAssets: PlannerAsset[] = [];
+      const skippedDuplicateCount = { value: 0 };
 
       for (const file of files) {
+        const dedupeKey = buildUploadFileDedupeKey(file);
+
+        if (
+          plannerAssetKeysRef.current.has(dedupeKey) ||
+          activePlannerImportKeysRef.current.has(dedupeKey)
+        ) {
+          skippedDuplicateCount.value += 1;
+          logSchedulerDebug('file upload skipped as duplicate', {
+            dedupeKey,
+            fileName: file.name,
+            size: file.size,
+          });
+          continue;
+        }
+
+        activePlannerImportKeysRef.current.add(dedupeKey);
+        logSchedulerDebug('file upload started', {
+          dedupeKey,
+          fileName: file.name,
+          size: file.size,
+          type: file.type,
+        });
+
         const mediaAsset = await createPreparedPlannerMediaAsset({
           sourceType: 'upload',
           file,
@@ -1650,27 +2026,47 @@ export const SchedulerPage = () => {
           metadata: {
             uploadedFrom: 'scheduler-bulk',
           },
+        }).finally(() => {
+          activePlannerImportKeysRef.current.delete(dedupeKey);
         });
 
-        createdAssets.push(
-          buildPlannerAssetFromMediaAsset({
-            mediaAsset,
-            title: file.name,
-            scheduledAt: defaultDateTime,
-            defaultSocialAccountId: defaultPlannerAccountId,
-          })
-        );
+        logSchedulerDebug('file upload succeeded', {
+          dedupeKey,
+          mediaAssetId: mediaAsset.id,
+          fileName: file.name,
+        });
+
+        const nextAsset = buildPlannerAssetFromMediaAsset({
+          mediaAsset,
+          title: file.name,
+          scheduledAt: defaultDateTime,
+          defaultSocialAccountId: defaultPlannerAccountId,
+          dedupeKey,
+        });
+        logSchedulerDebug('schedule row created', {
+          mediaAssetId: mediaAsset.id,
+          dedupeKey,
+          slotCount: nextAsset.slots.length,
+          sourceType: 'upload',
+        });
+
+        createdAssets.push(nextAsset);
       }
 
       clearSchedulerGeneratedMediaIntent();
       setDismissedGeneratedMediaIntentId(null);
-      setPlannerAssets((current) => [...current, ...createdAssets]);
-      setComposerNotice(
-        createdAssets.length === 1
-          ? `${createdAssets[0]?.filename || 'Media'} added to the batch.`
-          : `${createdAssets.length} media assets added to the batch.`
-      );
-      markPlannerDirty();
+      if (createdAssets.length) {
+        setPlannerAssets((current) => [...current, ...createdAssets]);
+        setComposerNotice(
+          createdAssets.length === 1
+            ? `${createdAssets[0]?.filename || 'Media'} added to the batch.`
+            : `${createdAssets.length} media assets added to the batch.`
+        );
+        markPlannerDirty();
+      } else if (skippedDuplicateCount.value > 0) {
+        setComposerNotice(null);
+        setComposerError('That media is already in the batch.');
+      }
     } catch (uploadError) {
       setComposerNotice(null);
       setComposerError(
@@ -1682,14 +2078,16 @@ export const SchedulerPage = () => {
   };
 
   const handleMediaFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(event.target.files ?? []);
+    const input = event.currentTarget;
+    const files = Array.from(input.files ?? []);
+
+    input.value = '';
 
     if (!files.length) {
       return;
     }
 
     await persistUploadedFiles(files);
-    event.target.value = '';
   };
 
   const handleMediaUrlBlur = () => {
@@ -2270,7 +2668,22 @@ export const SchedulerPage = () => {
                 void handleMediaDrop(event);
               }}
             >
-              <span className="field__label">Upload media</span>
+              <div className="scheduler-upload__label-row">
+                <span className="field__label">Upload media</span>
+                {scheduler.isUploadingMedia ? (
+                  <div
+                    className="scheduler-upload__loader"
+                    role="status"
+                    aria-label="Uploading media"
+                    title="Uploading media"
+                  >
+                    <BlackHoleCanvas
+                      className="scheduler-upload__loader-canvas"
+                      particleCount={18}
+                    />
+                  </div>
+                ) : null}
+              </div>
               <div className="scheduler-upload__helper" role="note" aria-live="polite">
                 <Info size={13} />
                 <span>Post multiple images and videos to all platforms at once.</span>
@@ -2897,9 +3310,7 @@ export const SchedulerPage = () => {
                   {pendingGeneratedMediaIntent.title || 'Generated image from Generate'}
                 </strong>
                 <span>
-                  {pendingGeneratedMediaIntent.prompt?.trim()
-                    ? pendingGeneratedMediaIntent.prompt
-                    : 'Send this image straight into the bulk schedule builder.'}
+                  Send this image straight into the bulk schedule builder.
                 </span>
               </div>
             </div>

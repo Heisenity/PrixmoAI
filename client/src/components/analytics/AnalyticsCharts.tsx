@@ -243,13 +243,11 @@ export const StackedEngagementChart = memo(({
   points: AnalyticsTrendPoint[];
 }) => {
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
-  const [showShares, setShowShares] = useState(true);
   const [showReactions, setShowReactions] = useState(true);
   const values = points.map((point) =>
     point.likes +
     point.comments +
     point.saves +
-    (showShares ? point.shares : 0) +
     (showReactions ? point.reactions : 0)
   );
   const max = Math.max(...values, 1);
@@ -263,9 +261,6 @@ export const StackedEngagementChart = memo(({
           <h3>{title}</h3>
         </div>
         <div className="analytics-chart-card__toggles">
-          <button type="button" className={showShares ? 'is-active' : ''} onClick={() => setShowShares((value) => !value)}>
-            Shares
-          </button>
           <button type="button" className={showReactions ? 'is-active' : ''} onClick={() => setShowReactions((value) => !value)}>
             Reactions
           </button>
@@ -283,7 +278,6 @@ export const StackedEngagementChart = memo(({
               { key: 'likes', value: point.likes, className: 'analytics-chart__bar-segment--likes' },
               { key: 'comments', value: point.comments, className: 'analytics-chart__bar-segment--comments' },
               { key: 'saves', value: point.saves, className: 'analytics-chart__bar-segment--saves' },
-              ...(showShares ? [{ key: 'shares', value: point.shares, className: 'analytics-chart__bar-segment--shares' }] : []),
               ...(showReactions ? [{ key: 'reactions', value: point.reactions, className: 'analytics-chart__bar-segment--reactions' }] : []),
             ];
             let currentY = SVG_HEIGHT - CHART_PADDING.bottom;
@@ -320,7 +314,6 @@ export const StackedEngagementChart = memo(({
             <span>Likes {points[hoveredIndex]?.likes.toLocaleString()}</span>
             <span>Comments {points[hoveredIndex]?.comments.toLocaleString()}</span>
             <span>Saves {points[hoveredIndex]?.saves.toLocaleString()}</span>
-            {showShares ? <span>Shares {points[hoveredIndex]?.shares.toLocaleString()}</span> : null}
             {showReactions ? <span>Reactions {points[hoveredIndex]?.reactions.toLocaleString()}</span> : null}
           </div>
         ) : null}
@@ -329,7 +322,6 @@ export const StackedEngagementChart = memo(({
         <span><i className="analytics-chart__legend-swatch analytics-chart__legend-swatch--likes" />Likes</span>
         <span><i className="analytics-chart__legend-swatch analytics-chart__legend-swatch--comments" />Comments</span>
         <span><i className="analytics-chart__legend-swatch analytics-chart__legend-swatch--saves" />Saves</span>
-        <span><i className="analytics-chart__legend-swatch analytics-chart__legend-swatch--shares" />Shares</span>
         <span><i className="analytics-chart__legend-swatch analytics-chart__legend-swatch--reactions" />Reactions</span>
       </div>
       <span className="analytics-chart-card__footnote">{subtitle}</span>

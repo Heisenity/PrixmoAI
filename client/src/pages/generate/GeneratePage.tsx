@@ -160,25 +160,6 @@ const toStringArray = (value: unknown): string[] =>
         .filter(Boolean)
     : [];
 
-const normalizeHashtag = (value: string) => (value.startsWith('#') ? value : `#${value}`);
-
-const buildScheduleCaption = (
-  captions: CaptionVariant[],
-  hashtags: string[]
-): string | null => {
-  const primaryCaption =
-    captions[0]?.shortCaption?.trim() ||
-    captions[0]?.mainCopy?.trim() ||
-    captions[0]?.hook?.trim() ||
-    '';
-  const hashtagBlock = hashtags.length
-    ? hashtags.map((tag) => normalizeHashtag(tag.trim())).join(' ')
-    : '';
-  const combined = [primaryCaption, hashtagBlock].filter(Boolean).join('\n\n').trim();
-
-  return combined || null;
-};
-
 const toReelScript = (value: unknown): ReelScriptType | null => {
   const record = toRecord(value);
   const hook = typeof record.hook === 'string' ? record.hook.trim() : '';
@@ -324,6 +305,32 @@ const normalizeWorkspaceError = (
 
   if (/unable to reach the prixmoai server/i.test(message)) {
     return 'PrixmoAI could not reach the server. Check that the API is running, then try again.';
+  }
+
+  if (/reference image|image-to-image generation|text only/i.test(message)) {
+    return 'This request uses a reference image, and the available providers could not complete image-to-image generation right now. Try again in a moment, or remove the reference image to generate from text only.';
+  }
+
+  if (/too long for the current providers|at most 2000 character|prompt is too long|too_big/i.test(message)) {
+    return 'Your image brief is too long for the current providers. Shorten the product description or prompt and try again.';
+  }
+
+  if (/taking longer than expected|timed out/i.test(message)) {
+    return 'Image generation is taking longer than expected right now. Please try again in a moment.';
+  }
+
+  if (/temporarily unavailable|temporarily misconfigured|busy right now/i.test(message)) {
+    return 'The image providers are temporarily unavailable right now. Please try again in a moment.';
+  }
+
+  if (
+    /unexpected .* format|did not return valid json|invalid_type|reelscript/i.test(
+      message
+    )
+  ) {
+    return mode === 'copy'
+      ? 'The AI returned content in an unexpected format. Please try generating again.'
+      : 'The AI returned image data in an unexpected format. Please try again.';
   }
 
   return message;
@@ -488,12 +495,9 @@ const AssistantAssets = ({
         conversationId: image.conversationId,
         mediaUrl: image.generatedImageUrl,
         mediaType: 'image',
-        prompt: image.prompt,
-        title:
-          captions[0]?.hook?.trim() ||
-          image.prompt?.trim() ||
-          'Generated image from PrixmoAI',
-        caption: buildScheduleCaption(captions, hashtags),
+        prompt: null,
+        title: 'Generated image',
+        caption: null,
         createdAt: image.createdAt,
         metadata: {
           backgroundStyle: image.backgroundStyle,

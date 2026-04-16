@@ -1,6 +1,9 @@
 import { Request, Response } from 'express';
 import type { User } from '@supabase/supabase-js';
-import { generateProductImage } from '../ai/imageGen';
+import {
+  ImageGenerationProvidersExhaustedError,
+  generateProductImage,
+} from '../ai/imageGen';
 import { getBrandProfileByUserId } from '../db/queries/brandProfiles';
 import {
   getGeneratedImageById,
@@ -135,6 +138,25 @@ const buildWatermarkedSvg = (embeddedImageUrl: string) => `<?xml version="1.0" e
   </g>
 </svg>`;
 
+const logImageGenerationFailure = (
+  scope: 'image' | 'workspace-image',
+  userId: string,
+  error: unknown
+) => {
+  if (error instanceof ImageGenerationProvidersExhaustedError) {
+    console.error(`[${scope}] All image generation providers failed`, {
+      userId,
+      failures: error.failures,
+    });
+    return;
+  }
+
+  console.error(`[${scope}] Image generation failed`, {
+    userId,
+    error: error instanceof Error ? error.message : error,
+  });
+};
+
 export const generateImage = async (
   req: AuthenticatedRequest<{}, unknown, GenerateImageInput>,
   res: Response
@@ -180,7 +202,7 @@ export const generateImage = async (
       speedTier: runtimePolicy.speedTier,
       throttleDelayMs: runtimePolicy.throttleDelayMs,
       dailyUsageCountBeforeRequest: runtimePolicy.usageCount,
-    });
+    }, `image-generation:${image.id}`);
 
     res.setHeader('X-PrixmoAI-Queue-Tier', runtimePolicy.queueTier);
     res.setHeader('X-PrixmoAI-Speed-Tier', runtimePolicy.speedTier);
@@ -201,8 +223,13 @@ export const generateImage = async (
       },
     });
   } catch (error) {
+    logImageGenerationFailure('image', req.user?.id ?? 'unknown-user', error);
     const message =
-      error instanceof Error ? error.message : 'Failed to generate image';
+      error instanceof ImageGenerationProvidersExhaustedError
+        ? error.message
+        : error instanceof Error
+        ? error.message
+        : 'Failed to generate image';
 
     return res.status(502).json({
       status: 'error',

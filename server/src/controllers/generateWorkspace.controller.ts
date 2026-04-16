@@ -1,7 +1,14 @@
 import { Request, Response } from 'express';
 import type { User } from '@supabase/supabase-js';
-import { generateContentPack } from '../ai/gemini';
-import { generateProductImage } from '../ai/imageGen';
+import {
+  ContentGenerationProvidersExhaustedError,
+  generateContentPackWithFallback,
+  hasMeaningfulReelScript,
+} from '../ai/gemini';
+import {
+  ImageGenerationProvidersExhaustedError,
+  generateProductImage,
+} from '../ai/imageGen';
 import { FEATURE_KEYS } from '../config/constants';
 import { getBrandProfileByUserId } from '../db/queries/brandProfiles';
 import {
@@ -101,6 +108,36 @@ const buildAssistantCopySummary = (productName: string) =>
 
 const buildAssistantImageSummary = (productName: string) =>
   `Generated an image for ${productName}.`;
+
+const logWorkspaceCopyFailure = (userId: string, error: unknown) => {
+  if (error instanceof ContentGenerationProvidersExhaustedError) {
+    console.error('[workspace-copy] All content generation providers failed', {
+      userId,
+      failures: error.failures,
+    });
+    return;
+  }
+
+  console.error('[workspace-copy] Content generation failed', {
+    userId,
+    error: error instanceof Error ? error.message : error,
+  });
+};
+
+const logWorkspaceImageFailure = (userId: string, error: unknown) => {
+  if (error instanceof ImageGenerationProvidersExhaustedError) {
+    console.error('[workspace-image] All image generation providers failed', {
+      userId,
+      failures: error.failures,
+    });
+    return;
+  }
+
+  console.error('[workspace-image] Image generation failed', {
+    userId,
+    error: error instanceof Error ? error.message : error,
+  });
+};
 
 const resolveConversationType = (
   currentType: GenerateConversationType | null,
@@ -400,9 +437,14 @@ export const generateWorkspaceCopy = async (
     );
     const includeReelScript =
       reelScriptLimit === null || reelScriptUsageCount < reelScriptLimit;
-    const contentPack = await generateContentPack(brandProfile, generationInput, {
-      includeReelScript,
-    });
+    const { contentPack, provider } = await generateContentPackWithFallback(
+      brandProfile,
+      generationInput,
+      {
+        includeReelScript,
+      }
+    );
+    const hasReelScript = hasMeaningfulReelScript(contentPack.reelScript);
     const userPromptSummary = buildCopyPromptSummary(generationInput);
 
     const conversation =
@@ -467,7 +509,7 @@ export const generateWorkspaceCopy = async (
             hashtags: content.hashtags,
           },
         },
-        ...(includeReelScript
+        ...(hasReelScript
           ? [
               {
                 assetType: 'script' as const,
@@ -489,7 +531,7 @@ export const generateWorkspaceCopy = async (
     await trackContentGenerationUsage(client, req.user.id, {
       contentId: content.id,
       conversationId: conversation.id,
-      provider: 'gemini',
+      provider,
       brandProfileId: brandProfile?.id ?? null,
       platform: generationInput.platform ?? null,
       goal: generationInput.goal ?? null,
@@ -498,21 +540,21 @@ export const generateWorkspaceCopy = async (
       productName: generationInput.productName,
       productDescription: generationInput.productDescription ?? null,
       keywords: generationInput.keywords ?? [],
-      reelScriptIncluded: includeReelScript,
-    });
+      reelScriptIncluded: hasReelScript,
+    }, `content-generation:${content.id}`);
 
-    if (includeReelScript) {
+    if (hasReelScript) {
       await trackReelScriptGenerationUsage(client, req.user.id, {
         contentId: content.id,
         conversationId: conversation.id,
-        provider: 'gemini',
+        provider,
         brandProfileId: brandProfile?.id ?? null,
         platform: generationInput.platform ?? null,
         goal: generationInput.goal ?? null,
         tone: generationInput.tone ?? null,
         audience: generationInput.audience ?? null,
         productName: generationInput.productName,
-      });
+      }, `reel-script-generation:${content.id}`);
     }
 
     const thread = await getGenerateConversationThread(
@@ -527,10 +569,13 @@ export const generateWorkspaceCopy = async (
       data: thread,
     });
   } catch (error) {
+    logWorkspaceCopyFailure(req.user?.id ?? 'unknown-user', error);
     return res.status(500).json({
       status: 'error',
       message:
-        error instanceof Error
+        error instanceof ContentGenerationProvidersExhaustedError
+          ? error.message
+          : error instanceof Error
           ? error.message
           : 'Failed to generate content',
     });
@@ -657,7 +702,7 @@ export const generateWorkspaceImage = async (
       speedTier: runtimePolicy.speedTier,
       throttleDelayMs: runtimePolicy.throttleDelayMs,
       dailyUsageCountBeforeRequest: runtimePolicy.usageCount,
-    });
+    }, `image-generation:${image.id}`);
 
     res.setHeader('X-PrixmoAI-Queue-Tier', runtimePolicy.queueTier);
     res.setHeader('X-PrixmoAI-Speed-Tier', runtimePolicy.speedTier);
@@ -681,10 +726,13 @@ export const generateWorkspaceImage = async (
       },
     });
   } catch (error) {
+    logWorkspaceImageFailure(req.user?.id ?? 'unknown-user', error);
     return res.status(502).json({
       status: 'error',
       message:
-        error instanceof Error
+        error instanceof ImageGenerationProvidersExhaustedError
+          ? error.message
+          : error instanceof Error
           ? error.message
           : 'Failed to generate image',
     });

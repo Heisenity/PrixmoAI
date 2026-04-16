@@ -31,6 +31,14 @@ export const CLIENT_APP_URL = trimTrailingSlash(
 );
 export const DEFAULT_GEMINI_MODEL =
   process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+export const DEFAULT_GROQ_MODEL =
+  process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
+export const GEMINI_GENERATION_TIMEOUT_MS = Number(
+  process.env.GEMINI_GENERATION_TIMEOUT_MS || 12_000
+);
+export const GROQ_GENERATION_TIMEOUT_MS = Number(
+  process.env.GROQ_GENERATION_TIMEOUT_MS || 10_000
+);
 export const META_GRAPH_VERSION = process.env.META_GRAPH_VERSION || 'v23.0';
 export const META_FACEBOOK_APP_ID =
   process.env.META_FACEBOOK_APP_ID || process.env.META_APP_ID || '';

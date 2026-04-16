@@ -159,6 +159,13 @@ export const getImageDailyUsageCount = async (
 export const trackImageGenerationUsage = async (
   client: AppSupabaseClient,
   userId: string,
-  metadata: Record<string, unknown> = {}
+  metadata: Record<string, unknown> = {},
+  idempotencyKey?: string
 ) =>
-  recordUsageEvent(client, userId, FEATURE_KEYS.imageGeneration, metadata);
+  recordUsageEvent(
+    client,
+    userId,
+    FEATURE_KEYS.imageGeneration,
+    metadata,
+    idempotencyKey
+  );

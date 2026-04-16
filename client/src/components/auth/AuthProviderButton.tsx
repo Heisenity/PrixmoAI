@@ -9,6 +9,7 @@ export const AuthProviderButton = ({
   busyLabel,
   busy,
   disabled,
+  className,
   onClick,
 }: {
   provider: AuthProvider;
@@ -16,11 +17,12 @@ export const AuthProviderButton = ({
   busyLabel?: string;
   busy?: boolean;
   disabled?: boolean;
+  className?: string;
   onClick: () => void;
 }) => (
   <button
     type="button"
-    className={buttonClassName('secondary', 'lg', 'auth-provider-button')}
+    className={buttonClassName('secondary', 'lg', `auth-provider-button ${className ?? ''}`)}
     disabled={disabled || busy}
     onClick={onClick}
   >
@@ -28,6 +30,8 @@ export const AuthProviderButton = ({
       provider={provider}
       className="auth-provider-button__icon"
     />
-    <span>{busy ? busyLabel || `Connecting ${label}...` : label}</span>
+    <span className="auth-provider-button__label">
+      {busy ? busyLabel || `Connecting ${label}...` : label}
+    </span>
   </button>
 );

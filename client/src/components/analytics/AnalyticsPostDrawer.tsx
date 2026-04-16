@@ -3,7 +3,6 @@ import {
   Image as ImageIcon,
   MessageCircle,
   Play,
-  Share2,
   TrendingUp,
   Users,
   X,
@@ -83,7 +82,6 @@ export const AnalyticsPostDrawer = ({
             <div><span>Likes</span><strong>{post.likes.toLocaleString()}</strong></div>
             <div><span>Comments</span><strong>{post.comments.toLocaleString()}</strong></div>
             <div><span>Saves</span><strong>{post.saves.toLocaleString()}</strong></div>
-            <div><span>Shares</span><strong>{post.shares.toLocaleString()}</strong></div>
             <div><span>Video plays</span><strong>{post.videoPlays ? post.videoPlays.toLocaleString() : '—'}</strong></div>
             <div><span>Replays</span><strong>{post.replays ? post.replays.toLocaleString() : '—'}</strong></div>
             <div><span>Exits</span><strong>{post.exits ? post.exits.toLocaleString() : '—'}</strong></div>
@@ -111,8 +109,7 @@ export const AnalyticsPostDrawer = ({
               <div className="analytics-post-drawer__breakdown">
                 <span><ImageIcon size={14} />Impressions {post.impressions.toLocaleString()}</span>
                 <span><MessageCircle size={14} />Comments {post.comments.toLocaleString()}</span>
-                <span><Share2 size={14} />Shares {post.shares.toLocaleString()}</span>
-                <span><Share2 size={14} />Reactions {post.reactions.toLocaleString()}</span>
+                <span><TrendingUp size={14} />Reactions {post.reactions.toLocaleString()}</span>
                 <span><Play size={14} />Video plays {post.videoPlays.toLocaleString()}</span>
                 <span><Play size={14} />Replays {post.replays.toLocaleString()}</span>
                 <span><Users size={14} />Post clicks {post.postClicks.toLocaleString()}</span>

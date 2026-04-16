@@ -49,6 +49,51 @@ const toStringArray = (value: unknown): string[] =>
         .filter(Boolean)
     : [];
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+
+const extractTextValue = (value: unknown, depth = 0): string => {
+  if (depth > 4) {
+    return '';
+  }
+
+  if (typeof value === 'string') {
+    return value.trim();
+  }
+
+  if (typeof value === 'number' || typeof value === 'boolean') {
+    return String(value).trim();
+  }
+
+  if (Array.isArray(value)) {
+    return value
+      .map((entry) => extractTextValue(entry, depth + 1))
+      .filter(Boolean)
+      .join(' ')
+      .trim();
+  }
+
+  if (!isRecord(value)) {
+    return '';
+  }
+
+  const preferredKeys = ['text', 'value', 'content', 'copy', 'message', 'script'];
+
+  for (const key of preferredKeys) {
+    const normalized = extractTextValue(value[key], depth + 1);
+
+    if (normalized) {
+      return normalized;
+    }
+  }
+
+  return Object.values(value)
+    .map((entry) => extractTextValue(entry, depth + 1))
+    .filter(Boolean)
+    .join(' ')
+    .trim();
+};
+
 const toCaptionVariants = (value: unknown): CaptionVariant[] => {
   if (!Array.isArray(value)) {
     return [];
@@ -100,7 +145,7 @@ const toCaptionVariants = (value: unknown): CaptionVariant[] => {
 };
 
 const toReelScript = (value: unknown): ReelScript => {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+  if (!isRecord(value)) {
     return {
       hook: '',
       body: '',
@@ -108,12 +153,12 @@ const toReelScript = (value: unknown): ReelScript => {
     };
   }
 
-  const record = value as Record<string, unknown>;
+  const record = value;
 
   return {
-    hook: typeof record.hook === 'string' ? record.hook : '',
-    body: typeof record.body === 'string' ? record.body : '',
-    cta: typeof record.cta === 'string' ? record.cta : '',
+    hook: extractTextValue(record.hook),
+    body: extractTextValue(record.body),
+    cta: extractTextValue(record.cta),
   };
 };
 
@@ -267,13 +312,27 @@ export const getReelScriptDailyUsageCount = async (
 export const trackContentGenerationUsage = async (
   client: AppSupabaseClient,
   userId: string,
-  metadata: Record<string, unknown> = {}
+  metadata: Record<string, unknown> = {},
+  idempotencyKey?: string
 ) =>
-  recordUsageEvent(client, userId, FEATURE_KEYS.contentGeneration, metadata);
+  recordUsageEvent(
+    client,
+    userId,
+    FEATURE_KEYS.contentGeneration,
+    metadata,
+    idempotencyKey
+  );
 
 export const trackReelScriptGenerationUsage = async (
   client: AppSupabaseClient,
   userId: string,
-  metadata: Record<string, unknown> = {}
+  metadata: Record<string, unknown> = {},
+  idempotencyKey?: string
 ) =>
-  recordUsageEvent(client, userId, FEATURE_KEYS.reelScriptGeneration, metadata);
+  recordUsageEvent(
+    client,
+    userId,
+    FEATURE_KEYS.reelScriptGeneration,
+    metadata,
+    idempotencyKey
+  );

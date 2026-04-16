@@ -1,6 +1,10 @@
 import { Request, Response } from 'express';
 import type { User } from '@supabase/supabase-js';
-import { generateContentPack } from '../ai/gemini';
+import {
+  ContentGenerationProvidersExhaustedError,
+  generateContentPackWithFallback,
+  hasMeaningfulReelScript,
+} from '../ai/gemini';
 import { FEATURE_KEYS } from '../config/constants';
 import { getBrandProfileByUserId } from '../db/queries/brandProfiles';
 import {
@@ -64,6 +68,25 @@ const resolveBrandPreference = (
   };
 };
 
+const logGenerationFailure = (
+  scope: 'content' | 'workspace-copy',
+  userId: string,
+  error: unknown
+) => {
+  if (error instanceof ContentGenerationProvidersExhaustedError) {
+    console.error(`[${scope}] All content generation providers failed`, {
+      userId,
+      failures: error.failures,
+    });
+    return;
+  }
+
+  console.error(`[${scope}] Content generation failed`, {
+    userId,
+    error: error instanceof Error ? error.message : error,
+  });
+};
+
 export const generateContent = async (
   req: AuthenticatedRequest<{}, unknown, GenerateContentInput>,
   res: Response
@@ -93,10 +116,14 @@ export const generateContent = async (
     );
     const includeReelScript =
       reelScriptLimit === null || reelScriptUsageCount < reelScriptLimit;
-
-    const contentPack = await generateContentPack(brandProfile, generationInput, {
-      includeReelScript,
-    });
+    const { contentPack, provider } = await generateContentPackWithFallback(
+      brandProfile,
+      generationInput,
+      {
+        includeReelScript,
+      }
+    );
+    const hasReelScript = hasMeaningfulReelScript(contentPack.reelScript);
     const content = await saveGeneratedContent(client, req.user.id, {
       ...generationInput,
       brandProfileId: brandProfile?.id ?? null,
@@ -105,7 +132,7 @@ export const generateContent = async (
 
     await trackContentGenerationUsage(client, req.user.id, {
       contentId: content.id,
-      provider: 'gemini',
+      provider,
       brandProfileId: brandProfile?.id ?? null,
       platform: generationInput.platform ?? null,
       goal: generationInput.goal ?? null,
@@ -114,20 +141,20 @@ export const generateContent = async (
       productName: generationInput.productName,
       productDescription: generationInput.productDescription ?? null,
       keywords: generationInput.keywords ?? [],
-      reelScriptIncluded: includeReelScript,
-    });
+      reelScriptIncluded: hasReelScript,
+    }, `content-generation:${content.id}`);
 
-    if (includeReelScript) {
+    if (hasReelScript) {
       await trackReelScriptGenerationUsage(client, req.user.id, {
         contentId: content.id,
-        provider: 'gemini',
+        provider,
         brandProfileId: brandProfile?.id ?? null,
         platform: generationInput.platform ?? null,
         goal: generationInput.goal ?? null,
         tone: generationInput.tone ?? null,
         audience: generationInput.audience ?? null,
         productName: generationInput.productName,
-      });
+      }, `reel-script-generation:${content.id}`);
     }
 
     return res.status(200).json({
@@ -136,10 +163,13 @@ export const generateContent = async (
       data: content,
     });
   } catch (error) {
+    logGenerationFailure('content', req.user?.id ?? 'unknown-user', error);
     return res.status(500).json({
       status: 'error',
       message:
-        error instanceof Error
+        error instanceof ContentGenerationProvidersExhaustedError
+          ? error.message
+          : error instanceof Error
           ? error.message
           : 'Failed to generate content',
     });

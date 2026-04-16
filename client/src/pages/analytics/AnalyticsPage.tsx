@@ -34,6 +34,7 @@ import type {
 } from '../../types';
 
 type AnalyticsSelectablePlatform = Exclude<AnalyticsPlatformScope, 'all'>;
+type AnalyticsKpiKey = Exclude<keyof AnalyticsDashboard['overview'], 'shares'>;
 
 const DATE_PRESETS = [
   { id: '7d', label: '7d' },
@@ -49,7 +50,7 @@ const PLATFORM_OPTIONS: Array<{ id: AnalyticsSelectablePlatform; label: string }
 ];
 
 const KPI_TITLES: Array<{
-  key: keyof AnalyticsDashboard['overview'];
+  key: AnalyticsKpiKey;
   label: string;
 }> = [
   { key: 'impressions', label: 'Total Impressions' },
@@ -59,12 +60,11 @@ const KPI_TITLES: Array<{
   { key: 'likes', label: 'Likes' },
   { key: 'comments', label: 'Comments' },
   { key: 'saves', label: 'Saves' },
-  { key: 'shares', label: 'Shares' },
   { key: 'newFollowers', label: 'New Followers' },
   { key: 'postsPublished', label: 'Posts Published' },
 ] as const;
 
-const KPI_TOOLTIPS: Record<(typeof KPI_TITLES)[number]['key'], string> = {
+const KPI_TOOLTIPS: Record<AnalyticsKpiKey, string> = {
   impressions:
     'How many total times your posts were shown in this date range. One account can create multiple impressions.',
   reach:
@@ -72,15 +72,13 @@ const KPI_TOOLTIPS: Record<(typeof KPI_TITLES)[number]['key'], string> = {
   engagementRate:
     'How efficiently your content performed: total engagements divided by total reach.',
   engagements:
-    'The total number of likes, comments, saves, shares, and reactions across your published posts.',
+    'The total number of likes, comments, saves, and reactions across your published posts.',
   likes:
     'The total number of likes collected across published posts in this date range.',
   comments:
     'The total number of comments left on your published posts in this date range.',
   saves:
     'The total number of times people saved your posts where the platform provides save data.',
-  shares:
-    'The total number of times your published posts were shared in this scope. This card tracks shares only, not reactions.',
   newFollowers:
     'Net follower growth during this period compared with the previous matching period.',
   postsPublished:
@@ -148,8 +146,6 @@ const getSortValue = (post: AnalyticsPostInsight, key: string) => {
       return post.saves;
     case 'engagementRate':
       return post.engagementRate ?? 0;
-    case 'shares':
-      return post.shares;
     case 'date':
       return new Date(post.publishedTime || 0).getTime();
     default:
@@ -177,7 +173,6 @@ const exportPostsCsv = (posts: AnalyticsPostInsight[]) => {
     'Likes',
     'Comments',
     'Saves',
-    'Shares',
     'Reactions',
     'Engagement Rate',
   ];
@@ -192,7 +187,6 @@ const exportPostsCsv = (posts: AnalyticsPostInsight[]) => {
       post.likes,
       post.comments,
       post.saves,
-      post.shares,
       post.reactions,
       formatPercentage(post.engagementRate, 1, ''),
     ]
@@ -767,7 +761,7 @@ export const AnalyticsPage = () => {
               />
               <StackedEngagementChart
                 title="Engagement breakdown over time"
-                subtitle="Likes, comments, saves, shares, and reactions"
+                subtitle="Likes, comments, saves, and reactions"
                 points={dashboard.trends.engagementSeries}
               />
             </section>
@@ -891,14 +885,6 @@ export const AnalyticsPage = () => {
                             Engagement %
                           </button>
                         </th>
-                        <th>
-                          <button type="button" onClick={() => {
-                            setSortKey('shares');
-                            setSortDirection((current) => (sortKey === 'shares' && current === 'desc' ? 'asc' : 'desc'));
-                          }}>
-                            Shares
-                          </button>
-                        </th>
                         <th>Action</th>
                       </tr>
                     </thead>
@@ -941,7 +927,6 @@ export const AnalyticsPage = () => {
                             <td>{post.comments.toLocaleString()}</td>
                             <td>{post.saves.toLocaleString()}</td>
                             <td>{formatPercentage(post.engagementRate)}</td>
-                            <td>{post.shares.toLocaleString()}</td>
                             <td>
                               <button type="button" className="analytics-table__action" onClick={() => setSelectedPost(post)}>
                                 View
@@ -951,7 +936,7 @@ export const AnalyticsPage = () => {
                         ))
                       ) : (
                         <tr>
-                          <td colSpan={12} className="analytics-table__empty">
+                          <td colSpan={11} className="analytics-table__empty">
                             No posts match the current analytics filters.
                           </td>
                         </tr>

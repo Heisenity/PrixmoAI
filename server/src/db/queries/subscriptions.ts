@@ -31,6 +31,7 @@ type UsageTrackingRow = {
   user_id: string;
   feature_key: string;
   used_at: string;
+  idempotency_key?: string | null;
   metadata: Record<string, unknown> | null;
 };
 
@@ -161,17 +162,37 @@ export const recordUsageEvent = async (
   client: AppSupabaseClient,
   userId: string,
   featureKey: string,
-  metadata: Record<string, unknown> = {}
+  metadata: Record<string, unknown> = {},
+  idempotencyKey?: string
 ): Promise<UsageTrackingEvent> => {
+  const payload = {
+    user_id: userId,
+    feature_key: featureKey,
+    metadata,
+    idempotency_key: idempotencyKey ?? null,
+  };
+
   const { data, error } = await client
     .from('usage_tracking')
-    .insert({
-      user_id: userId,
-      feature_key: featureKey,
-      metadata,
-    })
+    .insert(payload)
     .select('*')
     .single();
+
+  if (error && idempotencyKey && error.code === '23505') {
+    const { data: existing, error: existingError } = await client
+      .from('usage_tracking')
+      .select('*')
+      .eq('user_id', userId)
+      .eq('feature_key', featureKey)
+      .eq('idempotency_key', idempotencyKey)
+      .maybeSingle();
+
+    if (existingError || !existing) {
+      throw new Error(existingError?.message || 'Failed to load recorded usage');
+    }
+
+    return toUsageTrackingEvent(existing as UsageTrackingRow);
+  }
 
   if (error || !data) {
     throw new Error(error?.message || 'Failed to record usage');

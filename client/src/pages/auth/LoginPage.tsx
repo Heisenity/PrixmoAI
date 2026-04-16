@@ -1,11 +1,11 @@
 import { useState } from 'react';
 import { Link, Navigate, useLocation } from 'react-router-dom';
 import { ArrowRight } from 'lucide-react';
+import { AuthCosmicBackground } from '../../components/auth/AuthCosmicBackground';
 import { AuthProviderButton } from '../../components/auth/AuthProviderButton';
 import { AuthLayout } from '../../components/layout/AuthLayout';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
-import { Card } from '../../components/ui/card';
 import { ErrorMessage } from '../../components/shared/ErrorMessage';
 import { LoadingSpinner } from '../../components/shared/LoadingSpinner';
 import { useAuth } from '../../hooks/useAuth';
@@ -196,30 +196,21 @@ export const LoginPage = () => {
     <AuthLayout
       eyebrow="Access workspace"
       title="Sign in and get straight back to production."
-      description="Start with your email. We send a 8-digit code first, and you can switch to password sign-in anytime below."
-      highlights={[
-        'Email OTP as the primary path',
-        'Password fallback for returning users',
-        'Google, GitHub, and Facebook also supported',
-      ]}
-      aside={
-        <div className="auth-aside-stack">
-          <Card className="auth-shell__aside-card auth-shell__aside-card--feature">
-            <strong>Recommended flow</strong>
-            <p>Enter your email, get the 8-digit code, and continue without typing a password unless you want the alternate path.</p>
-          </Card>
-          <Card className="auth-shell__aside-card">
-            <strong>Forgot your username?</strong>
-            <p>PrixmoAI signs in with email or social providers, so the email address is all you need to recover access.</p>
-          </Card>
-        </div>
-      }
+      background={<AuthCosmicBackground />}
+      hideIntro
+      showBrandMark={false}
     >
-      <div className="auth-form-shell">
-        <div className="auth-form-shell__header">
-          <div>
+      <div className="auth-form-shell login-page__shell">
+        <div className="auth-form-shell__header login-page__header">
+          <div className="login-page__header-copy">
             <p className="section-eyebrow">Welcome back</p>
-            <h2>Continue building with PrixmoAI</h2>
+            <h2 className="login-page__title">
+              <span className="login-page__title-line">Continue building</span>
+              <span className="login-page__title-line">with PrixmoAI</span>
+            </h2>
+            <p className="login-page__subtitle">
+              Sign in with your provider or continue with email in one secure flow.
+            </p>
           </div>
           <Link className="auth-form-shell__switch" to="/signup">
             New here? Create account
@@ -277,6 +268,7 @@ export const LoginPage = () => {
           <Button
             type="button"
             size="lg"
+            className="auth-action-button"
             disabled={!isConfigured || isSubmitting || isInitializing}
             onClick={() => {
               void handleRequestOtp();
@@ -303,6 +295,7 @@ export const LoginPage = () => {
                 <Button
                   type="submit"
                   size="md"
+                  className="auth-action-button"
                   disabled={!isConfigured || isOtpSubmitting || isInitializing}
                 >
                   {isOtpSubmitting ? 'Verifying code...' : 'Verify code and sign in'}
@@ -311,6 +304,7 @@ export const LoginPage = () => {
                   type="button"
                   variant="secondary"
                   size="md"
+                  className="auth-action-button"
                   disabled={isResendingCode}
                   onClick={() => {
                     void handleResendCode();
@@ -331,6 +325,7 @@ export const LoginPage = () => {
               type="button"
               variant="secondary"
               size="md"
+              className="auth-action-button"
               disabled={!normalizedEmail}
               onClick={() => {
                 setShowPasswordAlternative(true);
@@ -367,6 +362,7 @@ export const LoginPage = () => {
               <Button
                 type="submit"
                 size="md"
+                className="auth-action-button"
                 disabled={!isConfigured || isSubmitting || isInitializing || !normalizedEmail}
               >
                 {isSubmitting ? 'Signing in...' : 'Sign in with password'}
@@ -385,6 +381,7 @@ export const LoginPage = () => {
                 type="button"
                 variant="secondary"
                 size="md"
+                className="auth-action-button"
                 disabled={isResendingCode}
                 onClick={() => {
                   void handleResendVerification();
