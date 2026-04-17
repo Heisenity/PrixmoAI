@@ -21,6 +21,7 @@ export type AuthenticatedRequest = Request & {
   user?: User;
   accessToken?: string;
   imageRuntimePolicy?: ImageRuntimePolicy;
+  imageRateLimitReservation?: number;
 };
 
 const enforceFeatureLimit = async (
@@ -147,6 +148,7 @@ export const imageRuntimePolicyMiddleware = async (
       throttleDelayMs: rateLimitResult.throttleDelayMs,
       burstRequestCount: rateLimitResult.burstRequestCount,
     };
+    req.imageRateLimitReservation = rateLimitResult.reservationTimestamp;
     return next();
   } catch (error) {
     return res.status(500).json({

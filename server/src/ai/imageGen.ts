@@ -1,6 +1,11 @@
 import dotenv from 'dotenv';
 import type { GenerateImageInput } from '../schemas/image.schema';
 import type { BrandProfile } from '../types';
+import {
+  isAbortError,
+  RequestCancelledError,
+  throwIfRequestCancelled,
+} from '../lib/requestCancellation';
 
 dotenv.config();
 
@@ -55,7 +60,8 @@ type ImageProvider = {
   provider: ImageGenerationProvider;
   generate: (
     prompt: string,
-    input: ResolvedGenerateImageInput
+    input: ResolvedGenerateImageInput,
+    signal?: AbortSignal
   ) => Promise<string>;
 };
 
@@ -295,9 +301,26 @@ const truncatePrompt = (prompt: string, maxLength: number) => {
   return `${truncated.trimEnd()}…`;
 };
 
-const sleep = (ms: number) =>
-  new Promise<void>((resolve) => {
-    setTimeout(resolve, ms);
+const sleep = (ms: number, signal?: AbortSignal) =>
+  new Promise<void>((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new RequestCancelledError('Image generation cancelled by user.'));
+      return;
+    }
+
+    const timeout = setTimeout(() => {
+      signal?.removeEventListener('abort', handleAbort);
+      resolve();
+    }, ms);
+
+    const handleAbort = () => {
+      clearTimeout(timeout);
+      reject(new RequestCancelledError('Image generation cancelled by user.'));
+    };
+
+    signal?.addEventListener('abort', handleAbort, {
+      once: true,
+    });
   });
 
 const normalizeDimension = (value: number | undefined, fallback: number) => {
@@ -311,21 +334,35 @@ const normalizeDimension = (value: number | undefined, fallback: number) => {
 
 const withTimeout = async <T>(
   timeoutMs: number,
-  operation: (signal: AbortSignal) => Promise<T>
+  operation: (signal: AbortSignal) => Promise<T>,
+  requestSignal?: AbortSignal
 ): Promise<T> => {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  const handleRequestAbort = () => {
+    controller.abort();
+  };
+
+  requestSignal?.addEventListener('abort', handleRequestAbort, {
+    once: true,
+  });
 
   try {
+    throwIfRequestCancelled(requestSignal, 'Image generation cancelled by user.');
     return await operation(controller.signal);
   } catch (error) {
-    if (error instanceof Error && error.name === 'AbortError') {
+    if (isAbortError(error)) {
+      if (requestSignal?.aborted) {
+        throw new RequestCancelledError('Image generation cancelled by user.');
+      }
+
       throw new Error('Request timed out');
     }
 
     throw error;
   } finally {
     clearTimeout(timeout);
+    requestSignal?.removeEventListener('abort', handleRequestAbort);
   }
 };
 
@@ -335,7 +372,8 @@ const getRemainingMs = (deadlineAt: number) => Math.max(0, deadlineAt - Date.now
 
 const runWithDeadline = async <T>(
   deadlineAt: number,
-  operation: (signal: AbortSignal) => Promise<T>
+  operation: (signal: AbortSignal) => Promise<T>,
+  requestSignal?: AbortSignal
 ) => {
   const remainingMs = getRemainingMs(deadlineAt);
 
@@ -343,17 +381,23 @@ const runWithDeadline = async <T>(
     throw new Error('Request timed out');
   }
 
-  return withTimeout(remainingMs, operation);
+  return withTimeout(remainingMs, operation, requestSignal);
 };
 
-const sleepWithinDeadline = async (deadlineAt: number, delayMs: number) => {
+const sleepWithinDeadline = async (
+  deadlineAt: number,
+  delayMs: number,
+  requestSignal?: AbortSignal
+) => {
   const remainingMs = getRemainingMs(deadlineAt);
 
   if (remainingMs <= 0) {
     throw new Error('Request timed out');
   }
 
-  await sleep(Math.min(delayMs, remainingMs));
+  throwIfRequestCancelled(requestSignal, 'Image generation cancelled by user.');
+  await sleep(Math.min(delayMs, remainingMs), requestSignal);
+  throwIfRequestCancelled(requestSignal, 'Image generation cancelled by user.');
 };
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -731,6 +775,75 @@ const validateRemoteImageUrl = async (url: string): Promise<string> => {
       redirect: 'follow',
       signal,
     })
+  );
+
+  const getContentType = getResponse.headers.get('content-type') || '';
+
+  if (
+    !getResponse.ok ||
+    (!getContentType.startsWith('image/') &&
+      getContentType !== 'application/octet-stream')
+  ) {
+    throw new Error(
+      `Provider returned a non-image response (${getResponse.status} ${getContentType || 'unknown'})`
+    );
+  }
+
+  return url;
+};
+
+const validateRemoteImageUrlWithSignal = async (
+  url: string,
+  signal?: AbortSignal
+): Promise<string> => {
+  if (url.startsWith('data:image/')) {
+    throwIfRequestCancelled(signal, 'Image generation cancelled by user.');
+    return url;
+  }
+
+  let parsedUrl: URL;
+
+  try {
+    parsedUrl = new URL(url);
+  } catch {
+    throw new Error('Provider returned an invalid image URL');
+  }
+
+  if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
+    throw new Error('Provider returned an unsupported image URL');
+  }
+
+  throwIfRequestCancelled(signal, 'Image generation cancelled by user.');
+  const headResponse = await withTimeout(
+    IMAGE_VALIDATION_TIMEOUT_MS,
+    (validationSignal) =>
+      fetch(url, {
+        method: 'HEAD',
+        redirect: 'follow',
+        signal: validationSignal,
+      }).catch(() => null),
+    signal
+  );
+
+  const headContentType = headResponse?.headers.get('content-type') || '';
+
+  if (
+    headResponse?.ok &&
+    (headContentType.startsWith('image/') ||
+      headContentType === 'application/octet-stream')
+  ) {
+    return url;
+  }
+
+  const getResponse = await withTimeout(
+    IMAGE_VALIDATION_TIMEOUT_MS,
+    (validationSignal) =>
+      fetch(url, {
+        method: 'GET',
+        redirect: 'follow',
+        signal: validationSignal,
+      }),
+    signal
   );
 
   const getContentType = getResponse.headers.get('content-type') || '';
@@ -1224,7 +1337,8 @@ const generateWithFlux = async (
 
 const generateWithPixazo = async (
   prompt: string,
-  input: ResolvedGenerateImageInput
+  input: ResolvedGenerateImageInput,
+  signal?: AbortSignal
 ): Promise<string> => {
   const deadlineAt = createDeadline(PIXAZO_TIMEOUT_MS);
   const pixazoPrompt = truncatePrompt(prompt, 2400);
@@ -1233,7 +1347,8 @@ const generateWithPixazo = async (
   const seed = Date.now();
   const headers = getPixazoHeaders();
 
-  const initialPayload = await runWithDeadline(deadlineAt, async (signal) => {
+  throwIfRequestCancelled(signal, 'Image generation cancelled by user.');
+  const initialPayload = await runWithDeadline(deadlineAt, async (providerSignal) => {
     const response = await fetch(PIXAZO_GENERATE_ENDPOINT, {
       method: 'POST',
       headers,
@@ -1245,7 +1360,7 @@ const generateWithPixazo = async (
         seed,
         ...(input.sourceImageUrl ? { image_urls: [input.sourceImageUrl] } : {}),
       }),
-      signal,
+      signal: providerSignal,
     });
 
     const nextPayload = await parseResponsePayload(response);
@@ -1257,12 +1372,12 @@ const generateWithPixazo = async (
     }
 
     return nextPayload;
-  });
+  }, signal);
 
   const immediateUrl = extractImageUrl(initialPayload);
 
   if (immediateUrl) {
-    return validateRemoteImageUrl(immediateUrl);
+    return validateRemoteImageUrlWithSignal(immediateUrl, signal);
   }
 
   const requestId = extractRequestId(initialPayload);
@@ -1272,9 +1387,9 @@ const generateWithPixazo = async (
   }
 
   for (let attempt = 0; attempt < PIXAZO_MAX_POLLS; attempt += 1) {
-    await sleepWithinDeadline(deadlineAt, PIXAZO_POLL_INTERVAL_MS);
+    await sleepWithinDeadline(deadlineAt, PIXAZO_POLL_INTERVAL_MS, signal);
 
-    const statusPayload = await runWithDeadline(deadlineAt, async (signal) => {
+    const statusPayload = await runWithDeadline(deadlineAt, async (providerSignal) => {
       const response = await fetch(PIXAZO_STATUS_ENDPOINT, {
         method: 'POST',
         headers,
@@ -1282,7 +1397,7 @@ const generateWithPixazo = async (
           requestId,
           request_id: requestId,
         }),
-        signal,
+        signal: providerSignal,
       });
 
       const nextPayload = await parseResponsePayload(response);
@@ -1292,12 +1407,12 @@ const generateWithPixazo = async (
       }
 
       return nextPayload;
-    });
+    }, signal);
 
     const imageUrl = extractImageUrl(statusPayload);
 
     if (imageUrl) {
-      return validateRemoteImageUrl(imageUrl);
+      return validateRemoteImageUrlWithSignal(imageUrl, signal);
     }
 
     const statusValue =
@@ -1383,7 +1498,8 @@ const providers: ImageProvider[] = [
 const tryProvider = async (
   provider: ImageProvider,
   prompt: string,
-  input: ResolvedGenerateImageInput
+  input: ResolvedGenerateImageInput,
+  signal?: AbortSignal
 ): Promise<ProviderAttemptResult> => {
   if (shouldSkipProvider(provider.provider)) {
     const failure = classifyProviderFailure(
@@ -1398,12 +1514,10 @@ const tryProvider = async (
     };
   }
 
-  console.info(`[image-generation] Starting ${provider.provider} provider`);
-
   try {
-    const imageUrl = await provider.generate(prompt, input);
+    throwIfRequestCancelled(signal, 'Image generation cancelled by user.');
+    const imageUrl = await provider.generate(prompt, input, signal);
     recordProviderSuccess(provider.provider);
-    console.info(`[image-generation] ${provider.provider} provider succeeded`);
 
     return {
       success: true,
@@ -1411,6 +1525,10 @@ const tryProvider = async (
       imageUrl,
     };
   } catch (error) {
+    if (error instanceof RequestCancelledError) {
+      throw error;
+    }
+
     const failure = classifyProviderFailure(provider.provider, error);
     recordProviderFailure(provider.provider);
     console.warn(`[image-generation] ${provider.provider} provider failed`, {
@@ -1428,13 +1546,18 @@ const tryProvider = async (
 
 export const generateProductImage = async (
   brandProfile: BrandProfile | null,
-  input: ResolvedGenerateImageInput
+  input: ResolvedGenerateImageInput,
+  options: {
+    signal?: AbortSignal;
+  } = {}
 ): Promise<GeneratedImageResult> => {
   const promptUsed = buildImagePrompt(brandProfile, input);
   const failures: ProviderFailure[] = [];
+  const signal = options.signal;
 
   for (const provider of providers) {
-    const result = await tryProvider(provider, promptUsed, input);
+    throwIfRequestCancelled(signal, 'Image generation cancelled by user.');
+    const result = await tryProvider(provider, promptUsed, input, signal);
 
     if (result.success) {
       return {

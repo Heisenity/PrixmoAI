@@ -11,6 +11,7 @@ import type {
   UsageTrackingEvent,
 } from '../../types';
 import type { AppSupabaseClient } from '../supabase';
+import { getIstDayWindow, getIstMonthWindow } from '../../lib/timezone';
 
 type SubscriptionRow = {
   id: string;
@@ -39,32 +40,6 @@ const toRecord = (value: unknown): Record<string, unknown> =>
   value && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
-
-const getMonthWindow = () => {
-  const now = new Date();
-  const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
-  const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
-
-  return {
-    start: start.toISOString(),
-    end: end.toISOString(),
-  };
-};
-
-const getDayWindow = () => {
-  const now = new Date();
-  const start = new Date(
-    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())
-  );
-  const end = new Date(
-    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1)
-  );
-
-  return {
-    start: start.toISOString(),
-    end: end.toISOString(),
-  };
-};
 
 const toSubscription = (row: SubscriptionRow): Subscription => ({
   id: row.id,
@@ -207,7 +182,7 @@ const getUsageCountForWindow = async (
   featureKey: string,
   window: 'day' | 'month'
 ): Promise<number> => {
-  const { start, end } = window === 'day' ? getDayWindow() : getMonthWindow();
+  const { start, end } = window === 'day' ? getIstDayWindow() : getIstMonthWindow();
   const { count, error } = await client
     .from('usage_tracking')
     .select('*', { count: 'exact', head: true })

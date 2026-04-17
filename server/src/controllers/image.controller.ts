@@ -20,6 +20,7 @@ import type {
 } from '../schemas/image.schema';
 import {
   enqueueImageGeneration,
+  releaseImageRateLimitReservation,
   resolveImageRuntimePolicy,
 } from '../services/imageRuntimePolicy.service';
 import {
@@ -28,6 +29,11 @@ import {
   uploadSourceImage as uploadSourceImageToStorage,
 } from '../services/storage.service';
 import type { BrandProfile } from '../types';
+import {
+  createRequestCancellation,
+  isRequestCancelledError,
+  throwIfRequestCancelled,
+} from '../lib/requestCancellation';
 
 type AuthenticatedRequest<
   Params = Record<string, string>,
@@ -38,6 +44,7 @@ type AuthenticatedRequest<
   user?: User;
   accessToken?: string;
   imageRuntimePolicy?: ReturnType<typeof resolveImageRuntimePolicy>;
+  imageRateLimitReservation?: number;
 };
 
 const parsePositiveInt = (value: unknown, fallback: number): number => {
@@ -168,7 +175,15 @@ export const generateImage = async (
     });
   }
 
+  const cancellation = createRequestCancellation(req, res);
+
   try {
+    console.info('[image] Generate image request started', {
+      userId: req.user.id,
+      productName: req.body.productName,
+      contentId: req.body.contentId ?? null,
+    });
+
     const client = requireUserClient(req.accessToken);
     const brandProfile = await getBrandProfileByUserId(client, req.user.id);
     const generationInput = {
@@ -177,8 +192,17 @@ export const generateImage = async (
     };
     const runtimePolicy =
       req.imageRuntimePolicy ?? resolveImageRuntimePolicy('free', 0);
-    const result = await enqueueImageGeneration(runtimePolicy, () =>
-      generateProductImage(brandProfile, generationInput)
+    const result = await enqueueImageGeneration(
+      runtimePolicy,
+      () =>
+        generateProductImage(brandProfile, generationInput, {
+          signal: cancellation.signal,
+        }),
+      cancellation.signal
+    );
+    throwIfRequestCancelled(
+      cancellation.signal,
+      'Image generation cancelled by user.'
     );
     const image = await saveGeneratedImage(client, req.user.id, {
       contentId: generationInput.contentId ?? null,
@@ -188,6 +212,10 @@ export const generateImage = async (
       prompt: result.promptUsed,
     });
 
+    throwIfRequestCancelled(
+      cancellation.signal,
+      'Image generation cancelled by user.'
+    );
     await trackImageGenerationUsage(client, req.user.id, {
       imageId: image.id,
       provider: result.provider,
@@ -211,6 +239,13 @@ export const generateImage = async (
       String(runtimePolicy.throttleDelayMs)
     );
 
+    console.info('[image] Generate image request succeeded', {
+      userId: req.user.id,
+      imageId: image.id,
+      provider: result.provider,
+      contentId: generationInput.contentId ?? null,
+    });
+
     return res.status(200).json({
       status: 'success',
       message: `Image generated successfully using ${result.provider}`,
@@ -223,6 +258,18 @@ export const generateImage = async (
       },
     });
   } catch (error) {
+    if (isRequestCancelledError(error)) {
+      releaseImageRateLimitReservation(
+        req.user?.id ?? '',
+        req.imageRateLimitReservation
+      );
+      req.imageRateLimitReservation = undefined;
+      console.info('[image] Image generation request cancelled', {
+        userId: req.user?.id ?? 'unknown-user',
+      });
+      return;
+    }
+
     logImageGenerationFailure('image', req.user?.id ?? 'unknown-user', error);
     const message =
       error instanceof ImageGenerationProvidersExhaustedError
@@ -235,6 +282,8 @@ export const generateImage = async (
       status: 'error',
       message,
     });
+  } finally {
+    cancellation.cleanup();
   }
 };
 

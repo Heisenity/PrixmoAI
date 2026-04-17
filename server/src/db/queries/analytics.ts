@@ -20,6 +20,13 @@ import type {
 } from '../../types';
 import type { AppSupabaseClient } from '../supabase';
 import { getDailyUsageCount, getMonthlyUsageCount } from './subscriptions';
+import {
+  addIstDays,
+  getIstDayWindow,
+  getIstDayOfWeek,
+  getIstMonthWindow,
+  startOfIstDay,
+} from '../../lib/timezone';
 
 type AnalyticsRow = {
   id: string;
@@ -252,30 +259,15 @@ const normalizePlatformLabel = (value: string | null) => {
   return normalized.charAt(0).toUpperCase() + normalized.slice(1);
 };
 
-const getCurrentMonthWindow = () => {
-  const now = new Date();
-  const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
-  const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
-
-  return {
-    start: start.toISOString(),
-    end: end.toISOString(),
-  };
-};
+const getCurrentMonthWindow = () => getIstMonthWindow();
 
 const getCurrentWeekWindow = () => {
   const now = new Date();
-  const currentDay = now.getUTCDay();
+  const currentDay = getIstDayOfWeek(now);
   const daysSinceMonday = (currentDay + 6) % 7;
-  const start = new Date(
-    Date.UTC(
-      now.getUTCFullYear(),
-      now.getUTCMonth(),
-      now.getUTCDate() - daysSinceMonday
-    )
-  );
-  const end = new Date(start);
-  end.setUTCDate(end.getUTCDate() + 7);
+  const todayStart = startOfIstDay(now);
+  const start = addIstDays(todayStart, -daysSinceMonday);
+  const end = addIstDays(start, 7);
 
   return {
     start: start.toISOString(),
@@ -286,8 +278,7 @@ const getCurrentWeekWindow = () => {
 const getPreviousWeekWindow = () => {
   const { start } = getCurrentWeekWindow();
   const currentStart = new Date(start);
-  const previousStart = new Date(currentStart);
-  previousStart.setUTCDate(previousStart.getUTCDate() - 7);
+  const previousStart = addIstDays(currentStart, -7);
 
   return {
     start: previousStart.toISOString(),
@@ -295,18 +286,9 @@ const getPreviousWeekWindow = () => {
   };
 };
 
-const startOfUtcDayIso = (value: string) => {
-  const date = new Date(value);
-  return new Date(
-    Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate())
-  ).toISOString();
-};
+const startOfIstDayIso = (value: string) => getIstDayWindow(new Date(value)).start;
 
-const endOfUtcDayIso = (value: string) => {
-  const date = new Date(startOfUtcDayIso(value));
-  date.setUTCDate(date.getUTCDate() + 1);
-  return date.toISOString();
-};
+const endOfIstDayIso = (value: string) => getIstDayWindow(new Date(value)).end;
 
 const toAnalyticsData = (row: AnalyticsRow): AnalyticsData => ({
   id: row.id,
@@ -513,8 +495,8 @@ export const saveAnalyticsAudienceSnapshot = async (
     .select('*')
     .eq('user_id', userId)
     .eq('social_account_id', input.socialAccountId)
-    .gte('recorded_at', startOfUtcDayIso(recordedAt))
-    .lt('recorded_at', endOfUtcDayIso(recordedAt))
+    .gte('recorded_at', startOfIstDayIso(recordedAt))
+    .lt('recorded_at', endOfIstDayIso(recordedAt))
     .order('recorded_at', { ascending: false })
     .limit(1)
     .maybeSingle();

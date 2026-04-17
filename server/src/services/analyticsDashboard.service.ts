@@ -22,6 +22,13 @@ import type {
   AnalyticsData,
   SchedulerMediaType,
 } from '../types';
+import {
+  addIstDays,
+  getIstDayOfWeek,
+  getIstHour,
+  IST_TIME_ZONE,
+  startOfIstDay,
+} from '../lib/timezone';
 
 const PRESET_DAY_MAP = {
   '7d': 7,
@@ -285,7 +292,7 @@ const buildFollowerGrowthSeriesFromAudienceSnapshots = (
   const dailyBuckets = new Map<string, AnalyticsAudienceSnapshot[]>();
 
   for (const snapshot of snapshots) {
-    const bucket = startOfUtcDay(new Date(snapshot.recordedAt)).toISOString();
+    const bucket = startOfIstDay(new Date(snapshot.recordedAt)).toISOString();
     const entries = dailyBuckets.get(bucket) ?? [];
     entries.push(snapshot);
     dailyBuckets.set(bucket, entries);
@@ -413,17 +420,8 @@ const toDateLabel = (value: string) =>
   new Date(value).toLocaleDateString('en-US', {
     month: 'short',
     day: 'numeric',
-    timeZone: 'UTC',
+    timeZone: IST_TIME_ZONE,
   });
-
-const startOfUtcDay = (value: Date) =>
-  new Date(Date.UTC(value.getUTCFullYear(), value.getUTCMonth(), value.getUTCDate()));
-
-const addUtcDays = (value: Date, days: number) => {
-  const next = new Date(value);
-  next.setUTCDate(next.getUTCDate() + days);
-  return next;
-};
 
 const buildDateRange = (options: AnalyticsDashboardOptions): DateRangeWindow => {
   if (options.preset === 'custom' && options.start && options.end) {
@@ -435,15 +433,14 @@ const buildDateRange = (options: AnalyticsDashboardOptions): DateRangeWindow => 
       Number.isFinite(customEnd.getTime()) &&
       customEnd.getTime() > customStart.getTime()
     ) {
-      const start = startOfUtcDay(customStart);
-      const end = startOfUtcDay(customEnd);
-      end.setUTCDate(end.getUTCDate() + 1);
+      const start = startOfIstDay(customStart);
+      const end = addIstDays(startOfIstDay(customEnd), 1);
       const days = Math.max(
         1,
         Math.round((end.getTime() - start.getTime()) / (24 * 60 * 60 * 1000))
       );
       const previousEnd = new Date(start);
-      const previousStart = addUtcDays(previousEnd, -days);
+      const previousStart = addIstDays(previousEnd, -days);
 
       return {
         preset: 'custom',
@@ -458,10 +455,10 @@ const buildDateRange = (options: AnalyticsDashboardOptions): DateRangeWindow => 
 
   const preset = options.preset && options.preset in PRESET_DAY_MAP ? options.preset : '30d';
   const days = PRESET_DAY_MAP[preset as keyof typeof PRESET_DAY_MAP];
-  const end = addUtcDays(startOfUtcDay(new Date()), 1);
-  const start = addUtcDays(end, -days);
+  const end = addIstDays(startOfIstDay(new Date()), 1);
+  const start = addIstDays(end, -days);
   const previousEnd = new Date(start);
-  const previousStart = addUtcDays(previousEnd, -days);
+  const previousStart = addIstDays(previousEnd, -days);
 
   return {
     preset,
@@ -570,7 +567,7 @@ const buildTrendBuckets = (
   const dayBuckets = new Map<string, EnrichedAnalyticsRow[]>();
 
   for (const row of rows) {
-    const bucket = startOfUtcDay(new Date(row.recordedAt)).toISOString();
+    const bucket = startOfIstDay(new Date(row.recordedAt)).toISOString();
     const entries = dayBuckets.get(bucket) ?? [];
     entries.push(row);
     dayBuckets.set(bucket, entries);
@@ -578,7 +575,7 @@ const buildTrendBuckets = (
 
   const points: AnalyticsTrendPoint[] = [];
 
-  for (let cursor = new Date(range.start); cursor < new Date(range.end); cursor = addUtcDays(cursor, 1)) {
+  for (let cursor = new Date(range.start); cursor < new Date(range.end); cursor = addIstDays(cursor, 1)) {
     const bucket = cursor.toISOString();
     const rowsForDay = dayBuckets.get(bucket) ?? [];
     const latestRows = latestByKey(rowsForDay, (row) => row.postKey, (row) => row.recordedAt);
@@ -723,7 +720,7 @@ const buildCumulativeSparklineFromRows = (
   const dayBuckets = new Map<string, EnrichedAnalyticsRow[]>();
 
   for (const row of rows) {
-    const bucket = startOfUtcDay(new Date(row.recordedAt)).toISOString();
+    const bucket = startOfIstDay(new Date(row.recordedAt)).toISOString();
     const entries = dayBuckets.get(bucket) ?? [];
     entries.push(row);
     dayBuckets.set(bucket, entries);
@@ -732,7 +729,7 @@ const buildCumulativeSparklineFromRows = (
   const latestMetricByPost = new Map<string, number>();
   const points: AnalyticsMetricPoint[] = [];
 
-  for (let cursor = new Date(range.start); cursor < new Date(range.end); cursor = addUtcDays(cursor, 1)) {
+  for (let cursor = new Date(range.start); cursor < new Date(range.end); cursor = addIstDays(cursor, 1)) {
     const bucket = cursor.toISOString();
     const rowsForDay = dayBuckets.get(bucket) ?? [];
     const latestRowsForDay = latestByKey(rowsForDay, (row) => row.postKey, (row) => row.recordedAt);
@@ -766,8 +763,8 @@ const buildHeatmap = (posts: AnalyticsPostInsight[]): AnalyticsBestTimeInsight =
       continue;
     }
 
-    const dayIndex = (date.getUTCDay() + 6) % 7;
-    const hour = date.getUTCHours();
+    const dayIndex = (getIstDayOfWeek(date) + 6) % 7;
+    const hour = getIstHour(date);
     const key = `${dayIndex}-${hour}`;
     const existing = buckets.get(key) ?? { sum: 0, posts: 0, dayIndex, hour };
 
@@ -824,8 +821,8 @@ const buildHeatmap = (posts: AnalyticsPostInsight[]): AnalyticsBestTimeInsight =
     postsConsidered: posts.length,
     summary: hasEnoughData && headline
       ? secondary
-        ? `Best time to post: ${headline.day} ${headline.hour}:00-${String((headline.hour + 2) % 24).padStart(2, '0')}:00 UTC, with ${secondary.day} close behind.`
-        : `Best time to post: ${headline.day} around ${headline.hour}:00 UTC.`
+        ? `Best time to post: ${headline.day} ${headline.hour}:00-${String((headline.hour + 2) % 24).padStart(2, '0')}:00 IST, with ${secondary.day} close behind.`
+        : `Best time to post: ${headline.day} around ${headline.hour}:00 IST.`
       : 'Not enough data yet to determine best posting time.',
     topSlots: topSlots.slice(0, 5),
     heatmap,
@@ -1457,7 +1454,7 @@ export const getAnalyticsDashboard = async (
         trendSeries,
         (point) =>
           currentPublishedPosts.filter((post) =>
-            isWithinRange(post.published_at, point.date, addUtcDays(new Date(point.date), 1).toISOString())
+            isWithinRange(post.published_at, point.date, addIstDays(new Date(point.date), 1).toISOString())
           ).length
       )
     ),

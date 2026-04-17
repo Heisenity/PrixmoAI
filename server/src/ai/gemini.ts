@@ -18,6 +18,11 @@ import type {
 import { buildCaptionPrompt } from './prompts/caption.prompt';
 import { buildHashtagPrompt } from './prompts/hashtag.prompt';
 import { buildReelScriptPrompt } from './prompts/script.prompt';
+import {
+  isAbortError,
+  RequestCancelledError,
+  throwIfRequestCancelled,
+} from '../lib/requestCancellation';
 
 dotenv.config();
 
@@ -51,6 +56,7 @@ type GroqResponse = {
 
 type GenerationRequestOptions = {
   includeReelScript?: boolean;
+  signal?: AbortSignal;
 };
 
 type GeneratedContentPackWithProvider = {
@@ -235,21 +241,35 @@ const toProviderErrorMessage = (
 
 const withTimeout = async <T>(
   provider: GenerationProvider,
-  operation: (signal: AbortSignal) => Promise<T>
+  operation: (signal: AbortSignal) => Promise<T>,
+  requestSignal?: AbortSignal
 ): Promise<T> => {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), PROVIDER_TIMEOUTS[provider]);
+  const handleRequestAbort = () => {
+    controller.abort();
+  };
+
+  requestSignal?.addEventListener('abort', handleRequestAbort, {
+    once: true,
+  });
 
   try {
+    throwIfRequestCancelled(requestSignal);
     return await operation(controller.signal);
   } catch (error) {
-    if (error instanceof Error && error.name === 'AbortError') {
+    if (isAbortError(error)) {
+      if (requestSignal?.aborted) {
+        throw new RequestCancelledError();
+      }
+
       throw new Error(`${provider} request timed out`);
     }
 
     throw error;
   } finally {
     clearTimeout(timeout);
+    requestSignal?.removeEventListener('abort', handleRequestAbort);
   }
 };
 
@@ -348,20 +368,26 @@ const callGroq = async (prompt: string, signal: AbortSignal): Promise<string> =>
 
 const callProvider = async (
   provider: GenerationProvider,
-  prompt: string
+  prompt: string,
+  signal?: AbortSignal
 ): Promise<string> =>
-  withTimeout(provider, (signal) =>
-    provider === 'gemini'
-      ? callGemini(prompt, signal)
-      : callGroq(prompt, signal)
+  withTimeout(
+    provider,
+    (providerSignal) =>
+      provider === 'gemini'
+        ? callGemini(prompt, providerSignal)
+        : callGroq(prompt, providerSignal),
+    signal
   );
 
 const generateStructuredResponseWithProvider = async <T>(
   provider: GenerationProvider,
   prompt: string,
-  schema: z.ZodType<T>
+  schema: z.ZodType<T>,
+  signal?: AbortSignal
 ): Promise<T> => {
-  const rawText = await callProvider(provider, prompt);
+  throwIfRequestCancelled(signal);
+  const rawText = await callProvider(provider, prompt, signal);
   const parsedJson = extractJson(rawText);
   const result = schema.safeParse(parsedJson);
 
@@ -392,12 +418,14 @@ const normalizeHashtag = (value: string): string => {
 const generateCaptionsWithProvider = async (
   provider: GenerationProvider,
   brandProfile: BrandProfile | null,
-  productInput: ProductInput
+  productInput: ProductInput,
+  signal?: AbortSignal
 ): Promise<CaptionVariant[]> => {
   const response = await generateStructuredResponseWithProvider(
     provider,
     buildCaptionPrompt(brandProfile, productInput),
-    captionResponseSchema
+    captionResponseSchema,
+    signal
   );
 
   const captions = response.captions
@@ -426,12 +454,14 @@ const generateCaptionsWithProvider = async (
 const generateHashtagsWithProvider = async (
   provider: GenerationProvider,
   brandProfile: BrandProfile | null,
-  productInput: ProductInput
+  productInput: ProductInput,
+  signal?: AbortSignal
 ): Promise<string[]> => {
   const response = await generateStructuredResponseWithProvider(
     provider,
     buildHashtagPrompt(brandProfile, productInput),
-    hashtagResponseSchema
+    hashtagResponseSchema,
+    signal
   );
 
   const hashtags = Array.from(
@@ -448,12 +478,14 @@ const generateHashtagsWithProvider = async (
 const generateReelScriptWithProvider = async (
   provider: GenerationProvider,
   brandProfile: BrandProfile | null,
-  productInput: ProductInput
+  productInput: ProductInput,
+  signal?: AbortSignal
 ): Promise<ReelScript> => {
   const response = await generateStructuredResponseWithProvider(
     provider,
     buildReelScriptPrompt(brandProfile, productInput),
-    reelScriptResponseSchema
+    reelScriptResponseSchema,
+    signal
   );
 
   return response.reelScript;
@@ -466,20 +498,28 @@ const generateContentPackWithProvider = async (
   options: GenerationRequestOptions = {}
 ): Promise<GeneratedContentPack> => {
   const includeReelScript = options.includeReelScript ?? true;
+  const signal = options.signal;
+  throwIfRequestCancelled(signal);
   const [captions, hashtags] = await Promise.all([
-    generateCaptionsWithProvider(provider, brandProfile, productInput),
-    generateHashtagsWithProvider(provider, brandProfile, productInput),
+    generateCaptionsWithProvider(provider, brandProfile, productInput, signal),
+    generateHashtagsWithProvider(provider, brandProfile, productInput, signal),
   ]);
   let reelScript = EMPTY_REEL_SCRIPT;
 
   if (includeReelScript) {
     try {
+      throwIfRequestCancelled(signal);
       reelScript = await generateReelScriptWithProvider(
         provider,
         brandProfile,
-        productInput
+        productInput,
+        signal
       );
     } catch (error) {
+      if (error instanceof RequestCancelledError) {
+        throw error;
+      }
+
       console.warn(
         `[content-generation] ${provider} reel script generation failed; continuing with captions and hashtags only.`,
         error instanceof Error ? error.message : error
@@ -521,6 +561,11 @@ export const generateContentPackWithFallback = async (
   options: GenerationRequestOptions = {}
 ): Promise<GeneratedContentPackWithProvider> => {
   const failures: ProviderFailure[] = [];
+  throwIfRequestCancelled(options.signal);
+  console.info('[content-generation] Provider flow', {
+    primary: 'gemini',
+    fallback: 'groq',
+  });
 
   try {
     const contentPack = await generateContentPackWithProvider(
@@ -535,6 +580,10 @@ export const generateContentPackWithFallback = async (
       provider: 'gemini',
     };
   } catch (error) {
+    if (error instanceof RequestCancelledError) {
+      throw error;
+    }
+
     const message =
       error instanceof Error ? error.message : 'gemini request failed';
     failures.push({
@@ -560,6 +609,10 @@ export const generateContentPackWithFallback = async (
       provider: 'groq',
     };
   } catch (error) {
+    if (error instanceof RequestCancelledError) {
+      throw error;
+    }
+
     const message = error instanceof Error ? error.message : 'groq request failed';
     failures.push({
       provider: 'groq',

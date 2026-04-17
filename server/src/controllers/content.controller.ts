@@ -20,6 +20,11 @@ import { getCurrentSubscriptionByUserId, getPlanFeatureLimit } from '../db/queri
 import { requireUserClient } from '../db/supabase';
 import type { GenerateContentInput } from '../schemas/content.schema';
 import type { BrandProfile } from '../types';
+import {
+  createRequestCancellation,
+  isRequestCancelledError,
+  throwIfRequestCancelled,
+} from '../lib/requestCancellation';
 
 type AuthenticatedRequest<
   Params = Record<string, string>,
@@ -98,7 +103,16 @@ export const generateContent = async (
     });
   }
 
+  const cancellation = createRequestCancellation(req, res);
+
   try {
+    console.info('[content-controller] Generate content request started', {
+      userId: req.user.id,
+      productName: req.body.productName,
+      platform: req.body.platform ?? null,
+      goal: req.body.goal ?? null,
+    });
+
     const client = requireUserClient(req.accessToken);
     const [brandProfile, subscription, reelScriptUsageCount] = await Promise.all([
       getBrandProfileByUserId(client, req.user.id),
@@ -121,15 +135,24 @@ export const generateContent = async (
       generationInput,
       {
         includeReelScript,
+        signal: cancellation.signal,
       }
     );
     const hasReelScript = hasMeaningfulReelScript(contentPack.reelScript);
+    throwIfRequestCancelled(
+      cancellation.signal,
+      'Content generation cancelled by user.'
+    );
     const content = await saveGeneratedContent(client, req.user.id, {
       ...generationInput,
       brandProfileId: brandProfile?.id ?? null,
       ...contentPack,
     });
 
+    throwIfRequestCancelled(
+      cancellation.signal,
+      'Content generation cancelled by user.'
+    );
     await trackContentGenerationUsage(client, req.user.id, {
       contentId: content.id,
       provider,
@@ -145,6 +168,10 @@ export const generateContent = async (
     }, `content-generation:${content.id}`);
 
     if (hasReelScript) {
+      throwIfRequestCancelled(
+        cancellation.signal,
+        'Content generation cancelled by user.'
+      );
       await trackReelScriptGenerationUsage(client, req.user.id, {
         contentId: content.id,
         provider,
@@ -157,12 +184,26 @@ export const generateContent = async (
       }, `reel-script-generation:${content.id}`);
     }
 
+    console.info('[content-controller] Generate content request succeeded', {
+      userId: req.user.id,
+      contentId: content.id,
+      provider,
+      hasReelScript,
+    });
+
     return res.status(200).json({
       status: 'success',
       message: 'Content generated successfully',
       data: content,
     });
   } catch (error) {
+    if (isRequestCancelledError(error)) {
+      console.info('[content-controller] Generate content request cancelled', {
+        userId: req.user?.id ?? 'unknown-user',
+      });
+      return;
+    }
+
     logGenerationFailure('content', req.user?.id ?? 'unknown-user', error);
     return res.status(500).json({
       status: 'error',
@@ -173,6 +214,8 @@ export const generateContent = async (
           ? error.message
           : 'Failed to generate content',
     });
+  } finally {
+    cancellation.cleanup();
   }
 };
 

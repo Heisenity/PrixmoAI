@@ -41,6 +41,7 @@ import type {
 } from '../schemas/generateWorkspace.schema';
 import {
   enqueueImageGeneration,
+  releaseImageRateLimitReservation,
   resolveImageRuntimePolicy,
 } from '../services/imageRuntimePolicy.service';
 import type {
@@ -48,6 +49,11 @@ import type {
   GenerateConversation,
   GenerateConversationType,
 } from '../types';
+import {
+  createRequestCancellation,
+  isRequestCancelledError,
+  throwIfRequestCancelled,
+} from '../lib/requestCancellation';
 
 type AuthenticatedRequest<
   Params = Record<string, string>,
@@ -58,6 +64,7 @@ type AuthenticatedRequest<
   user?: User;
   accessToken?: string;
   imageRuntimePolicy?: ReturnType<typeof resolveImageRuntimePolicy>;
+  imageRateLimitReservation?: number;
 };
 
 const trimText = (value: string, maxLength = 120) => {
@@ -414,7 +421,17 @@ export const generateWorkspaceCopy = async (
     });
   }
 
+  const cancellation = createRequestCancellation(req, res);
+
   try {
+    console.info('[workspace-copy] Generate content request started', {
+      userId: req.user.id,
+      productName: req.body.productName,
+      conversationId: req.body.conversationId ?? null,
+      platform: req.body.platform ?? null,
+      goal: req.body.goal ?? null,
+    });
+
     const client = requireUserClient(req.accessToken);
     const existingConversation = await ensureConversation(
       client,
@@ -442,10 +459,15 @@ export const generateWorkspaceCopy = async (
       generationInput,
       {
         includeReelScript,
+        signal: cancellation.signal,
       }
     );
     const hasReelScript = hasMeaningfulReelScript(contentPack.reelScript);
     const userPromptSummary = buildCopyPromptSummary(generationInput);
+    throwIfRequestCancelled(
+      cancellation.signal,
+      'Content generation cancelled by user.'
+    );
 
     const conversation =
       existingConversation ??
@@ -459,6 +481,10 @@ export const generateWorkspaceCopy = async (
         lastMessagePreview: userPromptSummary,
       }));
 
+    throwIfRequestCancelled(
+      cancellation.signal,
+      'Content generation cancelled by user.'
+    );
     const content = await saveGeneratedContent(client, req.user.id, {
       ...generationInput,
       conversationId: conversation.id,
@@ -466,6 +492,10 @@ export const generateWorkspaceCopy = async (
       ...contentPack,
     });
 
+    throwIfRequestCancelled(
+      cancellation.signal,
+      'Content generation cancelled by user.'
+    );
     const userMessage = await createGenerateMessage(client, req.user.id, {
       conversationId: conversation.id,
       role: 'user',
@@ -489,6 +519,10 @@ export const generateWorkspaceCopy = async (
       generationId: content.id,
     });
 
+    throwIfRequestCancelled(
+      cancellation.signal,
+      'Content generation cancelled by user.'
+    );
     await createGeneratedAssets(client, req.user.id, {
       conversationId: conversation.id,
       messageId: assistantMessage.id,
@@ -528,6 +562,10 @@ export const generateWorkspaceCopy = async (
       isArchived: false,
     });
 
+    throwIfRequestCancelled(
+      cancellation.signal,
+      'Content generation cancelled by user.'
+    );
     await trackContentGenerationUsage(client, req.user.id, {
       contentId: content.id,
       conversationId: conversation.id,
@@ -544,6 +582,10 @@ export const generateWorkspaceCopy = async (
     }, `content-generation:${content.id}`);
 
     if (hasReelScript) {
+      throwIfRequestCancelled(
+        cancellation.signal,
+        'Content generation cancelled by user.'
+      );
       await trackReelScriptGenerationUsage(client, req.user.id, {
         contentId: content.id,
         conversationId: conversation.id,
@@ -563,12 +605,28 @@ export const generateWorkspaceCopy = async (
       conversation.id
     );
 
+    console.info('[workspace-copy] Generate content request succeeded', {
+      userId: req.user.id,
+      conversationId: conversation.id,
+      contentId: content.id,
+      provider,
+      hasReelScript,
+    });
+
     return res.status(200).json({
       status: 'success',
       message: 'Content generated successfully',
       data: thread,
     });
   } catch (error) {
+    if (isRequestCancelledError(error)) {
+      console.info('[workspace-copy] Generate content request cancelled', {
+        userId: req.user?.id ?? 'unknown-user',
+        conversationId: req.body.conversationId ?? null,
+      });
+      return;
+    }
+
     logWorkspaceCopyFailure(req.user?.id ?? 'unknown-user', error);
     return res.status(500).json({
       status: 'error',
@@ -579,6 +637,8 @@ export const generateWorkspaceCopy = async (
           ? error.message
           : 'Failed to generate content',
     });
+  } finally {
+    cancellation.cleanup();
   }
 };
 
@@ -593,7 +653,16 @@ export const generateWorkspaceImage = async (
     });
   }
 
+  const cancellation = createRequestCancellation(req, res);
+
   try {
+    console.info('[workspace-image] Generate image request started', {
+      userId: req.user.id,
+      productName: req.body.productName,
+      conversationId: req.body.conversationId ?? null,
+      contentId: req.body.contentId ?? null,
+    });
+
     const client = requireUserClient(req.accessToken);
     const existingConversation = await ensureConversation(
       client,
@@ -607,10 +676,19 @@ export const generateWorkspaceImage = async (
     };
     const runtimePolicy =
       req.imageRuntimePolicy ?? resolveImageRuntimePolicy('free', 0);
-    const result = await enqueueImageGeneration(runtimePolicy, () =>
-      generateProductImage(brandProfile, generationInput)
+    const result = await enqueueImageGeneration(
+      runtimePolicy,
+      () =>
+        generateProductImage(brandProfile, generationInput, {
+          signal: cancellation.signal,
+        }),
+      cancellation.signal
     );
     const userPromptSummary = buildImagePromptSummary(generationInput);
+    throwIfRequestCancelled(
+      cancellation.signal,
+      'Image generation cancelled by user.'
+    );
 
     const conversation: GenerateConversation =
       existingConversation ??
@@ -624,6 +702,10 @@ export const generateWorkspaceImage = async (
         lastMessagePreview: userPromptSummary,
       }));
 
+    throwIfRequestCancelled(
+      cancellation.signal,
+      'Image generation cancelled by user.'
+    );
     const image = await saveGeneratedImage(client, req.user.id, {
       contentId: generationInput.contentId ?? null,
       conversationId: conversation.id,
@@ -633,6 +715,10 @@ export const generateWorkspaceImage = async (
       prompt: result.promptUsed,
     });
 
+    throwIfRequestCancelled(
+      cancellation.signal,
+      'Image generation cancelled by user.'
+    );
     const userMessage = await createGenerateMessage(client, req.user.id, {
       conversationId: conversation.id,
       role: 'user',
@@ -657,6 +743,10 @@ export const generateWorkspaceImage = async (
       generationId: image.id,
     });
 
+    throwIfRequestCancelled(
+      cancellation.signal,
+      'Image generation cancelled by user.'
+    );
     await createGeneratedAssets(client, req.user.id, {
       conversationId: conversation.id,
       messageId: assistantMessage.id,
@@ -687,6 +777,10 @@ export const generateWorkspaceImage = async (
       isArchived: false,
     });
 
+    throwIfRequestCancelled(
+      cancellation.signal,
+      'Image generation cancelled by user.'
+    );
     await trackImageGenerationUsage(client, req.user.id, {
       imageId: image.id,
       conversationId: conversation.id,
@@ -717,6 +811,13 @@ export const generateWorkspaceImage = async (
       conversation.id
     );
 
+    console.info('[workspace-image] Generate image request succeeded', {
+      userId: req.user.id,
+      conversationId: conversation.id,
+      imageId: image.id,
+      provider: result.provider,
+    });
+
     return res.status(200).json({
       status: 'success',
       message: `Image generated successfully using ${result.provider}`,
@@ -726,6 +827,19 @@ export const generateWorkspaceImage = async (
       },
     });
   } catch (error) {
+    if (isRequestCancelledError(error)) {
+      releaseImageRateLimitReservation(
+        req.user?.id ?? '',
+        req.imageRateLimitReservation
+      );
+      req.imageRateLimitReservation = undefined;
+      console.info('[workspace-image] Image generation request cancelled', {
+        userId: req.user?.id ?? 'unknown-user',
+        conversationId: req.body.conversationId ?? null,
+      });
+      return;
+    }
+
     logWorkspaceImageFailure(req.user?.id ?? 'unknown-user', error);
     return res.status(502).json({
       status: 'error',
@@ -736,5 +850,7 @@ export const generateWorkspaceImage = async (
           ? error.message
           : 'Failed to generate image',
     });
+  } finally {
+    cancellation.cleanup();
   }
 };

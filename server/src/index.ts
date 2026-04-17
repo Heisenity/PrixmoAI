@@ -13,6 +13,7 @@ import schedulerRouter from "./routes/scheduler.routes";
 import { APP_PORT } from "./config/constants";
 import { startAnalyticsSyncWorker } from './services/analyticsSync.service';
 import { startSchedulerPublisherWorker } from './services/schedulerPublisher.service';
+import { formatIstTimestamp } from './lib/timezone';
 import { version } from '../package.json';
 
 
@@ -42,7 +43,7 @@ app.get('/health', (req, res) => {
   res.status(200).json({
     status: "UP",
     message: "Server is healthy and running",
-    timestamp: new Date().toISOString(),
+    timestamp: formatIstTimestamp(),
     environment: process.env.NODE_ENV || 'development'
   });
 });
@@ -70,8 +71,8 @@ app.use(errorHandler);
 
 // Start Server
 app.listen(PORT, () => {
-  console.log(`🚀 Server running at http://localhost:${PORT}`);
-  console.log(`✅ Check health at http://localhost:${PORT}/health`);
+  console.log(`🚀 [${formatIstTimestamp()}] Server running at http://localhost:${PORT}`);
+  console.log(`✅ [${formatIstTimestamp()}] Check health at http://localhost:${PORT}/health`);
   startSchedulerPublisherWorker();
   startAnalyticsSyncWorker();
 });

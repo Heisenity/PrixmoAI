@@ -7,6 +7,10 @@ import {
   type ImageSpeedTier,
 } from '../config/constants';
 import type { PlanType } from '../types';
+import {
+  RequestCancelledError,
+  throwIfRequestCancelled,
+} from '../lib/requestCancellation';
 
 export type ImageRuntimePolicy = {
   plan: PlanType;
@@ -24,6 +28,8 @@ export type ImageRuntimePolicy = {
 type QueueJob<T> = {
   queueTier: ImageQueueTier;
   throttleDelayMs: number;
+  signal?: AbortSignal;
+  started: boolean;
   run: () => Promise<T>;
   resolve: (value: T | PromiseLike<T>) => void;
   reject: (reason?: unknown) => void;
@@ -37,9 +43,26 @@ const queueBuckets: Record<ImageQueueTier, QueueJob<any>[]> = {
 
 let activeImageJobs = 0;
 
-const wait = (delayMs: number) =>
-  new Promise<void>((resolve) => {
-    setTimeout(resolve, delayMs);
+const wait = (delayMs: number, signal?: AbortSignal) =>
+  new Promise<void>((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new RequestCancelledError('Image generation cancelled by user.'));
+      return;
+    }
+
+    const timeout = setTimeout(() => {
+      signal?.removeEventListener('abort', handleAbort);
+      resolve();
+    }, delayMs);
+
+    const handleAbort = () => {
+      clearTimeout(timeout);
+      reject(new RequestCancelledError('Image generation cancelled by user.'));
+    };
+
+    signal?.addEventListener('abort', handleAbort, {
+      once: true,
+    });
   });
 
 const getNextJob = () =>
@@ -60,10 +83,20 @@ const pumpQueue = () => {
 
     void (async () => {
       try {
-        if (nextJob.throttleDelayMs > 0) {
-          await wait(nextJob.throttleDelayMs);
+        if (nextJob.signal?.aborted) {
+          throw new RequestCancelledError('Image generation cancelled by user.');
         }
 
+        nextJob.started = true;
+
+        if (nextJob.throttleDelayMs > 0) {
+          await wait(nextJob.throttleDelayMs, nextJob.signal);
+        }
+
+        throwIfRequestCancelled(
+          nextJob.signal,
+          'Image generation cancelled by user.'
+        );
         const result = await nextJob.run();
         nextJob.resolve(result);
       } catch (error) {
@@ -78,16 +111,74 @@ const pumpQueue = () => {
 
 export const enqueueImageGeneration = <T>(
   policy: Pick<ImageRuntimePolicy, 'queueTier' | 'throttleDelayMs'>,
-  run: () => Promise<T>
+  run: () => Promise<T>,
+  signal?: AbortSignal
 ) =>
   new Promise<T>((resolve, reject) => {
-    queueBuckets[policy.queueTier].push({
+    if (signal?.aborted) {
+      reject(new RequestCancelledError('Image generation cancelled by user.'));
+      return;
+    }
+
+    let settled = false;
+    let job: QueueJob<T>;
+
+    const cleanup = () => {
+      signal?.removeEventListener('abort', handleAbort);
+    };
+
+    const settleResolve = (value: T | PromiseLike<T>) => {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+      cleanup();
+      resolve(value);
+    };
+
+    const settleReject = (reason?: unknown) => {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+      cleanup();
+      reject(reason);
+    };
+
+    const removeQueuedJob = () => {
+      const bucket = queueBuckets[policy.queueTier];
+      const jobIndex = bucket.indexOf(job as QueueJob<any>);
+
+      if (jobIndex !== -1) {
+        bucket.splice(jobIndex, 1);
+      }
+    };
+
+    const handleAbort = () => {
+      if (job.started) {
+        return;
+      }
+
+      removeQueuedJob();
+      settleReject(new RequestCancelledError('Image generation cancelled by user.'));
+    };
+
+    job = {
       queueTier: policy.queueTier,
       throttleDelayMs: policy.throttleDelayMs,
+      signal,
+      started: false,
       run,
-      resolve,
-      reject,
+      resolve: settleResolve,
+      reject: settleReject,
+    };
+
+    signal?.addEventListener('abort', handleAbort, {
+      once: true,
     });
+    queueBuckets[policy.queueTier].push(job);
 
     pumpQueue();
   });
@@ -139,6 +230,7 @@ type RateLimitWindowResult =
       remaining: number | null;
       throttleDelayMs: number;
       burstRequestCount: number | null;
+      reservationTimestamp: number;
     }
   | {
       allowed: false;
@@ -214,6 +306,7 @@ export const checkImageRateLimit = (
       remaining: null,
       throttleDelayMs,
       burstRequestCount,
+      reservationTimestamp: now,
     };
   }
 
@@ -222,5 +315,37 @@ export const checkImageRateLimit = (
     remaining: Math.max(0, policy.requestsPerMinute - activeMinuteRequests.length - 1),
     throttleDelayMs,
     burstRequestCount,
+    reservationTimestamp: now,
   };
+};
+
+export const releaseImageRateLimitReservation = (
+  userId: string,
+  reservationTimestamp: number | null | undefined
+) => {
+  if (!reservationTimestamp) {
+    return;
+  }
+
+  const key = `image:${userId}`;
+  const activeRequests = requestWindows.get(key);
+
+  if (!activeRequests?.length) {
+    return;
+  }
+
+  const reservationIndex = activeRequests.indexOf(reservationTimestamp);
+
+  if (reservationIndex === -1) {
+    return;
+  }
+
+  activeRequests.splice(reservationIndex, 1);
+
+  if (activeRequests.length) {
+    requestWindows.set(key, activeRequests);
+    return;
+  }
+
+  requestWindows.delete(key);
 };
