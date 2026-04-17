@@ -38,10 +38,10 @@ const pageMeta: Record<string, { eyebrow: string; title: string; subtitle: strin
       'Connect accounts, line up media, and manage post states from one queue.',
   },
   '/app/billing': {
-    eyebrow: 'Plan control',
-    title: 'Keep subscription logic ready for launch.',
+    eyebrow: 'Billing',
+    title: 'Manage your plan in one place.',
     subtitle:
-      'Free, Basic, and Pro are already wired so pricing can snap in later.',
+      'Review your current subscription and switch plans when needed.',
   },
   '/app/settings': {
     eyebrow: 'Memory settings',

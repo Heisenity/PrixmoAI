@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { apiRequest } from '../lib/axios';
 import {
   readActiveGenerateConversationId,
@@ -39,6 +39,8 @@ const readFileAsDataUrl = (file: File): Promise<string> =>
 
 export const useGenerateWorkspace = () => {
   const { token } = useAuth();
+  const copyGenerationControllerRef = useRef<AbortController | null>(null);
+  const imageGenerationControllerRef = useRef<AbortController | null>(null);
   const [conversations, setConversations] = useState<GenerateConversation[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<string | null>(
     () => readActiveGenerateConversationId()
@@ -125,6 +127,10 @@ export const useGenerateWorkspace = () => {
 
   useEffect(() => {
     if (!token) {
+      copyGenerationControllerRef.current?.abort();
+      copyGenerationControllerRef.current = null;
+      imageGenerationControllerRef.current?.abort();
+      imageGenerationControllerRef.current = null;
       setConversations([]);
       setActiveThread(null);
       setActiveConversationId(null);
@@ -145,6 +151,16 @@ export const useGenerateWorkspace = () => {
 
     void refreshThread(activeConversationId);
   }, [token, activeConversationId]);
+
+  useEffect(
+    () => () => {
+      copyGenerationControllerRef.current?.abort();
+      copyGenerationControllerRef.current = null;
+      imageGenerationControllerRef.current?.abort();
+      imageGenerationControllerRef.current = null;
+    },
+    []
+  );
 
   const openConversation = (conversationId: string) => {
     setActiveConversationId(conversationId);
@@ -244,6 +260,9 @@ export const useGenerateWorkspace = () => {
       throw new Error('Sign in again to generate copy.');
     }
 
+    copyGenerationControllerRef.current?.abort();
+    const controller = new AbortController();
+    copyGenerationControllerRef.current = controller;
     setError(null);
     setIsGeneratingCopy(true);
 
@@ -257,6 +276,7 @@ export const useGenerateWorkspace = () => {
             conversationId: activeConversationId ?? undefined,
             ...input,
           },
+          signal: controller.signal,
         }
       );
 
@@ -266,6 +286,14 @@ export const useGenerateWorkspace = () => {
 
       return nextThread;
     } catch (generationError) {
+      if (
+        generationError instanceof Error &&
+        /request cancelled by user/i.test(generationError.message)
+      ) {
+        setError(null);
+        throw generationError;
+      }
+
       const message =
         generationError instanceof Error
           ? generationError.message
@@ -280,7 +308,10 @@ export const useGenerateWorkspace = () => {
       setError(nextMessage);
       throw new Error(nextMessage);
     } finally {
-      setIsGeneratingCopy(false);
+      if (copyGenerationControllerRef.current === controller) {
+        copyGenerationControllerRef.current = null;
+        setIsGeneratingCopy(false);
+      }
     }
   };
 
@@ -289,6 +320,9 @@ export const useGenerateWorkspace = () => {
       throw new Error('Sign in again to generate images.');
     }
 
+    imageGenerationControllerRef.current?.abort();
+    const controller = new AbortController();
+    imageGenerationControllerRef.current = controller;
     setError(null);
     setIsGeneratingImage(true);
 
@@ -302,6 +336,7 @@ export const useGenerateWorkspace = () => {
             conversationId: activeConversationId ?? undefined,
             ...input,
           },
+          signal: controller.signal,
         }
       );
 
@@ -311,6 +346,14 @@ export const useGenerateWorkspace = () => {
 
       return nextThread;
     } catch (generationError) {
+      if (
+        generationError instanceof Error &&
+        /request cancelled by user/i.test(generationError.message)
+      ) {
+        setError(null);
+        throw generationError;
+      }
+
       const message =
         generationError instanceof Error
           ? generationError.message
@@ -325,8 +368,25 @@ export const useGenerateWorkspace = () => {
       setError(nextMessage);
       throw new Error(nextMessage);
     } finally {
-      setIsGeneratingImage(false);
+      if (imageGenerationControllerRef.current === controller) {
+        imageGenerationControllerRef.current = null;
+        setIsGeneratingImage(false);
+      }
     }
+  };
+
+  const cancelCopyGeneration = () => {
+    copyGenerationControllerRef.current?.abort();
+    copyGenerationControllerRef.current = null;
+    setIsGeneratingCopy(false);
+    setError(null);
+  };
+
+  const cancelImageGeneration = () => {
+    imageGenerationControllerRef.current?.abort();
+    imageGenerationControllerRef.current = null;
+    setIsGeneratingImage(false);
+    setError(null);
   };
 
   const uploadSourceImage = async (file: File) => {
@@ -388,6 +448,8 @@ export const useGenerateWorkspace = () => {
     deleteConversation,
     generateCopy,
     generateImage,
+    cancelCopyGeneration,
+    cancelImageGeneration,
     uploadSourceImage,
   };
 };

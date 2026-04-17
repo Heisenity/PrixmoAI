@@ -7,6 +7,7 @@ type ApiRequestOptions = {
   token?: string | null;
   headers?: HeadersInit;
   query?: Record<string, string | number | null | undefined>;
+  signal?: AbortSignal;
 };
 
 const toSearchParams = (query?: ApiRequestOptions['query']) => {
@@ -43,8 +44,16 @@ export const apiRequest = async <T>(
         ...(options.headers ?? {}),
       },
       body: options.body ? JSON.stringify(options.body) : undefined,
+      signal: options.signal,
     });
   } catch (requestError) {
+    if (
+      requestError instanceof DOMException &&
+      requestError.name === 'AbortError'
+    ) {
+      throw new Error('Request cancelled by user.');
+    }
+
     const message =
       requestError instanceof Error ? requestError.message : 'Unable to complete the request.';
 

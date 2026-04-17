@@ -50,6 +50,10 @@ import {
   readSchedulerGeneratedMediaIntent,
   writeSchedulerGeneratedMediaIntent,
 } from '../../lib/schedulerGeneratedMedia';
+import {
+  toDisplayDateTimeLocalValue,
+  toIsoStringFromDisplayDateTimeLocalValue,
+} from '../../lib/timezone';
 import { cn, formatDateTime } from '../../lib/utils';
 import type {
   MetaOAuthPopupResult,
@@ -200,19 +204,8 @@ const queueTabs: Array<{
   },
 ];
 
-const toDateTimeLocalValue = (value: string) => {
-  const date = new Date(value);
-
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-
-  const tzOffset = date.getTimezoneOffset() * 60000;
-  return new Date(date.getTime() - tzOffset).toISOString().slice(0, 16);
-};
-
 const getMinimumScheduleDateTimeValue = (nowMs: number) =>
-  toDateTimeLocalValue(new Date(nowMs + SCHEDULE_MIN_BUFFER_MS).toISOString());
+  toDisplayDateTimeLocalValue(new Date(nowMs + SCHEDULE_MIN_BUFFER_MS));
 
 const isSchedulableDateTimeValue = (value: string, nowMs: number) => {
   const scheduledAtMs = new Date(value).getTime();
@@ -1826,7 +1819,7 @@ export const SchedulerPage = () => {
           slots: items.map((item) => ({
             id: createLocalPlannerId(),
             socialAccountId: item.socialAccountId,
-            scheduledAt: toDateTimeLocalValue(item.scheduledAt),
+            scheduledAt: toDisplayDateTimeLocalValue(item.scheduledAt),
             status: item.status,
             itemId: item.id,
             lastError: item.lastError,
@@ -1971,7 +1964,7 @@ export const SchedulerPage = () => {
           platform: account.platform,
           accountId: account.accountId,
           caption: asset.caption.trim() || null,
-          scheduledAt: new Date(slot.scheduledAt).toISOString(),
+          scheduledAt: toIsoStringFromDisplayDateTimeLocalValue(slot.scheduledAt),
           status: 'pending' as const,
         };
       })
@@ -2996,7 +2989,9 @@ export const SchedulerPage = () => {
                     </div>
                     <span>
                       {slot.scheduledAt
-                        ? formatDateTime(new Date(slot.scheduledAt).toISOString())
+                        ? formatDateTime(
+                            toIsoStringFromDisplayDateTimeLocalValue(slot.scheduledAt)
+                          )
                         : 'No time selected'}
                     </span>
                     <span>{asset.caption?.trim() || 'No caption yet'}</span>

@@ -26,6 +26,7 @@ import { ErrorMessage } from '../../components/shared/ErrorMessage';
 import { Card } from '../../components/ui/card';
 import { Input } from '../../components/ui/input';
 import { useAnalyticsDashboard } from '../../hooks/useAnalyticsDashboard';
+import { getUserFacingTimeZone } from '../../lib/timezone';
 import { formatDateTime, formatPercentage } from '../../lib/utils';
 import type {
   AnalyticsDashboard,
@@ -87,10 +88,11 @@ const KPI_TOOLTIPS: Record<AnalyticsKpiKey, string> = {
 
 const POSTS_PER_PAGE = 10;
 
-const LAST_UPDATED_DATE_FORMATTER = new Intl.DateTimeFormat('en-US', {
+const LAST_UPDATED_DATE_FORMATTER = new Intl.DateTimeFormat('en-IN', {
   month: 'short',
   day: 'numeric',
   year: 'numeric',
+  timeZone: getUserFacingTimeZone(),
 });
 
 const getRelativeLastUpdated = (value: string | null, now = Date.now()) => {

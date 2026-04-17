@@ -1,5 +1,10 @@
 import { Eye, EyeOff, ImagePlus, Trash2, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
+import {
+  parseDisplayDateTimeLocalValue,
+  toDisplayDateTimeLocalValue,
+  toIsoStringFromDisplayDateTimeLocalValue,
+} from '../../lib/timezone';
 import type { ScheduledPost, SchedulerMediaType } from '../../types';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
@@ -9,22 +14,12 @@ import { MediaThumbnail } from './MediaThumbnail';
 const SCHEDULE_MIN_BUFFER_MS = 5_000;
 const SCHEDULE_TIME_VALIDATION_MESSAGE = 'Please select a future date and time.';
 
-const toDateTimeLocalValue = (value: string) => {
-  const date = new Date(value);
-
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-
-  const tzOffset = date.getTimezoneOffset() * 60000;
-  return new Date(date.getTime() - tzOffset).toISOString().slice(0, 16);
-};
-
 const getMinimumScheduleDateTimeValue = (nowMs: number) =>
-  toDateTimeLocalValue(new Date(nowMs + SCHEDULE_MIN_BUFFER_MS).toISOString());
+  toDisplayDateTimeLocalValue(new Date(nowMs + SCHEDULE_MIN_BUFFER_MS));
 
 const isSchedulableDateTimeValue = (value: string, nowMs: number) => {
-  const scheduledAtMs = new Date(value).getTime();
+  const scheduledAtMs =
+    parseDisplayDateTimeLocalValue(value)?.getTime() ?? Number.NaN;
 
   return Number.isFinite(scheduledAtMs) && scheduledAtMs > nowMs + SCHEDULE_MIN_BUFFER_MS;
 };
@@ -118,7 +113,7 @@ export const ScheduleModal = ({
     setMediaUrl(post.mediaUrl || '');
     setMediaUrlInput(post.mediaUrl || '');
     setMediaType(post.mediaType || null);
-    setScheduledFor(toDateTimeLocalValue(post.scheduledFor));
+    setScheduledFor(toDisplayDateTimeLocalValue(post.scheduledFor));
     setMediaName(null);
     setIsPreviewOpen(false);
     setValidationError(null);
@@ -222,7 +217,7 @@ export const ScheduleModal = ({
               caption,
               mediaUrl: resolvedMedia.mediaUrl,
               mediaType: resolvedMedia.mediaType,
-              scheduledFor: new Date(scheduledFor).toISOString(),
+              scheduledFor: toIsoStringFromDisplayDateTimeLocalValue(scheduledFor),
             });
           }}
         >

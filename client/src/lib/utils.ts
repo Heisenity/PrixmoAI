@@ -1,3 +1,5 @@
+import { getUserFacingTimeZone } from './timezone';
+
 export const cn = (...values: Array<string | false | null | undefined>) =>
   values.filter(Boolean).join(' ');
 
@@ -48,6 +50,7 @@ export const formatDateTime = (value?: string | null) => {
   return new Intl.DateTimeFormat('en-IN', {
     dateStyle: 'medium',
     timeStyle: 'short',
+    timeZone: getUserFacingTimeZone(),
   }).format(date);
 };
 
@@ -57,6 +60,7 @@ export const formatRelativeMonthWindow = () => {
   return new Intl.DateTimeFormat('en-IN', {
     month: 'long',
     year: 'numeric',
+    timeZone: getUserFacingTimeZone(),
   }).format(now);
 };
 

@@ -114,35 +114,68 @@ export const PLAN_ACCENTS: Record<PlanType, string> = {
   pro: 'var(--tone-aurora)',
 };
 
-export const PLAN_FEATURES: Record<PlanType, string[]> = {
-  free: [
-    '15 AI captions for engagement / day',
-    '5 product image generations / day',
-    'Watermarked images',
-    'Trending Hashtag generator',
-    '4 Reel script generator / day',
-    'Schedule 1 account',
-    'Analytics not included',
-  ],
-  basic: [
-    '25 AI captions for engagement / day',
-    '15 product image generations / day',
-    'No watermark',
-    'Trending Hashtag generator',
-    '15 Reel script generator / day',
-    'Schedule 2 social account',
-    'Basic analytics',
-  ],
-  pro: [
-    '60 AI captions for engagement / day',
-    '35 high-speed image generations / day',
-    'Trending Hashtag generator',
-    '30 Reel scripts / day',
-    'Schedule 5 social accounts',
-    'Advanced analytics dashboard',
-    'Caption keyword optimizer',
-    'Priority support',
-  ],
+export const PLAN_CARD_DISPLAY: Record<
+  PlanType,
+  {
+    name: string;
+    price: string;
+    cadence: string;
+    description: string;
+    cta: string;
+    badge?: string;
+    features: Array<{ label: string; included: boolean }>;
+  }
+> = {
+  free: {
+    name: 'Free',
+    price: '₹0',
+    cadence: '/ month',
+    description: 'Try PrixmoAI and create your first content',
+    cta: 'Get Started Free',
+    features: [
+      { label: '15 AI captions for engagement / day', included: true },
+      { label: '5 product image generations / day', included: true },
+      { label: 'Watermarked images', included: true },
+      { label: 'Trending Hashtag generator', included: true },
+      { label: 'Reel script generator / day', included: true },
+      { label: 'Schedule 1 account', included: true },
+      { label: 'Analytics', included: false },
+    ],
+  },
+  basic: {
+    name: 'Basic',
+    price: '₹499',
+    cadence: '/ month',
+    description: 'For creators and growing businesses',
+    cta: 'Start Basic Plan',
+    badge: 'Most Popular',
+    features: [
+      { label: '25 AI captions for engagement / day', included: true },
+      { label: '15 product image generations / day', included: true },
+      { label: 'No watermark', included: true },
+      { label: 'Trending Hashtag generator', included: true },
+      { label: '15 Reel script generator / day', included: true },
+      { label: 'Schedule 2 social account', included: true },
+      { label: 'Basic analytics', included: true },
+    ],
+  },
+  pro: {
+    name: 'Pro',
+    price: '₹999',
+    cadence: '/ month',
+    description: 'Made for brands playing at the next level',
+    cta: 'Start Pro Plan',
+    features: [
+      { label: '60 AI captions for engagement / day', included: true },
+      { label: '35 high-speed image generations / day', included: true },
+      { label: 'Trending Hashtag generator', included: true },
+      { label: '30 Reel scripts / day', included: true },
+      { label: 'Schedule 5 social accounts', included: true },
+      { label: 'Advanced analytics dashboard', included: true },
+      { label: 'Caption keyword optimizer', included: true },
+      { label: 'Priority support', included: true },
+    ],
+  },
 };
 
 export const PLAN_DASHBOARD_DETAILS: Record<

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { apiRequest } from '../lib/axios';
 import { useAuth } from './useAuth';
 import type { BillingCatalogResponse, PlanType, Subscription } from '../types';
@@ -16,7 +16,7 @@ export const useBilling = () => {
   const [isCheckingOut, setIsCheckingOut] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const refresh = async () => {
+  const refresh = useCallback(async () => {
     if (!token) {
       return;
     }
@@ -39,11 +39,74 @@ export const useBilling = () => {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [token]);
+
+  const syncSubscription = useCallback(
+    async (subscriptionId?: string | null) => {
+      if (!token || !subscriptionId) {
+        return null;
+      }
+
+      try {
+        const nextSubscription = await apiRequest<Subscription>('/api/billing/sync', {
+          method: 'POST',
+          token,
+          body: { subscriptionId },
+        });
+
+        setSubscription(nextSubscription);
+        setError(null);
+        return nextSubscription;
+      } catch {
+        return null;
+      }
+    },
+    [token]
+  );
 
   useEffect(() => {
     void refresh();
-  }, [token]);
+  }, [refresh]);
+
+  useEffect(() => {
+    if (!token) {
+      return;
+    }
+
+    const existingSubscriptionId =
+      subscription?.razorpaySubscriptionId ??
+      catalog?.currentSubscription.razorpaySubscriptionId ??
+      null;
+
+    const revalidateBillingState = async () => {
+      await syncSubscription(existingSubscriptionId);
+      await refresh();
+    };
+
+    const handleFocus = () => {
+      void revalidateBillingState();
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        void revalidateBillingState();
+      }
+    };
+
+    window.addEventListener('focus', handleFocus);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      window.removeEventListener('focus', handleFocus);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [
+    token,
+    subscription?.razorpaySubscriptionId,
+    catalog?.currentSubscription.razorpaySubscriptionId,
+    syncSubscription,
+    refresh,
+  ]);
 
   const startCheckout = async (plan: Exclude<PlanType, 'free'>) => {
     if (!token) {

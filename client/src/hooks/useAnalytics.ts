@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { apiRequest } from '../lib/axios';
 import { useAuth } from './useAuth';
 import type { AnalyticsOverview, AnalyticsRecord, PaginatedResult } from '../types';
@@ -10,7 +10,7 @@ export const useAnalytics = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const refresh = async () => {
+  const refresh = useCallback(async () => {
     if (!token) {
       return;
     }
@@ -35,11 +35,35 @@ export const useAnalytics = () => {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [token]);
 
   useEffect(() => {
     void refresh();
-  }, [token]);
+  }, [refresh]);
+
+  useEffect(() => {
+    if (!token) {
+      return;
+    }
+
+    const handleFocus = () => {
+      void refresh();
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        void refresh();
+      }
+    };
+
+    window.addEventListener('focus', handleFocus);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      window.removeEventListener('focus', handleFocus);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [token, refresh]);
 
   return {
     overview,

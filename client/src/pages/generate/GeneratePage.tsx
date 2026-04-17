@@ -13,6 +13,7 @@ import {
   PanelRightClose,
   PanelRightOpen,
   Search as SearchIcon,
+  Square,
   Sparkles,
   CalendarClock,
   Settings,
@@ -44,6 +45,7 @@ import { useAuth } from '../../hooks/useAuth';
 import { useAnalytics } from '../../hooks/useAnalytics';
 import { useUpgradePrompt } from '../../hooks/useUpgradePrompt';
 import { getAvatarCandidates } from '../../lib/profile';
+import { getUserFacingTimeZone } from '../../lib/timezone';
 import { getOverallUsageSummary } from '../../lib/usage';
 import { APP_NAME } from '../../lib/constants';
 import { UpgradePrompt } from '../../components/shared/UpgradePrompt';
@@ -252,6 +254,7 @@ const formatTimestamp = (value: string) => {
   }
 
   return date.toLocaleDateString(undefined, {
+    timeZone: getUserFacingTimeZone(),
     month: 'short',
     day: 'numeric',
   });
@@ -688,6 +691,13 @@ export const GeneratePage = () => {
   const hasActiveMessages = Boolean(workspace.activeThread?.messages.length);
   const activeFormId =
     activeWorkspace === 'copy' ? 'generate-copy-form' : 'generate-image-form';
+  const isAnyGenerationRunning =
+    workspace.isGeneratingCopy || workspace.isGeneratingImage;
+  const activeGenerationLabel = workspace.isGeneratingCopy
+    ? 'content'
+    : workspace.isGeneratingImage
+      ? 'image'
+      : 'generation';
   const readableWorkspaceError = normalizeWorkspaceError(
     workspace.error,
     activeWorkspace
@@ -902,6 +912,11 @@ export const GeneratePage = () => {
         prompt: imageForm.prompt || undefined,
       })
       .catch(() => undefined);
+  };
+
+  const stopGeneration = () => {
+    workspace.cancelCopyGeneration();
+    workspace.cancelImageGeneration();
   };
 
   return (
@@ -1423,6 +1438,17 @@ export const GeneratePage = () => {
                       ? 'Generating...'
                       : 'Generate image'}
                 </Button>
+                {isAnyGenerationRunning ? (
+                  <button
+                    type="button"
+                    className="generate-chat__stop-button"
+                    onClick={stopGeneration}
+                    aria-label="Stop generating"
+                    title={`Stop ${activeGenerationLabel}`}
+                  >
+                    <Square size={12} strokeWidth={2.5} />
+                  </button>
+                ) : null}
                 {workspace.activeThread?.messages.length ? (
                   <RegenerateButton
                     size="sm"
