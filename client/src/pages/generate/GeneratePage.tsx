@@ -21,9 +21,10 @@ import {
   Upload,
   X,
 } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { NavLink } from 'react-router-dom';
 import { CaptionList } from '../../components/generate/CaptionList';
+import { DictationTextareaField } from '../../components/generate/DictationTextareaField';
 import { GenerationBlackHoleLoader } from '../../components/generate/GenerationBlackHoleLoader';
 import { GeneratedImage } from '../../components/generate/GeneratedImage';
 import { HashtagDisplay } from '../../components/generate/HashtagDisplay';
@@ -68,6 +69,49 @@ import type {
 } from '../../types';
 
 type WorkspaceMode = 'copy' | 'image';
+type GenerateButtonAnimationMode = 'copy' | 'image';
+type GenerateButtonProgressStage = {
+  durationMs: number;
+  start: number;
+  end: number;
+  easePower: number;
+};
+type GenerateButtonSpeedLevel = 'slow' | 'medium' | 'fast';
+type GenerateButtonPaceProfile =
+  | 'slow-burn'
+  | 'erratic'
+  | 'front-loaded'
+  | 'rollercoaster';
+type GenerateButtonTempoWindow = {
+  startMs: number;
+  durationMs: number;
+  strength: number;
+};
+type GenerateButtonMotionProfile = {
+  stages: GenerateButtonProgressStage[];
+  softCap: number;
+  driftFactor: number;
+  easeFactor: number;
+  paceProfile: GenerateButtonPaceProfile;
+  startSpeedLevel: GenerateButtonSpeedLevel;
+  endSpeedLevel: GenerateButtonSpeedLevel;
+  hiddenPhaseCount: number;
+  decimalStartAt: number;
+  chaosFactor: number;
+  totalExpectedDurationMs: number;
+  stallWindows: GenerateButtonTempoWindow[];
+  surgeWindows: GenerateButtonTempoWindow[];
+  tempoWaveMs: number;
+  settleWaveMs: number;
+  tempoPhase: number;
+  settlePhase: number;
+  burstStrength: number;
+  pauseStrength: number;
+  flowDurationMs: number;
+  bobDurationMs: number;
+  auraShiftPx: number;
+  tiltDeg: number;
+};
 
 const WORKSPACE_MENU_ITEMS = [
   { label: 'Generate', href: '/app/generate', icon: Sparkles },
@@ -101,6 +145,214 @@ const GENERATE_SIDEBAR_COLLAPSED_STORAGE_KEY =
   'prixmoai.generate.sidebarCollapsed';
 const GENERATE_COMPOSER_COLLAPSED_STORAGE_KEY =
   'prixmoai.generate.composerCollapsed';
+const CONTENT_BUTTON_MIN_VISIBLE_MS = 900;
+const CONTENT_BUTTON_COMPLETE_HOLD_MS = 380;
+const CONTENT_BUTTON_COMPLETE_ANIMATION_MS = 320;
+const GENERATE_BUTTON_BASE_SOFT_CAP_PROGRESS: Record<
+  GenerateButtonAnimationMode,
+  number
+> = {
+  copy: 98.8,
+  image: 99.15,
+};
+const GENERATE_BUTTON_PACE_PROFILES: GenerateButtonPaceProfile[] = [
+  'slow-burn',
+  'erratic',
+  'front-loaded',
+  'rollercoaster',
+];
+const GENERATE_BUTTON_SPEED_LEVELS: GenerateButtonSpeedLevel[] = [
+  'slow',
+  'medium',
+  'fast',
+];
+const GENERATE_BUTTON_SPEED_MULTIPLIERS: Record<
+  GenerateButtonSpeedLevel,
+  number
+> = {
+  slow: 0.8,
+  medium: 1,
+  fast: 1.28,
+};
+
+const randomBetween = (min: number, max: number) =>
+  min + Math.random() * (max - min);
+
+const jitterByRatio = (value: number, ratio: number) =>
+  value * (1 + randomBetween(-ratio, ratio));
+
+const pickRandomItem = <T,>(items: T[]) =>
+  items[Math.floor(Math.random() * items.length)] ?? items[0];
+
+const buildPhaseWeights = (
+  paceProfile: GenerateButtonPaceProfile,
+  phaseCount: number,
+  startSpeedLevel: GenerateButtonSpeedLevel,
+  endSpeedLevel: GenerateButtonSpeedLevel,
+  chaosFactor: number
+) => {
+  const startSpeed = GENERATE_BUTTON_SPEED_MULTIPLIERS[startSpeedLevel];
+  const endSpeed = GENERATE_BUTTON_SPEED_MULTIPLIERS[endSpeedLevel];
+
+  return Array.from({ length: phaseCount }, (_, index) => {
+    const ratio = phaseCount === 1 ? 1 : index / (phaseCount - 1);
+    const blendedSpeed = startSpeed + (endSpeed - startSpeed) * ratio;
+    let profileBias = 1;
+
+    if (paceProfile === 'slow-burn') {
+      profileBias = 0.72 + Math.pow(ratio, 1.45) * 0.76;
+    } else if (paceProfile === 'front-loaded') {
+      profileBias = 1.34 - ratio * 0.54;
+    } else if (paceProfile === 'rollercoaster') {
+      profileBias = index % 2 === 0 ? 1.18 : 0.78;
+    } else {
+      profileBias = randomBetween(0.68, 1.38);
+    }
+
+    return Math.max(
+      0.34,
+      blendedSpeed * profileBias * jitterByRatio(1, 0.14 + chaosFactor * 0.16)
+    );
+  });
+};
+
+const buildTempoWindows = (
+  totalExpectedDurationMs: number,
+  chaosFactor: number,
+  type: 'stall' | 'surge'
+): GenerateButtonTempoWindow[] => {
+  const count =
+    type === 'stall'
+      ? Math.floor(randomBetween(0, 2.99 + chaosFactor * 1.5))
+      : Math.floor(randomBetween(1, 3.3 + chaosFactor * 1.7));
+
+  return Array.from({ length: count }, () => ({
+    startMs: totalExpectedDurationMs * randomBetween(0.1, 0.84),
+    durationMs: totalExpectedDurationMs * randomBetween(0.035, 0.11),
+    strength:
+      type === 'stall'
+        ? randomBetween(0.18, 0.54 + chaosFactor * 0.14)
+        : randomBetween(0.18, 0.48 + chaosFactor * 0.18),
+  }));
+};
+
+// Give each generation run its own motion profile so the progress animation
+// feels organic instead of repeating the exact same curve on every click.
+const createGenerateButtonMotionProfile = (
+  mode: GenerateButtonAnimationMode
+): GenerateButtonMotionProfile => {
+  const paceProfile = pickRandomItem(GENERATE_BUTTON_PACE_PROFILES);
+  const startSpeedLevel = pickRandomItem(GENERATE_BUTTON_SPEED_LEVELS);
+  const endSpeedLevel = pickRandomItem(GENERATE_BUTTON_SPEED_LEVELS);
+  const hiddenPhaseCount = Math.round(randomBetween(3, 8));
+  const decimalStartAt = randomBetween(12, 92);
+  const chaosFactor = randomBetween(0.22, 1);
+  const totalExpectedDurationMs =
+    mode === 'image'
+      ? randomBetween(18_000, 33_000)
+      : randomBetween(11_000, 22_000);
+  const phaseWeights = buildPhaseWeights(
+    paceProfile,
+    hiddenPhaseCount,
+    startSpeedLevel,
+    endSpeedLevel,
+    chaosFactor
+  );
+  const durationWeights = phaseWeights.map((weight, index) => {
+    const ratio = hiddenPhaseCount === 1 ? 1 : index / (hiddenPhaseCount - 1);
+    const durationBias =
+      paceProfile === 'slow-burn'
+        ? 1.12 + ratio * 0.46
+        : paceProfile === 'front-loaded'
+          ? 1.14 - ratio * 0.24
+          : paceProfile === 'rollercoaster'
+            ? index % 2 === 0
+              ? 0.92
+              : 1.18
+            : randomBetween(0.84, 1.26);
+
+    return Math.max(0.18, (1 / weight) * durationBias);
+  });
+  const durationWeightSum = durationWeights.reduce(
+    (sum, weight) => sum + weight,
+    0
+  );
+  const progressWeightSum = phaseWeights.reduce((sum, weight) => sum + weight, 0);
+  const targetTerminalProgress =
+    mode === 'image'
+      ? randomBetween(93.8, 97.4)
+      : randomBetween(94.6, 97.8);
+  let consumedProgress = clamp(randomBetween(2.5, 6.2), 2.5, 7);
+
+  const randomizedStages = phaseWeights.map((weight, index) => {
+    const isLastPhase = index === hiddenPhaseCount - 1;
+    const remainingProgress = Math.max(
+      4,
+      targetTerminalProgress - consumedProgress
+    );
+    const phaseShare = isLastPhase
+      ? remainingProgress
+      : remainingProgress * (weight / (progressWeightSum || 1));
+    const phaseDuration = Math.round(
+      totalExpectedDurationMs * (durationWeights[index] / (durationWeightSum || 1))
+    );
+    const nextProgress = isLastPhase
+      ? targetTerminalProgress
+      : clamp(
+          consumedProgress +
+            phaseShare * jitterByRatio(1, 0.16 + chaosFactor * 0.22),
+          consumedProgress + 3,
+          targetTerminalProgress - (hiddenPhaseCount - index - 1) * 2.25
+        );
+    const phaseEaseBase =
+      paceProfile === 'erratic'
+        ? randomBetween(1.06, 1.84)
+        : paceProfile === 'slow-burn'
+          ? randomBetween(1.16, 1.5)
+          : paceProfile === 'front-loaded'
+            ? randomBetween(1.18, 1.62)
+            : randomBetween(1.12, 1.72);
+    const stage = {
+      durationMs: Math.max(720, phaseDuration),
+      start: consumedProgress,
+      end: nextProgress,
+      easePower: clamp(phaseEaseBase, 1.04, 1.9),
+    };
+
+    consumedProgress = nextProgress;
+    return stage;
+  });
+
+  return {
+    stages: randomizedStages,
+    softCap: clamp(
+      GENERATE_BUTTON_BASE_SOFT_CAP_PROGRESS[mode] + randomBetween(-0.22, 0.16),
+      mode === 'image' ? 98.85 : 98.3,
+      99.32
+    ),
+    driftFactor: randomBetween(0.9, 1.15),
+    easeFactor: randomBetween(0.94, 1.1),
+    paceProfile,
+    startSpeedLevel,
+    endSpeedLevel,
+    hiddenPhaseCount,
+    decimalStartAt,
+    chaosFactor,
+    totalExpectedDurationMs,
+    stallWindows: buildTempoWindows(totalExpectedDurationMs, chaosFactor, 'stall'),
+    surgeWindows: buildTempoWindows(totalExpectedDurationMs, chaosFactor, 'surge'),
+    tempoWaveMs: randomBetween(820, 1320),
+    settleWaveMs: randomBetween(2100, 3600),
+    tempoPhase: randomBetween(0, Math.PI * 2),
+    settlePhase: randomBetween(0, Math.PI * 2),
+    burstStrength: randomBetween(0.04, 0.11),
+    pauseStrength: randomBetween(0.05, 0.12),
+    flowDurationMs: Math.round(randomBetween(1650, 2550)),
+    bobDurationMs: Math.round(randomBetween(2100, 3400)),
+    auraShiftPx: randomBetween(10, 22),
+    tiltDeg: randomBetween(-1.8, 1.8),
+  };
+};
 
 const readStoredGenerateSidebarCollapsed = () => {
   if (typeof window === 'undefined') {
@@ -260,6 +512,222 @@ const formatTimestamp = (value: string) => {
   });
 };
 
+const clamp = (value: number, min: number, max: number) =>
+  Math.min(max, Math.max(min, value));
+
+const getGenerateButtonProgressTarget = (
+  elapsedMs: number,
+  profile: GenerateButtonMotionProfile
+) => {
+  if (elapsedMs <= 0) {
+    return 0;
+  }
+
+  const stages = profile.stages;
+  let consumedDurationMs = 0;
+
+  for (const stage of stages) {
+    const stageStartAt = consumedDurationMs;
+    const stageEndAt = stageStartAt + stage.durationMs;
+
+    if (elapsedMs <= stageEndAt) {
+      const progressRatio = clamp(
+        (elapsedMs - stageStartAt) / stage.durationMs,
+        0,
+        1
+      );
+      const easedRatio = 1 - Math.pow(1 - progressRatio, stage.easePower);
+
+      return clamp(
+        stage.start + (stage.end - stage.start) * easedRatio,
+        0,
+        stage.end
+      );
+    }
+
+    consumedDurationMs = stageEndAt;
+  }
+
+  const finalStage = stages[stages.length - 1] ?? { end: 96, durationMs: 1 };
+  const progressRatio =
+    (elapsedMs - consumedDurationMs) /
+    Math.max(7_500, profile.totalExpectedDurationMs * 0.82);
+  const easedRatio =
+    1 -
+    Math.exp(
+      -progressRatio *
+        (profile.hiddenPhaseCount > 5 ? 1.01 : 1.14) *
+        profile.easeFactor
+    );
+  const softCap = profile.softCap;
+
+  return clamp(
+    finalStage.end + (softCap - finalStage.end) * easedRatio,
+    0,
+    softCap
+  );
+};
+
+const getGenerateButtonMinimumDrift = (
+  progress: number,
+  deltaMs: number,
+  mode: GenerateButtonAnimationMode,
+  profile: GenerateButtonMotionProfile
+) => {
+  const deltaSeconds = deltaMs / 1000;
+
+  if (mode === 'copy') {
+    if (progress >= 96) {
+      return deltaSeconds * 0.34 * profile.driftFactor;
+    }
+
+    if (progress >= 90) {
+      return deltaSeconds * 0.52 * profile.driftFactor;
+    }
+
+    if (progress >= 82) {
+      return deltaSeconds * 0.82 * profile.driftFactor;
+    }
+
+    if (progress >= 70) {
+      return deltaSeconds * 1.16 * profile.driftFactor;
+    }
+
+    if (progress >= 60) {
+      return deltaSeconds * 1.42 * profile.driftFactor;
+    }
+
+    if (progress >= 50) {
+      return deltaSeconds * 1.74 * profile.driftFactor;
+    }
+
+    return 0;
+  }
+
+  if (progress >= 97.6) {
+    return deltaSeconds * 0.2 * profile.driftFactor;
+  }
+
+  if (progress >= 95.5) {
+    return deltaSeconds * 0.28 * profile.driftFactor;
+  }
+
+  if (progress >= 92) {
+    return deltaSeconds * 0.42 * profile.driftFactor;
+  }
+
+  if (progress >= 88) {
+    return deltaSeconds * 0.6 * profile.driftFactor;
+  }
+
+  if (progress >= 80) {
+    return deltaSeconds * 0.84 * profile.driftFactor;
+  }
+
+  if (progress >= 70) {
+    return deltaSeconds * 1.02 * profile.driftFactor;
+  }
+
+  if (progress >= 60) {
+    return deltaSeconds * 1.24 * profile.driftFactor;
+  }
+
+  if (progress >= 50) {
+    return deltaSeconds * 1.58 * profile.driftFactor;
+  }
+
+  return 0;
+};
+
+const getGenerateButtonEaseFactor = (
+  progress: number,
+  mode: GenerateButtonAnimationMode,
+  profile: GenerateButtonMotionProfile
+) => {
+  if (mode === 'copy') {
+    if (progress >= 96) {
+      return 0.058 * profile.easeFactor;
+    }
+
+    if (progress >= 88) {
+      return 0.072 * profile.easeFactor;
+    }
+
+    if (progress >= 70) {
+      return 0.094 * profile.easeFactor;
+    }
+
+    return 0.118 * profile.easeFactor;
+  }
+
+  if (progress >= 97.4) {
+    return 0.044 * profile.easeFactor;
+  }
+
+  if (progress >= 94) {
+    return 0.058 * profile.easeFactor;
+  }
+
+  if (progress >= 88) {
+    return 0.072 * profile.easeFactor;
+  }
+
+  if (progress >= 78) {
+    return 0.086 * profile.easeFactor;
+  }
+
+  return 0.11 * profile.easeFactor;
+};
+
+const getGenerateButtonTempoModifier = (
+  elapsedMs: number,
+  progress: number,
+  profile: GenerateButtonMotionProfile
+) => {
+  // Blend tiny bursts and soft settles so each run feels unique without
+  // becoming chaotic or dishonest about completion timing.
+  const burstWave =
+    (Math.sin(elapsedMs / profile.tempoWaveMs + profile.tempoPhase) + 1) / 2;
+  const settleWave =
+    (Math.sin(elapsedMs / profile.settleWaveMs + profile.settlePhase) + 1) / 2;
+  const burstBoost =
+    burstWave > 0.54
+      ? 1 + (burstWave - 0.54) * profile.burstStrength * 2.25
+      : 1;
+  const pauseDampening =
+    progress > 18 && progress < 95 && settleWave > 0.72
+      ? 1 - (settleWave - 0.72) * profile.pauseStrength * 2.4
+      : 1;
+  const stallModifier = profile.stallWindows.reduce((modifier, window) => {
+    if (
+      elapsedMs >= window.startMs &&
+      elapsedMs <= window.startMs + window.durationMs
+    ) {
+      return modifier * (1 - window.strength * (0.6 + profile.chaosFactor * 0.2));
+    }
+
+    return modifier;
+  }, 1);
+  const surgeModifier = profile.surgeWindows.reduce((modifier, window) => {
+    if (
+      elapsedMs >= window.startMs &&
+      elapsedMs <= window.startMs + window.durationMs
+    ) {
+      return modifier * (1 + window.strength * (0.72 + profile.chaosFactor * 0.28));
+    }
+
+    return modifier;
+  }, 1);
+  const chaosJitter =
+    1 + Math.sin(elapsedMs / 420 + profile.tempoPhase * 0.7) * 0.04 * profile.chaosFactor;
+
+  return clamp(
+    burstBoost * pauseDampening * stallModifier * surgeModifier * chaosJitter,
+    0.24,
+    1.52
+  );
+};
+
 const formatMessageTimestamp = (value: string) => formatDateTime(value);
 
 const renderRequiredLabel = (label: string) => (
@@ -281,49 +749,57 @@ const normalizeWorkspaceError = (
   }
 
   if (/conversation not found/i.test(message)) {
-    return 'That conversation is no longer available. Open another thread or start a new chat.';
+    return 'That chat dipped out on us. Open another thread or start a fresh one.';
   }
 
   if (/product name is required|please fill in product name/i.test(message)) {
     return mode === 'copy'
-      ? 'Add a product or offer name before generating copy.'
-      : 'Add a product or offer name before generating an image.';
+      ? 'Give your product or offer a name first so we know what we’re writing about.'
+      : 'Give your product or offer a name first so we know what image magic to make.';
   }
 
   if (/settings\s*>\s*brand memory|turn off use brand name/i.test(message)) {
-    return 'Add your brand name in Settings > Brand memory, or switch off the saved-brand toggle.';
+    return 'Tiny setup moment: add your brand name in Settings > Brand memory, or switch off the saved-brand toggle and keep it moving.';
   }
 
   if (/valid source image url/i.test(message)) {
-    return 'Use a valid source image URL, or clear the field if you want text-to-image generation.';
+    return 'That source image link is not giving valid energy. Paste a proper image URL, or clear it and go text-only.';
   }
 
   if (/only jpg, png, and webp images are supported/i.test(message)) {
-    return 'Upload a JPG, PNG, or WEBP file for the reference image.';
+    return 'For the reference image, bring a JPG, PNG, or WEBP. Those are the VIPs right now.';
   }
 
   if (/6mb or smaller/i.test(message)) {
-    return 'Choose a smaller reference image. Files must be 6MB or smaller.';
+    return 'That reference image is a little too chunky right now. Keep it 6MB or smaller and we’re good.';
   }
 
   if (/unable to reach the prixmoai server/i.test(message)) {
-    return 'PrixmoAI could not reach the server. Check that the API is running, then try again.';
+    return 'PrixmoAI and the server are not talking right now. Check that the API is awake, then give it another go.';
   }
 
   if (/reference image|image-to-image generation|text only/i.test(message)) {
-    return 'This request uses a reference image, and the available providers could not complete image-to-image generation right now. Try again in a moment, or remove the reference image to generate from text only.';
+    return 'Your reference image sent us into a side quest and the providers are not finishing it right now. Try again in a bit, or remove the reference image and go text-only.';
   }
 
   if (/too long for the current providers|at most 2000 character|prompt is too long|too_big/i.test(message)) {
-    return 'Your image brief is too long for the current providers. Shorten the product description or prompt and try again.';
+    return 'Your image brief is a bit too long right now. Trim the product description or prompt a little and run it back.';
   }
 
   if (/taking longer than expected|timed out/i.test(message)) {
-    return 'Image generation is taking longer than expected right now. Please try again in a moment.';
+    return 'Image generation is moving a little slow right now. Give it a moment and try again.';
+  }
+
+  if (
+    /speedrunning the image lab|image lab needs a tiny breather|fast lane needs a quick vibe check|too many image generations|requests per minute|retry-after|429/i.test(
+      message
+    )
+  ) {
+    return message;
   }
 
   if (/temporarily unavailable|temporarily misconfigured|busy right now/i.test(message)) {
-    return 'The image providers are temporarily unavailable right now. Please try again in a moment.';
+    return 'The image crew is booked and busy for a sec. Try again in a moment and we’ll get back to cooking.';
   }
 
   if (
@@ -332,8 +808,8 @@ const normalizeWorkspaceError = (
     )
   ) {
     return mode === 'copy'
-      ? 'The AI returned content in an unexpected format. Please try generating again.'
-      : 'The AI returned image data in an unexpected format. Please try again.';
+      ? 'The AI sent back some weird chaos instead of clean content. Try generating again and we’ll ask nicer.'
+      : 'The AI sent back image chaos instead of something usable. Try again and we’ll keep it cute.';
   }
 
   return message;
@@ -556,6 +1032,17 @@ export const GeneratePage = () => {
   const [contentForm, setContentForm] = useState(() => createDefaultContentForm());
   const [imageForm, setImageForm] = useState(() => createDefaultImageForm());
   const [isAccountMenuOpen, setIsAccountMenuOpen] = useState(false);
+  const [contentButtonProgress, setContentButtonProgress] = useState(0);
+  const [isContentButtonCompleting, setIsContentButtonCompleting] = useState(false);
+  const contentButtonAnimationFrameRef = useRef<number | null>(null);
+  const contentButtonCompletionTimeoutRef = useRef<number | null>(null);
+  const contentButtonGenerationStartedAtRef = useRef<number | null>(null);
+  const contentButtonProgressRef = useRef(0);
+  const contentButtonLastFrameAtRef = useRef<number | null>(null);
+  const contentButtonModeRef = useRef<GenerateButtonAnimationMode>('copy');
+  const contentButtonMotionProfileRef = useRef<GenerateButtonMotionProfile>(
+    createGenerateButtonMotionProfile('copy')
+  );
   const avatarCandidates = getAvatarCandidates(
     profile?.avatarUrl,
     user?.user_metadata && typeof user.user_metadata === 'object'
@@ -662,6 +1149,205 @@ export const GeneratePage = () => {
     };
   }, [isAccountMenuOpen]);
 
+  useEffect(() => {
+    contentButtonProgressRef.current = contentButtonProgress;
+  }, [contentButtonProgress]);
+
+  useEffect(() => {
+    if (contentButtonAnimationFrameRef.current !== null) {
+      window.cancelAnimationFrame(contentButtonAnimationFrameRef.current);
+      contentButtonAnimationFrameRef.current = null;
+    }
+
+    if (contentButtonCompletionTimeoutRef.current !== null) {
+      window.clearTimeout(contentButtonCompletionTimeoutRef.current);
+      contentButtonCompletionTimeoutRef.current = null;
+    }
+
+    if (workspace.isGeneratingCopy || workspace.isGeneratingImage) {
+      setIsContentButtonCompleting(false);
+      contentButtonModeRef.current = workspace.isGeneratingImage ? 'image' : 'copy';
+      if (contentButtonProgressRef.current <= 0) {
+        contentButtonMotionProfileRef.current = createGenerateButtonMotionProfile(
+          contentButtonModeRef.current
+        );
+      }
+
+      if (contentButtonProgressRef.current <= 0) {
+        setContentButtonProgress(3);
+      }
+
+      if (contentButtonGenerationStartedAtRef.current === null) {
+        contentButtonGenerationStartedAtRef.current = performance.now();
+      }
+
+      if (contentButtonLastFrameAtRef.current === null) {
+        contentButtonLastFrameAtRef.current = performance.now();
+      }
+
+      const tick = () => {
+        const currentFrameAt = performance.now();
+        const startedAt =
+          contentButtonGenerationStartedAtRef.current ?? currentFrameAt;
+        const previousFrameAt =
+          contentButtonLastFrameAtRef.current ?? currentFrameAt;
+        const deltaMs = clamp(currentFrameAt - previousFrameAt, 0, 80);
+        const elapsed = currentFrameAt - startedAt;
+        const animationMode = contentButtonModeRef.current;
+        const motionProfile = contentButtonMotionProfileRef.current;
+        const targetProgress = getGenerateButtonProgressTarget(
+          elapsed,
+          motionProfile
+        );
+        const softCapProgress = motionProfile.softCap;
+
+        contentButtonLastFrameAtRef.current = currentFrameAt;
+
+        setContentButtonProgress((current) => {
+          const tempoModifier = getGenerateButtonTempoModifier(
+            elapsed,
+            current,
+            motionProfile
+          );
+          const boundedTarget = clamp(
+            targetProgress,
+            current,
+            softCapProgress
+          );
+          const minimumLateDrift = getGenerateButtonMinimumDrift(
+            current,
+            deltaMs,
+            animationMode,
+            motionProfile
+          ) * tempoModifier;
+          const easeFactor = getGenerateButtonEaseFactor(
+            current,
+            animationMode,
+            motionProfile
+          ) * tempoModifier;
+          const easedProgress =
+            current +
+            Math.max((boundedTarget - current) * easeFactor, minimumLateDrift);
+
+          return clamp(
+            Math.abs(boundedTarget - easedProgress) < 0.12
+              ? boundedTarget
+              : easedProgress,
+            0,
+            softCapProgress
+          );
+        });
+
+        contentButtonAnimationFrameRef.current = window.requestAnimationFrame(tick);
+      };
+
+      contentButtonAnimationFrameRef.current = window.requestAnimationFrame(tick);
+
+      return () => {
+        if (contentButtonAnimationFrameRef.current !== null) {
+          window.cancelAnimationFrame(contentButtonAnimationFrameRef.current);
+          contentButtonAnimationFrameRef.current = null;
+        }
+
+        contentButtonLastFrameAtRef.current = null;
+      };
+    }
+
+    if (contentButtonProgressRef.current <= 0) {
+      setIsContentButtonCompleting(false);
+      contentButtonGenerationStartedAtRef.current = null;
+      contentButtonLastFrameAtRef.current = null;
+      contentButtonModeRef.current = 'copy';
+      contentButtonMotionProfileRef.current = createGenerateButtonMotionProfile(
+        'copy'
+      );
+      return;
+    }
+
+    setIsContentButtonCompleting(true);
+    const startingProgress = contentButtonProgressRef.current;
+    const generationStartedAt = contentButtonGenerationStartedAtRef.current;
+    const elapsedVisibleMs = generationStartedAt
+      ? performance.now() - generationStartedAt
+      : CONTENT_BUTTON_MIN_VISIBLE_MS;
+    const remainingVisibleMs = Math.max(
+      0,
+      CONTENT_BUTTON_MIN_VISIBLE_MS - elapsedVisibleMs
+    );
+
+    const runCompletionAnimation = () => {
+      const completionStartedAt = performance.now();
+
+      const completeTick = () => {
+        const elapsed = performance.now() - completionStartedAt;
+        const progressRatio = clamp(
+          elapsed / CONTENT_BUTTON_COMPLETE_ANIMATION_MS,
+          0,
+          1
+        );
+        const easedRatio = 1 - Math.pow(1 - progressRatio, 3);
+
+        setContentButtonProgress(
+          startingProgress + (100 - startingProgress) * easedRatio
+        );
+
+        if (progressRatio < 1) {
+          contentButtonAnimationFrameRef.current =
+            window.requestAnimationFrame(completeTick);
+          return;
+        }
+
+        contentButtonAnimationFrameRef.current = null;
+        contentButtonCompletionTimeoutRef.current = window.setTimeout(() => {
+          setIsContentButtonCompleting(false);
+          setContentButtonProgress(0);
+          contentButtonModeRef.current = 'copy';
+          contentButtonMotionProfileRef.current = createGenerateButtonMotionProfile(
+            'copy'
+          );
+          contentButtonCompletionTimeoutRef.current = null;
+        }, CONTENT_BUTTON_COMPLETE_HOLD_MS);
+      };
+
+      contentButtonAnimationFrameRef.current =
+        window.requestAnimationFrame(completeTick);
+    };
+
+    contentButtonCompletionTimeoutRef.current = window.setTimeout(() => {
+      contentButtonCompletionTimeoutRef.current = null;
+      contentButtonGenerationStartedAtRef.current = null;
+      contentButtonLastFrameAtRef.current = null;
+      runCompletionAnimation();
+    }, remainingVisibleMs);
+
+    return () => {
+      if (contentButtonAnimationFrameRef.current !== null) {
+        window.cancelAnimationFrame(contentButtonAnimationFrameRef.current);
+        contentButtonAnimationFrameRef.current = null;
+      }
+
+      if (contentButtonCompletionTimeoutRef.current !== null) {
+        window.clearTimeout(contentButtonCompletionTimeoutRef.current);
+        contentButtonCompletionTimeoutRef.current = null;
+      }
+    };
+  }, [workspace.isGeneratingCopy, workspace.isGeneratingImage]);
+
+  useEffect(
+    () => () => {
+      if (contentButtonAnimationFrameRef.current !== null) {
+        window.cancelAnimationFrame(contentButtonAnimationFrameRef.current);
+      }
+
+      if (contentButtonCompletionTimeoutRef.current !== null) {
+        window.clearTimeout(contentButtonCompletionTimeoutRef.current);
+      }
+
+      contentButtonLastFrameAtRef.current = null;
+    },
+    []
+  );
+
 
   const filteredConversations = useMemo(() => {
     const normalizedSearch = searchQuery.trim().toLowerCase();
@@ -693,11 +1379,35 @@ export const GeneratePage = () => {
     activeWorkspace === 'copy' ? 'generate-copy-form' : 'generate-image-form';
   const isAnyGenerationRunning =
     workspace.isGeneratingCopy || workspace.isGeneratingImage;
-  const activeGenerationLabel = workspace.isGeneratingCopy
-    ? 'content'
-    : workspace.isGeneratingImage
-      ? 'image'
-      : 'generation';
+  const isContentButtonAnimating =
+    isAnyGenerationRunning || isContentButtonCompleting;
+  const activeButtonAnimationMode = workspace.isGeneratingImage
+    ? 'image'
+    : workspace.isGeneratingCopy
+      ? 'copy'
+      : contentButtonModeRef.current;
+  const submitButtonBaseLabel =
+    activeWorkspace === 'copy' ? 'Generate content' : 'Generate image';
+  const submitButtonProgressLabel = 'Generating...';
+  const roundedContentButtonProgress = Math.round(contentButtonProgress);
+  const activeButtonMotionProfile = contentButtonMotionProfileRef.current;
+  const displayedContentButtonProgress =
+    isContentButtonAnimating &&
+    contentButtonProgress >= activeButtonMotionProfile.decimalStartAt &&
+    contentButtonProgress < 100
+      ? `${contentButtonProgress.toFixed(1)}%`
+      : `${roundedContentButtonProgress}%`;
+  const contentButtonProgressStyle = {
+    '--generate-button-progress': `${contentButtonProgress}%`,
+    '--generate-button-progress-ratio': `${Math.max(
+      0,
+      Math.min(1, contentButtonProgress / 100)
+    ).toFixed(4)}`,
+    '--generate-button-flow-duration': `${activeButtonMotionProfile.flowDurationMs}ms`,
+    '--generate-button-bob-duration': `${activeButtonMotionProfile.bobDurationMs}ms`,
+    '--generate-button-aura-shift': `${activeButtonMotionProfile.auraShiftPx}px`,
+    '--generate-button-tilt': `${activeButtonMotionProfile.tiltDeg.toFixed(2)}deg`,
+  } as CSSProperties;
   const readableWorkspaceError = normalizeWorkspaceError(
     workspace.error,
     activeWorkspace
@@ -708,9 +1418,10 @@ export const GeneratePage = () => {
   const usageSummary = getOverallUsageSummary({
     contentLimit: planDetails.contentLimit,
     imageLimit: planDetails.imageLimit,
-    contentUsed: overview?.generation.contentGenerationsToday ?? 0,
-    imageUsed: overview?.generation.imageGenerationsToday ?? 0,
+    contentUsed: overview?.generation.contentGenerationsToday ?? null,
+    imageUsed: overview?.generation.imageGenerationsToday ?? null,
     isLoading: isUsageLoading,
+    hasUsageData: Boolean(overview),
     usageWindowLabel: planDetails.usageWindowLabel,
   });
   const shouldWatermarkImages =
@@ -1424,19 +2135,35 @@ export const GeneratePage = () => {
                   type="submit"
                   size="sm"
                   form={activeFormId}
+                  className={`generate-chat__submit-button ${
+                    isContentButtonAnimating
+                      ? 'generate-chat__submit-button--progress'
+                      : ''
+                  }`}
+                  aria-busy={isContentButtonAnimating}
+                  style={isContentButtonAnimating ? contentButtonProgressStyle : undefined}
                   disabled={
                     activeWorkspace === 'copy'
                       ? workspace.isGeneratingCopy
                       : workspace.isGeneratingImage
                   }
                 >
-                  {activeWorkspace === 'copy'
-                    ? workspace.isGeneratingCopy
-                      ? 'Generating...'
-                      : 'Generate content'
-                    : workspace.isGeneratingImage
-                      ? 'Generating...'
-                      : 'Generate image'}
+                  {isContentButtonAnimating ? (
+                    <span className="generate-chat__submit-progress">
+                      <span className="generate-chat__submit-progress-copy">
+                        <span className="generate-chat__submit-progress-label">
+                          {submitButtonProgressLabel}
+                        </span>
+                        <span className="generate-chat__submit-progress-value">
+                          {displayedContentButtonProgress}
+                        </span>
+                      </span>
+                    </span>
+                  ) : activeWorkspace === 'copy' ? (
+                    'Generate content'
+                  ) : (
+                    'Generate image'
+                  )}
                 </Button>
                 {isAnyGenerationRunning ? (
                   <button
@@ -1444,7 +2171,7 @@ export const GeneratePage = () => {
                     className="generate-chat__stop-button"
                     onClick={stopGeneration}
                     aria-label="Stop generating"
-                    title={`Stop ${activeGenerationLabel}`}
+                    title="Stop generating"
                   >
                     <Square size={12} strokeWidth={2.5} />
                   </button>
@@ -1586,6 +2313,19 @@ export const GeneratePage = () => {
                       <option key={option}>{option}</option>
                     ))}
                   </Select>
+                  <DictationTextareaField
+                    className="field field--full"
+                    label="Description / brief"
+                    value={contentForm.productDescription}
+                    onChange={(nextValue) =>
+                      setContentForm((current) => ({
+                        ...current,
+                        productDescription: nextValue,
+                      }))
+                    }
+                    rows={2}
+                    placeholder="Describe the product or offer, what matters most, and what the audience should feel or do."
+                  />
                   <label className="field">
                     <span className="field__label">Keywords</span>
                     <input
@@ -1593,21 +2333,6 @@ export const GeneratePage = () => {
                       value={keywordInput}
                       onChange={(event) => setKeywordInput(event.target.value)}
                       placeholder="Themes, pain points, campaign terms"
-                    />
-                  </label>
-                  <label className="field field--full">
-                    <span className="field__label">Description / brief</span>
-                    <textarea
-                      className="field__control field__control--textarea generate-chat__textarea--compact"
-                      value={contentForm.productDescription}
-                      onChange={(event) =>
-                        setContentForm((current) => ({
-                          ...current,
-                          productDescription: event.target.value,
-                        }))
-                      }
-                      rows={2}
-                      placeholder="Describe the product or offer, what matters most, and what the audience should feel or do."
                     />
                   </label>
                 </div>
@@ -1694,21 +2419,19 @@ export const GeneratePage = () => {
                         <option key={option}>{option}</option>
                       ))}
                     </Select>
-                  <label className="field field--full">
-                    <span className="field__label">Description / brief</span>
-                    <textarea
-                      className="field__control field__control--textarea generate-chat__textarea--compact"
-                      value={imageForm.productDescription}
-                      onChange={(event) =>
-                        setImageForm((current) => ({
-                          ...current,
-                          productDescription: event.target.value,
-                        }))
-                      }
-                      rows={2}
-                      placeholder="Describe the subject, important details, and the kind of visual result you want."
-                    />
-                  </label>
+                  <DictationTextareaField
+                    className="field field--full"
+                    label="Description / brief"
+                    value={imageForm.productDescription}
+                    onChange={(nextValue) =>
+                      setImageForm((current) => ({
+                        ...current,
+                        productDescription: nextValue,
+                      }))
+                    }
+                    rows={2}
+                    placeholder="Describe the subject, important details, and the kind of visual result you want."
+                  />
                   <label className="field">
                     <span className="field__label">Optional source image URL</span>
                     <input

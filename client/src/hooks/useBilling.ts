@@ -8,16 +8,89 @@ type CheckoutResponse = {
   checkoutUrl: string | null;
 };
 
+type BillingCache = {
+  catalog: BillingCatalogResponse | null;
+  subscription: Subscription | null;
+  cachedAt: string;
+};
+
+const BILLING_CACHE_KEY_PREFIX = 'prixmoai.billing.snapshot';
+const BILLING_CACHE_TTL_MS = 2 * 60_000;
+
+const buildBillingCacheKey = (userId: string) =>
+  `${BILLING_CACHE_KEY_PREFIX}:${userId}`;
+
+const isFreshCache = (cachedAt: string, ttlMs: number) => {
+  const cachedTime = new Date(cachedAt).getTime();
+
+  return Number.isFinite(cachedTime) && Date.now() - cachedTime <= ttlMs;
+};
+
+const readBillingCache = (userId: string): BillingCache | null => {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+
+  const raw = window.localStorage.getItem(buildBillingCacheKey(userId));
+
+  if (!raw) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as BillingCache;
+
+    if (!parsed || typeof parsed !== 'object') {
+      return null;
+    }
+
+    return {
+      catalog: parsed.catalog ?? null,
+      subscription: parsed.subscription ?? null,
+      cachedAt:
+        typeof parsed.cachedAt === 'string'
+          ? parsed.cachedAt
+          : new Date().toISOString(),
+    };
+  } catch {
+    return null;
+  }
+};
+
+const writeBillingCache = (userId: string, value: BillingCache) => {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  window.localStorage.setItem(
+    buildBillingCacheKey(userId),
+    JSON.stringify(value)
+  );
+};
+
 export const useBilling = () => {
-  const { token } = useAuth();
+  const { token, user } = useAuth();
   const [catalog, setCatalog] = useState<BillingCatalogResponse | null>(null);
   const [subscription, setSubscription] = useState<Subscription | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isCheckingOut, setIsCheckingOut] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const refresh = useCallback(async () => {
-    if (!token) {
+  const refresh = useCallback(async (options?: { force?: boolean }) => {
+    if (!token || !user?.id) {
+      return;
+    }
+
+    const cached = readBillingCache(user.id);
+
+    if (
+      !options?.force &&
+      cached?.cachedAt &&
+      isFreshCache(cached.cachedAt, BILLING_CACHE_TTL_MS)
+    ) {
+      setCatalog(cached.catalog);
+      setSubscription(cached.subscription);
+      setError(null);
       return;
     }
 
@@ -32,6 +105,11 @@ export const useBilling = () => {
       setCatalog(nextCatalog);
       setSubscription(nextSubscription);
       setError(null);
+      writeBillingCache(user.id, {
+        catalog: nextCatalog,
+        subscription: nextSubscription,
+        cachedAt: new Date().toISOString(),
+      });
     } catch (billingError) {
       setError(
         billingError instanceof Error ? billingError.message : 'Failed to load billing'
@@ -39,11 +117,29 @@ export const useBilling = () => {
     } finally {
       setIsLoading(false);
     }
-  }, [token]);
+  }, [token, user?.id]);
+
+  useEffect(() => {
+    const userId = user?.id ?? null;
+
+    if (!token || !userId) {
+      setCatalog(null);
+      setSubscription(null);
+      setError(null);
+      setIsLoading(false);
+      return;
+    }
+
+    const cached = readBillingCache(userId);
+
+    setCatalog(cached?.catalog ?? null);
+    setSubscription(cached?.subscription ?? null);
+    setError(null);
+  }, [token, user?.id]);
 
   const syncSubscription = useCallback(
     async (subscriptionId?: string | null) => {
-      if (!token || !subscriptionId) {
+      if (!token || !subscriptionId || !user?.id) {
         return null;
       }
 
@@ -56,12 +152,17 @@ export const useBilling = () => {
 
         setSubscription(nextSubscription);
         setError(null);
+        writeBillingCache(user.id, {
+          catalog,
+          subscription: nextSubscription,
+          cachedAt: new Date().toISOString(),
+        });
         return nextSubscription;
       } catch {
         return null;
       }
     },
-    [token]
+    [token, user?.id, catalog]
   );
 
   useEffect(() => {
@@ -80,7 +181,7 @@ export const useBilling = () => {
 
     const revalidateBillingState = async () => {
       await syncSubscription(existingSubscriptionId);
-      await refresh();
+      await refresh({ force: true });
     };
 
     const handleFocus = () => {
@@ -123,7 +224,7 @@ export const useBilling = () => {
         body: { plan },
       });
 
-      await refresh();
+      await refresh({ force: true });
 
       if (result.checkoutUrl) {
         window.open(result.checkoutUrl, '_blank', 'noopener,noreferrer');

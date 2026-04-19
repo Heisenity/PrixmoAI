@@ -1,29 +1,49 @@
 const ACTIVE_GENERATE_CONVERSATION_STORAGE_KEY =
   'prixmoai.generate.activeConversationId';
 
-export const readActiveGenerateConversationId = () => {
+const getActiveGenerateConversationStorageKey = (userId: string) =>
+  `${ACTIVE_GENERATE_CONVERSATION_STORAGE_KEY}:${userId}`;
+
+const clearLegacyGenerateConversationStorageKey = () => {
+  window.localStorage.removeItem(ACTIVE_GENERATE_CONVERSATION_STORAGE_KEY);
+};
+
+export const readActiveGenerateConversationId = (userId?: string | null) => {
   if (typeof window === 'undefined') {
     return null;
   }
 
-  return window.localStorage.getItem(ACTIVE_GENERATE_CONVERSATION_STORAGE_KEY);
+  clearLegacyGenerateConversationStorageKey();
+
+  if (!userId) {
+    return null;
+  }
+
+  return window.localStorage.getItem(
+    getActiveGenerateConversationStorageKey(userId)
+  );
 };
 
 export const setActiveGenerateConversationId = (
-  conversationId: string | null
+  conversationId: string | null,
+  userId?: string | null
 ) => {
   if (typeof window === 'undefined') {
     return;
   }
 
-  if (conversationId) {
-    window.localStorage.setItem(
-      ACTIVE_GENERATE_CONVERSATION_STORAGE_KEY,
-      conversationId
-    );
+  clearLegacyGenerateConversationStorageKey();
+
+  if (!userId) {
     return;
   }
 
-  window.localStorage.removeItem(ACTIVE_GENERATE_CONVERSATION_STORAGE_KEY);
-};
+  const storageKey = getActiveGenerateConversationStorageKey(userId);
 
+  if (conversationId) {
+    window.localStorage.setItem(storageKey, conversationId);
+    return;
+  }
+
+  window.localStorage.removeItem(storageKey);
+};

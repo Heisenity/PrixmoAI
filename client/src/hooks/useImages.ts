@@ -8,6 +8,64 @@ import type {
   UploadedSourceImage,
 } from '../types';
 
+type ImageCache = {
+  history: PaginatedResult<GeneratedImage> | null;
+  activeImage: GeneratedImage | null;
+  cachedAt: string;
+};
+
+const IMAGE_CACHE_KEY_PREFIX = 'prixmoai.images.history';
+const IMAGE_CACHE_TTL_MS = 60_000;
+
+const buildImageCacheKey = (userId: string) =>
+  `${IMAGE_CACHE_KEY_PREFIX}:${userId}`;
+
+const isFreshCache = (cachedAt: string, ttlMs: number) => {
+  const cachedTime = new Date(cachedAt).getTime();
+  return Number.isFinite(cachedTime) && Date.now() - cachedTime <= ttlMs;
+};
+
+const readImageCache = (userId: string): ImageCache | null => {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+
+  const raw = window.localStorage.getItem(buildImageCacheKey(userId));
+
+  if (!raw) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as ImageCache;
+    if (!parsed || typeof parsed !== 'object') {
+      return null;
+    }
+
+    return {
+      history: parsed.history ?? null,
+      activeImage: parsed.activeImage ?? null,
+      cachedAt:
+        typeof parsed.cachedAt === 'string'
+          ? parsed.cachedAt
+          : new Date().toISOString(),
+    };
+  } catch {
+    return null;
+  }
+};
+
+const writeImageCache = (userId: string, value: ImageCache) => {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  window.localStorage.setItem(
+    buildImageCacheKey(userId),
+    JSON.stringify(value)
+  );
+};
+
 const readFileAsDataUrl = (file: File): Promise<string> =>
   new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -29,7 +87,7 @@ const readFileAsDataUrl = (file: File): Promise<string> =>
   });
 
 export const useImages = () => {
-  const { token } = useAuth();
+  const { token, user } = useAuth();
   const [history, setHistory] = useState<PaginatedResult<GeneratedImage> | null>(null);
   const [activeImage, setActiveImage] = useState<GeneratedImage | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
@@ -37,8 +95,21 @@ export const useImages = () => {
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const refreshHistory = useCallback(async () => {
-    if (!token) {
+  const refreshHistory = useCallback(async (options?: { force?: boolean }) => {
+    if (!token || !user?.id) {
+      return;
+    }
+
+    const cached = readImageCache(user.id);
+
+    if (
+      !options?.force &&
+      cached?.cachedAt &&
+      isFreshCache(cached.cachedAt, IMAGE_CACHE_TTL_MS)
+    ) {
+      setHistory(cached.history);
+      setActiveImage(cached.activeImage);
+      setError(null);
       return;
     }
 
@@ -50,14 +121,37 @@ export const useImages = () => {
         { token }
       );
       setHistory(nextHistory);
-      setActiveImage((current) => current ?? nextHistory.items[0] ?? null);
+      const nextActiveImage = activeImage ?? nextHistory.items[0] ?? null;
+      setActiveImage(nextActiveImage);
       setError(null);
+      writeImageCache(user.id, {
+        history: nextHistory,
+        activeImage: nextActiveImage,
+        cachedAt: new Date().toISOString(),
+      });
     } catch (historyError) {
       setError(historyError instanceof Error ? historyError.message : 'Failed to load image history');
     } finally {
       setIsLoadingHistory(false);
     }
-  }, [token]);
+  }, [token, user?.id, activeImage]);
+
+  useEffect(() => {
+    const userId = user?.id ?? null;
+
+    if (!token || !userId) {
+      setHistory(null);
+      setActiveImage(null);
+      setError(null);
+      setIsLoadingHistory(false);
+      return;
+    }
+
+    const cached = readImageCache(userId);
+    setHistory(cached?.history ?? null);
+    setActiveImage(cached?.activeImage ?? null);
+    setError(null);
+  }, [token, user?.id]);
 
   useEffect(() => {
     void refreshHistory();
@@ -78,7 +172,7 @@ export const useImages = () => {
         body: input,
       });
       setActiveImage(created);
-      await refreshHistory();
+      await refreshHistory({ force: true });
       return created;
     } catch (generationError) {
       const message =

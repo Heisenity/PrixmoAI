@@ -10,6 +10,8 @@ type ApiRequestOptions = {
   signal?: AbortSignal;
 };
 
+const inFlightGetRequests = new Map<string, Promise<unknown>>();
+
 const toSearchParams = (query?: ApiRequestOptions['query']) => {
   const params = new URLSearchParams();
 
@@ -29,15 +31,16 @@ const toSearchParams = (query?: ApiRequestOptions['query']) => {
   return search ? `?${search}` : '';
 };
 
-export const apiRequest = async <T>(
-  path: string,
-  options: ApiRequestOptions = {}
+const executeApiRequest = async <T>(
+  url: string,
+  options: ApiRequestOptions,
+  method: NonNullable<ApiRequestOptions['method']>
 ): Promise<T> => {
   let response: Response;
 
   try {
-    response = await fetch(`${API_BASE_URL}${path}${toSearchParams(options.query)}`, {
-      method: options.method ?? 'GET',
+    response = await fetch(url, {
+      method,
       headers: {
         ...(options.body ? { 'Content-Type': 'application/json' } : {}),
         ...(options.token ? { Authorization: `Bearer ${options.token}` } : {}),
@@ -102,4 +105,36 @@ export const apiRequest = async <T>(
   }
 
   return payload.data;
+};
+
+export const apiRequest = async <T>(
+  path: string,
+  options: ApiRequestOptions = {}
+): Promise<T> => {
+  const method = options.method ?? 'GET';
+  const url = `${API_BASE_URL}${path}${toSearchParams(options.query)}`;
+
+  if (method !== 'GET' || options.signal) {
+    return executeApiRequest<T>(url, options, method);
+  }
+
+  const dedupeKey = JSON.stringify({
+    url,
+    token: options.token ?? '',
+    headers: options.headers ?? {},
+  });
+  const existingRequest = inFlightGetRequests.get(dedupeKey) as
+    | Promise<T>
+    | undefined;
+
+  if (existingRequest) {
+    return existingRequest;
+  }
+
+  const nextRequest = executeApiRequest<T>(url, options, method).finally(() => {
+    inFlightGetRequests.delete(dedupeKey);
+  });
+
+  inFlightGetRequests.set(dedupeKey, nextRequest);
+  return nextRequest;
 };

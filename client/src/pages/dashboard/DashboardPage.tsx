@@ -14,16 +14,28 @@ import { useContent } from '../../hooks/useContent';
 import { useImages } from '../../hooks/useImages';
 import { useScheduler } from '../../hooks/useScheduler';
 import { apiRequest } from '../../lib/axios';
+import {
+  isBrowserCacheFresh,
+  readBrowserCache,
+  writeBrowserCache,
+} from '../../lib/browserCache';
 import { setActiveGenerateConversationId } from '../../lib/generateWorkspace';
 import { PLAN_DASHBOARD_DETAILS } from '../../lib/constants';
 import { getUsageSnapshot } from '../../lib/usage';
 import { formatCompactNumber, formatDateTime } from '../../lib/utils';
 import type { GenerateConversation } from '../../types';
 
+const DASHBOARD_CONVERSATIONS_CACHE_KEY_PREFIX =
+  'prixmoai.dashboard.conversations';
+const DASHBOARD_CONVERSATIONS_CACHE_TTL_MS = 60_000;
+
+const buildDashboardConversationsCacheKey = (userId: string) =>
+  `${DASHBOARD_CONVERSATIONS_CACHE_KEY_PREFIX}:${userId}`;
+
 export const DashboardPage = () => {
   const navigate = useNavigate();
-  const { token } = useAuth();
-  const { overview } = useAnalytics();
+  const { token, user } = useAuth();
+  const { overview, isLoading: isAnalyticsLoading } = useAnalytics();
   const { catalog } = useBilling();
   const { history: contentHistory, refreshHistory } = useContent();
   const { history: imageHistory, refreshHistory: refreshImageHistory } = useImages();
@@ -35,21 +47,23 @@ export const DashboardPage = () => {
   const subscription = catalog?.currentSubscription;
   const activePlan = subscription?.plan ?? 'free';
   const planDetails = PLAN_DASHBOARD_DETAILS[activePlan];
+  const generationOverview = overview?.generation ?? null;
+  const hasUsageOverview = Boolean(generationOverview);
+  const contentGenerationsToday = generationOverview?.contentGenerationsToday ?? null;
+  const imageGenerationsToday = generationOverview?.imageGenerationsToday ?? null;
   const contentUsage = useMemo(
     () =>
-      getUsageSnapshot(
-        overview?.generation.contentGenerationsToday || 0,
-        planDetails.contentLimit
-      ),
-    [overview?.generation.contentGenerationsToday, planDetails.contentLimit]
+      contentGenerationsToday === null
+        ? null
+        : getUsageSnapshot(contentGenerationsToday, planDetails.contentLimit),
+    [contentGenerationsToday, planDetails.contentLimit]
   );
   const imageUsage = useMemo(
     () =>
-      getUsageSnapshot(
-        overview?.generation.imageGenerationsToday || 0,
-        planDetails.imageLimit
-      ),
-    [overview?.generation.imageGenerationsToday, planDetails.imageLimit]
+      imageGenerationsToday === null
+        ? null
+        : getUsageSnapshot(imageGenerationsToday, planDetails.imageLimit),
+    [imageGenerationsToday, planDetails.imageLimit]
   );
   const activeScheduledPostCount = useMemo(
     () => upcomingPosts.length,
@@ -57,18 +71,50 @@ export const DashboardPage = () => {
   );
 
   useEffect(() => {
-    if (!token) {
+    if (!token || !user?.id) {
       setConversations([]);
       return;
     }
 
+    const initialCached = readBrowserCache<GenerateConversation[]>(
+      buildDashboardConversationsCacheKey(user.id)
+    );
+
+    if (initialCached?.value) {
+      setConversations(initialCached.value);
+    }
+
     const refreshRecentData = async () => {
       try {
+        const cached = readBrowserCache<GenerateConversation[]>(
+          buildDashboardConversationsCacheKey(user.id)
+        );
+
+        if (cached?.value) {
+          setConversations(cached.value);
+        }
+
+        if (
+          cached?.cachedAt &&
+          isBrowserCacheFresh(cached.cachedAt, DASHBOARD_CONVERSATIONS_CACHE_TTL_MS)
+        ) {
+          await Promise.all([
+            refreshHistory(),
+            refreshImageHistory(),
+            refreshScheduler({ silent: true }),
+          ]);
+          return;
+        }
+
         const nextConversations = await apiRequest<GenerateConversation[]>(
           '/api/generate/conversations',
           { token }
         );
         setConversations(nextConversations);
+        writeBrowserCache(
+          buildDashboardConversationsCacheKey(user.id),
+          nextConversations
+        );
         await Promise.all([
           refreshHistory(),
           refreshImageHistory(),
@@ -90,7 +136,7 @@ export const DashboardPage = () => {
     return () => {
       window.removeEventListener('focus', handleFocus);
     };
-  }, [token, refreshHistory, refreshImageHistory, refreshScheduler]);
+  }, [token, user?.id, refreshHistory, refreshImageHistory, refreshScheduler]);
 
   const liveConversationMap = useMemo(
     () => new Map(conversations.map((conversation) => [conversation.id, conversation])),
@@ -122,7 +168,7 @@ export const DashboardPage = () => {
       return;
     }
 
-    setActiveGenerateConversationId(conversationId);
+    setActiveGenerateConversationId(conversationId, user?.id);
     navigate('/app/generate');
   };
 
@@ -131,12 +177,20 @@ export const DashboardPage = () => {
       <div className="stats-grid">
         <StatsCard
           label="Generated content"
-          value={formatCompactNumber(overview?.generation.totalGeneratedContent || 0)}
+          value={
+            generationOverview
+              ? formatCompactNumber(generationOverview.totalGeneratedContent)
+              : '—'
+          }
           hint="All-time content packs"
         />
         <StatsCard
           label="Generated images"
-          value={formatCompactNumber(overview?.generation.totalGeneratedImages || 0)}
+          value={
+            generationOverview
+              ? formatCompactNumber(generationOverview.totalGeneratedImages)
+              : '—'
+          }
           hint="All-time image outputs"
         />
         <StatsCard
@@ -147,7 +201,15 @@ export const DashboardPage = () => {
         {overview?.weeklyComparison ? (
           <WeeklyScoreCard comparison={overview.weeklyComparison} />
         ) : (
-          <StatsCard label="Weekly movement" value="0%" hint="Waiting for analytics records" />
+          <StatsCard
+            label="Weekly movement"
+            value={isAnalyticsLoading ? '—' : '0%'}
+            hint={
+              isAnalyticsLoading
+                ? 'Syncing analytics'
+                : 'Waiting for analytics records'
+            }
+          />
         )}
       </div>
 
@@ -163,13 +225,13 @@ export const DashboardPage = () => {
           <div className="dashboard-panel__body">
             <UsageMeter
               label={planDetails.contentMeterLabel}
-              value={overview?.generation.contentGenerationsToday || 0}
+              value={contentGenerationsToday}
               limit={planDetails.contentLimit}
               limitLabel={planDetails.contentLimitLabel}
             />
             <UsageMeter
               label={planDetails.imageMeterLabel}
-              value={overview?.generation.imageGenerationsToday || 0}
+              value={imageGenerationsToday}
               limit={planDetails.imageLimit}
               limitLabel={planDetails.imageLimitLabel}
             />
@@ -178,12 +240,16 @@ export const DashboardPage = () => {
                 <span className="dashboard-usage-bubble__label">Content left</span>
                 <div className="dashboard-usage-bubble__value">
                   <strong>
-                    {contentUsage.percentLeft === null
+                    {!contentUsage
+                      ? 'Syncing'
+                      : contentUsage.percentLeft === null
                       ? 'Unlimited'
                       : `${contentUsage.percentLeft}%`}
                   </strong>
                   <small>
-                    {contentUsage.remaining === null
+                    {!contentUsage
+                      ? 'Waiting for usage'
+                      : contentUsage.remaining === null
                       ? 'No cap on captions'
                       : `${formatCompactNumber(contentUsage.remaining)} remaining`}
                   </small>
@@ -193,12 +259,16 @@ export const DashboardPage = () => {
                 <span className="dashboard-usage-bubble__label">Images left</span>
                 <div className="dashboard-usage-bubble__value">
                   <strong>
-                    {imageUsage.percentLeft === null
+                    {!imageUsage
+                      ? 'Syncing'
+                      : imageUsage.percentLeft === null
                       ? 'Unlimited'
                       : `${imageUsage.percentLeft}%`}
                   </strong>
                   <small>
-                    {imageUsage.remaining === null
+                    {!imageUsage
+                      ? 'Waiting for usage'
+                      : imageUsage.remaining === null
                       ? 'No cap on images'
                       : `${formatCompactNumber(imageUsage.remaining)} remaining`}
                   </small>

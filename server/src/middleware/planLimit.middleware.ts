@@ -21,7 +21,22 @@ export type AuthenticatedRequest = Request & {
   user?: User;
   accessToken?: string;
   imageRuntimePolicy?: ImageRuntimePolicy;
-  imageRateLimitReservation?: number;
+  imageRateLimitReservation?: string;
+};
+
+const buildImageThrottleMessage = (
+  plan: 'free' | 'basic' | 'pro',
+  retryAfterSeconds: number
+) => {
+  if (plan === 'free') {
+    return `Okay bestie, the image lab needs a tiny breather. Give it ${retryAfterSeconds}s and hit generate again.`;
+  }
+
+  if (plan === 'basic') {
+    return `You are low-key speedrunning the image lab. Let it chill for ${retryAfterSeconds}s, then go again.`;
+  }
+
+  return `Even the fast lane needs a quick vibe check. Wait ${retryAfterSeconds}s and you are good to go again.`;
 };
 
 const enforceFeatureLimit = async (
@@ -119,7 +134,7 @@ export const imageRuntimePolicyMiddleware = async (
 
     const plan = subscription?.plan ?? 'free';
     const runtimePolicy = resolveImageRuntimePolicy(plan, usageCount);
-    const rateLimitResult = checkImageRateLimit(
+    const rateLimitResult = await checkImageRateLimit(
       req.user.id,
       runtimePolicy
     );
@@ -129,12 +144,10 @@ export const imageRuntimePolicyMiddleware = async (
 
       return res.status(429).json({
         status: 'fail',
-        message:
-          plan === 'free'
-            ? `Too many image generations right now. Your Free plan allows ${runtimePolicy.requestsPerMinute} image requests per minute. Please wait ${rateLimitResult.retryAfterSeconds}s and try again.`
-            : plan === 'basic'
-              ? `Too many image generations right now. Your Basic plan allows ${runtimePolicy.requestsPerMinute} image requests per minute. Please wait ${rateLimitResult.retryAfterSeconds}s and try again.`
-              : `Too many image generations right now. Your Pro plan allows ${runtimePolicy.requestsPerMinute} image requests per minute. Please wait ${rateLimitResult.retryAfterSeconds}s and try again.`,
+        message: buildImageThrottleMessage(
+          plan,
+          rateLimitResult.retryAfterSeconds
+        ),
         data: {
           plan,
           requestsPerMinute: runtimePolicy.requestsPerMinute,
@@ -148,7 +161,7 @@ export const imageRuntimePolicyMiddleware = async (
       throttleDelayMs: rateLimitResult.throttleDelayMs,
       burstRequestCount: rateLimitResult.burstRequestCount,
     };
-    req.imageRateLimitReservation = rateLimitResult.reservationTimestamp;
+    req.imageRateLimitReservation = rateLimitResult.reservationId;
     return next();
   } catch (error) {
     return res.status(500).json({

@@ -373,7 +373,7 @@ export const LoginPage = () => {
           {!isConfigured ? (
             <ErrorMessage message="Client Supabase env is missing. Add the variables from client/.env.example first." />
           ) : null}
-          <ErrorMessage message={error} />
+          <ErrorMessage message={error} showRawInDev />
           {success ? <div className="message">{success}</div> : null}
           {shouldShowVerificationAction ? (
             <div className="auth-inline-actions">

@@ -2,7 +2,6 @@ import { Request, Response } from 'express';
 import type { User } from '@supabase/supabase-js';
 import {
   ContentGenerationProvidersExhaustedError,
-  generateContentPackWithFallback,
   hasMeaningfulReelScript,
 } from '../ai/gemini';
 import { FEATURE_KEYS } from '../config/constants';
@@ -25,6 +24,10 @@ import {
   isRequestCancelledError,
   throwIfRequestCancelled,
 } from '../lib/requestCancellation';
+import { buildGeneratedContentFilePayload } from '../lib/generatedAssetPayloads';
+import { storeGeneratedContentInR2 } from '../services/r2Storage.service';
+import { enqueueContentGenerationJob } from '../services/contentGenerationQueue.service';
+import { invalidateAnalyticsRuntimeCache } from '../services/runtimeCache.service';
 
 type AuthenticatedRequest<
   Params = Record<string, string>,
@@ -130,22 +133,45 @@ export const generateContent = async (
     );
     const includeReelScript =
       reelScriptLimit === null || reelScriptUsageCount < reelScriptLimit;
-    const { contentPack, provider } = await generateContentPackWithFallback(
-      brandProfile,
-      generationInput,
+    const {
+      jobId,
+      result: { contentPack, provider },
+    } = await enqueueContentGenerationJob(
       {
+        userId: req.user.id,
+        brandProfile,
+        input: generationInput,
         includeReelScript,
-        signal: cancellation.signal,
-      }
+      },
+      cancellation.signal
     );
     const hasReelScript = hasMeaningfulReelScript(contentPack.reelScript);
     throwIfRequestCancelled(
       cancellation.signal,
       'Content generation cancelled by user.'
     );
+    const storedContentAsset = await storeGeneratedContentInR2({
+      userId: req.user.id,
+      productName: generationInput.productName,
+      payload: buildGeneratedContentFilePayload({
+        userId: req.user.id,
+        provider,
+        brandProfileId: brandProfile?.id ?? null,
+        productInput: generationInput,
+        contentPack,
+        reelScriptIncluded: hasReelScript,
+      }),
+      signal: cancellation.signal,
+    });
     const content = await saveGeneratedContent(client, req.user.id, {
       ...generationInput,
       brandProfileId: brandProfile?.id ?? null,
+      storageProvider: storedContentAsset?.provider ?? null,
+      storageBucket: storedContentAsset?.bucket ?? null,
+      storageObjectKey: storedContentAsset?.objectKey ?? null,
+      storagePublicUrl: storedContentAsset?.publicUrl ?? null,
+      storageContentType: storedContentAsset?.contentType ?? null,
+      storageSizeBytes: storedContentAsset?.sizeBytes ?? null,
       ...contentPack,
     });
 
@@ -183,6 +209,7 @@ export const generateContent = async (
         productName: generationInput.productName,
       }, `reel-script-generation:${content.id}`);
     }
+    await invalidateAnalyticsRuntimeCache(req.user.id);
 
     console.info('[content-controller] Generate content request succeeded', {
       userId: req.user.id,
@@ -195,6 +222,9 @@ export const generateContent = async (
       status: 'success',
       message: 'Content generated successfully',
       data: content,
+      meta: {
+        jobId,
+      },
     });
   } catch (error) {
     if (isRequestCancelledError(error)) {

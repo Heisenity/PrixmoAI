@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { apiRequest } from '../lib/axios';
 import {
+  isBrowserCacheFresh,
+  readBrowserCache,
+  writeBrowserCache,
+} from '../lib/browserCache';
+import {
   emitUpgradePrompt,
   getUpgradePromptFromMessage,
 } from '../lib/upgradePrompt';
@@ -61,6 +66,25 @@ const readFileAsDataUrl = (file: File): Promise<string> =>
 
     reader.readAsDataURL(file);
   });
+
+type SchedulerCache = {
+  accounts: PaginatedResult<SocialAccount> | null;
+  posts: PaginatedResult<ScheduledPost> | null;
+  items: PaginatedResult<ScheduledItem> | null;
+};
+
+const SCHEDULER_CACHE_KEY_PREFIX = 'prixmoai.scheduler.snapshot';
+const SCHEDULER_CACHE_TTL_MS = 60_000;
+
+const buildSchedulerCacheKey = (userId: string) =>
+  `${SCHEDULER_CACHE_KEY_PREFIX}:${userId}`;
+
+const readSchedulerCache = (userId: string) =>
+  readBrowserCache<SchedulerCache>(buildSchedulerCacheKey(userId));
+
+const writeSchedulerCache = (userId: string, value: SchedulerCache) => {
+  writeBrowserCache(buildSchedulerCacheKey(userId), value);
+};
 
 const META_OAUTH_POPUP_MESSAGE_TYPE = 'prixmoai:meta-oauth';
 const META_OAUTH_POPUP_WIDTH = 560;
@@ -267,7 +291,7 @@ type UseSchedulerOptions = {
 };
 
 export const useScheduler = (options: UseSchedulerOptions = {}) => {
-  const { token } = useAuth();
+  const { token, user } = useAuth();
   const [accounts, setAccounts] = useState<PaginatedResult<SocialAccount> | null>(null);
   const [posts, setPosts] = useState<PaginatedResult<ScheduledPost> | null>(null);
   const [items, setItems] = useState<PaginatedResult<ScheduledItem> | null>(null);
@@ -292,13 +316,33 @@ export const useScheduler = (options: UseSchedulerOptions = {}) => {
   );
 
   const refresh = useCallback(
-    async ({ silent = false }: { silent?: boolean } = {}) => {
-      if (!token) {
+    async ({ silent = false, force = false }: { silent?: boolean; force?: boolean } = {}) => {
+      if (!token || !user?.id) {
         return;
       }
 
-      if (!silent) {
+      const cached = readSchedulerCache(user.id);
+
+      if (cached?.value) {
+        setAccounts(cached.value.accounts);
+        setPosts(cached.value.posts);
+        setItems(cached.value.items);
+        setError(null);
+
+        if (
+          !force &&
+          cached.cachedAt &&
+          isBrowserCacheFresh(cached.cachedAt, SCHEDULER_CACHE_TTL_MS)
+        ) {
+          setSchedulerStatus('ready');
+          return;
+        }
+      }
+
+      if (!silent && !cached?.value) {
         setIsLoading(true);
+        setSchedulerStatus('syncing');
+      } else if (!silent) {
         setSchedulerStatus('syncing');
       }
 
@@ -311,6 +355,11 @@ export const useScheduler = (options: UseSchedulerOptions = {}) => {
         setAccounts(nextAccounts);
         setPosts(nextPosts);
         setItems(nextItems);
+        writeSchedulerCache(user.id, {
+          accounts: nextAccounts,
+          posts: nextPosts,
+          items: nextItems,
+        });
         setError(null);
         setSchedulerStatus((current) =>
           !silent || current === 'error' ? 'ready' : current
@@ -327,7 +376,7 @@ export const useScheduler = (options: UseSchedulerOptions = {}) => {
         }
       }
     },
-    [token]
+    [token, user?.id]
   );
 
   useEffect(() => {
@@ -369,7 +418,7 @@ export const useScheduler = (options: UseSchedulerOptions = {}) => {
         token,
         body: payload,
       });
-      await refresh({ silent: true });
+      await refresh({ silent: true, force: true });
       return created;
     } catch (mutationError) {
       const message =
@@ -497,7 +546,7 @@ export const useScheduler = (options: UseSchedulerOptions = {}) => {
           },
         }
       );
-      await refresh({ silent: true });
+      await refresh({ silent: true, force: true });
       return result;
     } catch (finalizeError) {
       const message =
@@ -538,7 +587,7 @@ export const useScheduler = (options: UseSchedulerOptions = {}) => {
         token,
         body: payload,
       });
-      await refresh({ silent: true });
+      await refresh({ silent: true, force: true });
       return created;
     } catch (mutationError) {
       const message =
@@ -592,7 +641,7 @@ export const useScheduler = (options: UseSchedulerOptions = {}) => {
         token,
         body: input,
       });
-      await refresh({ silent: true });
+      await refresh({ silent: true, force: true });
       return created;
     } catch (mutationError) {
       const message =
@@ -638,7 +687,7 @@ export const useScheduler = (options: UseSchedulerOptions = {}) => {
         method: 'DELETE',
         token,
       });
-      await refresh({ silent: true });
+      await refresh({ silent: true, force: true });
     } catch (mutationError) {
       const message =
         mutationError instanceof Error
@@ -709,7 +758,7 @@ export const useScheduler = (options: UseSchedulerOptions = {}) => {
           items: nextItems,
         },
       });
-      await refresh({ silent: true });
+      await refresh({ silent: true, force: true });
       return created;
     } catch (mutationError) {
       const message =
@@ -740,7 +789,7 @@ export const useScheduler = (options: UseSchedulerOptions = {}) => {
           token,
         }
       );
-      await refresh({ silent: true });
+      await refresh({ silent: true, force: true });
       return result;
     } catch (mutationError) {
       const message =
@@ -769,7 +818,7 @@ export const useScheduler = (options: UseSchedulerOptions = {}) => {
         token,
         body: input,
       });
-      await refresh({ silent: true });
+      await refresh({ silent: true, force: true });
       return updated;
     } catch (mutationError) {
       const message =
@@ -797,7 +846,7 @@ export const useScheduler = (options: UseSchedulerOptions = {}) => {
         method: 'POST',
         token,
       });
-      await refresh({ silent: true });
+      await refresh({ silent: true, force: true });
       return updated;
     } catch (mutationError) {
       const message =
@@ -826,7 +875,7 @@ export const useScheduler = (options: UseSchedulerOptions = {}) => {
         token,
         body: { status },
       });
-      await refresh({ silent: true });
+      await refresh({ silent: true, force: true });
     } catch (mutationError) {
       const message =
         mutationError instanceof Error ? mutationError.message : 'Failed to update post status';
@@ -869,7 +918,7 @@ export const useScheduler = (options: UseSchedulerOptions = {}) => {
         token,
         body: payload,
       });
-      await refresh({ silent: true });
+      await refresh({ silent: true, force: true });
       return updated;
     } catch (mutationError) {
       const message =
@@ -895,7 +944,7 @@ export const useScheduler = (options: UseSchedulerOptions = {}) => {
         method: 'POST',
         token,
       });
-      await refresh({ silent: true });
+      await refresh({ silent: true, force: true });
       return updated;
     } catch (mutationError) {
       const message =
@@ -921,7 +970,7 @@ export const useScheduler = (options: UseSchedulerOptions = {}) => {
         method: 'DELETE',
         token,
       });
-      await refresh({ silent: true });
+      await refresh({ silent: true, force: true });
     } catch (mutationError) {
       const message =
         mutationError instanceof Error

@@ -13,6 +13,16 @@ import {
 import { requireSupabaseAdmin, requireUserClient } from '../db/supabase';
 import { getAnalyticsDashboard } from '../services/analyticsDashboard.service';
 import { syncAnalyticsForUser } from '../services/analyticsSync.service';
+import {
+  buildAnalyticsBestPostCacheKey,
+  buildAnalyticsDashboardCacheKey,
+  buildAnalyticsHistoryCacheKey,
+  buildAnalyticsOverviewCacheKey,
+  buildAnalyticsSummaryCacheKey,
+  buildAnalyticsWeeklyComparisonCacheKey,
+  getOrSetJsonCache,
+  invalidateAnalyticsRuntimeCache,
+} from '../services/runtimeCache.service';
 import type { RecordAnalyticsInput } from '../schemas/analytics.schema';
 
 type AuthenticatedRequest<
@@ -49,8 +59,10 @@ export const recordAnalytics = async (
   }
 
   try {
+    const userId = req.user.id;
     const client = requireUserClient(req.accessToken);
-    const analytics = await saveAnalyticsData(client, req.user.id, req.body);
+    const analytics = await saveAnalyticsData(client, userId, req.body);
+    await invalidateAnalyticsRuntimeCache(userId);
 
     return res.status(200).json({
       status: 'success',
@@ -78,23 +90,31 @@ export const getOverview = async (
   }
 
   try {
+    const userId = req.user.id;
     const client = requireUserClient(req.accessToken);
-    const [generation, performance, weeklyComparison, bestPostThisWeek] =
-      await Promise.all([
-        getGenerationOverview(client, req.user.id),
-        getAnalyticsSummary(client, req.user.id),
-        getWeeklyAnalyticsComparison(client, req.user.id),
-        getBestPerformingPostThisWeek(client, req.user.id),
-      ]);
+    const data = await getOrSetJsonCache(
+      buildAnalyticsOverviewCacheKey(userId),
+      async () => {
+        const [generation, performance, weeklyComparison, bestPostThisWeek] =
+          await Promise.all([
+            getGenerationOverview(client, userId),
+            getAnalyticsSummary(client, userId),
+            getWeeklyAnalyticsComparison(client, userId),
+            getBestPerformingPostThisWeek(client, userId),
+          ]);
+
+        return {
+          generation,
+          performance,
+          weeklyComparison,
+          bestPostThisWeek,
+        };
+      }
+    );
 
     return res.status(200).json({
       status: 'success',
-      data: {
-        generation,
-        performance,
-        weeklyComparison,
-        bestPostThisWeek,
-      },
+      data,
     });
   } catch (error) {
     return res.status(500).json({
@@ -129,8 +149,9 @@ export const getDashboard = async (
   }
 
   try {
+    const userId = req.user.id;
     const client = requireUserClient(req.accessToken);
-    const dashboard = await getAnalyticsDashboard(client, req.user.id, {
+    const filters = {
       preset:
         req.query.preset === '7d' ||
         req.query.preset === '14d' ||
@@ -141,11 +162,21 @@ export const getDashboard = async (
           : undefined,
       start: parseOptionalDate(req.query.start),
       end: parseOptionalDate(req.query.end),
-      platformScope:
+      platform:
         req.query.platform === 'instagram' || req.query.platform === 'facebook'
           ? req.query.platform
           : 'all',
-    });
+    } as const;
+    const dashboard = await getOrSetJsonCache(
+      buildAnalyticsDashboardCacheKey(userId, filters),
+      () =>
+        getAnalyticsDashboard(client, userId, {
+          preset: filters.preset,
+          start: filters.start,
+          end: filters.end,
+          platformScope: filters.platform as 'instagram' | 'facebook' | 'all',
+        })
+    );
 
     return res.status(200).json({
       status: 'success',
@@ -174,8 +205,9 @@ export const syncAnalytics = async (
   }
 
   try {
+    const userId = req.user.id;
     const client = requireUserClient(req.accessToken);
-    const summary = await syncAnalyticsForUser(client, req.user.id);
+    const summary = await syncAnalyticsForUser(client, userId);
 
     return res.status(200).json({
       status: 'success',
@@ -203,8 +235,12 @@ export const getSummary = async (
   }
 
   try {
+    const userId = req.user.id;
     const client = requireUserClient(req.accessToken);
-    const summary = await getAnalyticsSummary(client, req.user.id);
+    const summary = await getOrSetJsonCache(
+      buildAnalyticsSummaryCacheKey(userId),
+      () => getAnalyticsSummary(client, userId)
+    );
 
     return res.status(200).json({
       status: 'success',
@@ -231,8 +267,12 @@ export const getWeeklyComparison = async (
   }
 
   try {
+    const userId = req.user.id;
     const client = requireUserClient(req.accessToken);
-    const comparison = await getWeeklyAnalyticsComparison(client, req.user.id);
+    const comparison = await getOrSetJsonCache(
+      buildAnalyticsWeeklyComparisonCacheKey(userId),
+      () => getWeeklyAnalyticsComparison(client, userId)
+    );
 
     return res.status(200).json({
       status: 'success',
@@ -261,8 +301,12 @@ export const getBestPost = async (
   }
 
   try {
+    const userId = req.user.id;
     const client = requireUserClient(req.accessToken);
-    const bestPost = await getBestPerformingPostThisWeek(client, req.user.id);
+    const bestPost = await getOrSetJsonCache(
+      buildAnalyticsBestPostCacheKey(userId),
+      () => getBestPerformingPostThisWeek(client, userId)
+    );
 
     return res.status(200).json({
       status: 'success',
@@ -296,13 +340,18 @@ export const getHistory = async (
   }
 
   try {
+    const userId = req.user.id;
     const client = requireUserClient(req.accessToken);
-    const history = await getAnalyticsHistory(client, req.user.id, {
+    const filters = {
       page: parsePositiveInt(req.query.page, 1),
       limit: parsePositiveInt(req.query.limit, 20),
       start: parseOptionalDate(req.query.start),
       end: parseOptionalDate(req.query.end),
-    });
+    };
+    const history = await getOrSetJsonCache(
+      buildAnalyticsHistoryCacheKey(userId, filters),
+      () => getAnalyticsHistory(client, userId, filters)
+    );
 
     return res.status(200).json({
       status: 'success',

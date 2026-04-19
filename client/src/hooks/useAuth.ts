@@ -9,6 +9,11 @@ import {
 } from 'react';
 import type { Session, User } from '@supabase/supabase-js';
 import { apiRequest } from '../lib/axios';
+import {
+  readBrowserCache,
+  removeBrowserCache,
+  writeBrowserCache,
+} from '../lib/browserCache';
 import { isSupabaseConfigured, supabase } from '../lib/supabase';
 import type { AuthMeResponse, BrandProfile, SaveProfileInput } from '../types';
 
@@ -33,6 +38,7 @@ type AuthContextValue = {
   signUp: (
     input: SignUpInput
   ) => Promise<{ requiresEmailConfirmation: boolean }>;
+  verifySignupOtp: (email: string, token: string) => Promise<void>;
   resendSignupConfirmation: (email: string) => Promise<void>;
   requestPasswordReset: (email: string) => Promise<void>;
   verifyPasswordResetOtp: (email: string, token: string) => Promise<void>;
@@ -44,6 +50,42 @@ type AuthContextValue = {
 };
 
 const AuthContext = createContext<AuthContextValue | null>(null);
+const AUTH_PROFILE_CACHE_KEY_PREFIX = 'prixmoai.auth.profile';
+
+const buildAuthProfileCacheKey = (userId: string) =>
+  `${AUTH_PROFILE_CACHE_KEY_PREFIX}:${userId}`;
+
+const isUnverifiedEmailAuthUser = (currentUser: User | null | undefined) => {
+  if (!currentUser) {
+    return false;
+  }
+
+  const provider = ((currentUser.app_metadata?.provider as string | undefined) ?? 'email')
+    .trim()
+    .toLowerCase();
+
+  return Boolean(currentUser.email) && provider === 'email' && !currentUser.email_confirmed_at;
+};
+
+const readCachedProfile = (userId: string) =>
+  readBrowserCache<BrandProfile | null>(buildAuthProfileCacheKey(userId))?.value ??
+  null;
+
+const writeCachedProfile = (profile: BrandProfile | null, userId?: string | null) => {
+  if (!userId) {
+    return;
+  }
+
+  writeBrowserCache(buildAuthProfileCacheKey(userId), profile);
+};
+
+const removeCachedProfile = (userId?: string | null) => {
+  if (!userId) {
+    return;
+  }
+
+  removeBrowserCache(buildAuthProfileCacheKey(userId));
+};
 
 const readMetadataString = (
   metadata: Record<string, unknown>,
@@ -93,6 +135,30 @@ const useAuthBootstrap = () => {
   const [isInitializing, setIsInitializing] = useState(true);
   const [isProfileLoading, setIsProfileLoading] = useState(false);
 
+  const resetAuthState = (userId?: string | null) => {
+    removeCachedProfile(userId);
+    startTransition(() => {
+      setSession(null);
+      setUser(null);
+    });
+    setProfile(null);
+  };
+
+  const clearUnverifiedSession = async (
+    supabaseClient: NonNullable<typeof supabase>,
+    currentSession: Session | null | undefined
+  ) => {
+    resetAuthState(currentSession?.user?.id);
+    setIsProfileLoading(false);
+    setIsInitializing(false);
+
+    try {
+      await supabaseClient.auth.signOut();
+    } catch {
+      // If the local session is already gone, the app state above is still enough.
+    }
+  };
+
   const persistProfile = async (
     accessToken: string,
     input: SaveProfileInput
@@ -107,17 +173,26 @@ const useAuthBootstrap = () => {
     );
 
     setProfile(response.profile);
+    writeCachedProfile(response.profile, response.profile.userId);
     return response.profile;
   };
 
   const hydrateProfile = async (
     accessToken: string | null,
-    currentUser: User | null = null
+    currentUser: User | null = null,
+    options: {
+      finishInitializing?: boolean;
+      preserveCachedProfileOnError?: boolean;
+    } = {}
   ) => {
+    const finishInitializing = options.finishInitializing ?? true;
+
     if (!accessToken) {
       setProfile(null);
       setIsProfileLoading(false);
-      setIsInitializing(false);
+      if (finishInitializing) {
+        setIsInitializing(false);
+      }
       return;
     }
 
@@ -157,12 +232,17 @@ const useAuthBootstrap = () => {
         setProfile(syncedProfile);
       } else {
         setProfile(nextProfile);
+        writeCachedProfile(nextProfile, currentUser?.id);
       }
     } catch {
-      setProfile(null);
+      if (!options.preserveCachedProfileOnError) {
+        setProfile(null);
+      }
     } finally {
       setIsProfileLoading(false);
-      setIsInitializing(false);
+      if (finishInitializing) {
+        setIsInitializing(false);
+      }
     }
   };
 
@@ -184,12 +264,34 @@ const useAuthBootstrap = () => {
         return;
       }
 
+      if (isUnverifiedEmailAuthUser(initialSession?.user ?? null)) {
+        await clearUnverifiedSession(supabaseClient, initialSession);
+        return;
+      }
+
       setSession(initialSession);
       setUser(initialSession?.user ?? null);
-      await hydrateProfile(
-        initialSession?.access_token ?? null,
-        initialSession?.user ?? null
-      );
+      const cachedProfile = initialSession?.user?.id
+        ? readCachedProfile(initialSession.user.id)
+        : null;
+
+      if (cachedProfile) {
+        setProfile(cachedProfile);
+        setIsInitializing(false);
+        void hydrateProfile(
+          initialSession?.access_token ?? null,
+          initialSession?.user ?? null,
+          {
+            finishInitializing: false,
+            preserveCachedProfileOnError: true,
+          }
+        );
+      } else {
+        await hydrateProfile(
+          initialSession?.access_token ?? null,
+          initialSession?.user ?? null
+        );
+      }
     };
 
     void bootstrap();
@@ -201,12 +303,31 @@ const useAuthBootstrap = () => {
         return;
       }
 
+      if (isUnverifiedEmailAuthUser(nextSession?.user ?? null)) {
+        void clearUnverifiedSession(supabaseClient, nextSession);
+        return;
+      }
+
       startTransition(() => {
         setSession(nextSession);
         setUser(nextSession?.user ?? null);
       });
 
-      void hydrateProfile(nextSession?.access_token ?? null, nextSession?.user ?? null);
+      const cachedProfile = nextSession?.user?.id
+        ? readCachedProfile(nextSession.user.id)
+        : null;
+
+      if (cachedProfile) {
+        setProfile(cachedProfile);
+      }
+
+      void hydrateProfile(
+        nextSession?.access_token ?? null,
+        nextSession?.user ?? null,
+        {
+          preserveCachedProfileOnError: Boolean(cachedProfile),
+        }
+      );
     });
 
     return () => {
@@ -224,13 +345,18 @@ const useAuthBootstrap = () => {
       throw new Error('Supabase client env is missing on the frontend.');
     }
 
-    const { error } = await supabase.auth.signInWithPassword({
-      email,
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email: email.trim().toLowerCase(),
       password,
     });
 
     if (error) {
       throw new Error(error.message);
+    }
+
+    if (isUnverifiedEmailAuthUser(data.user ?? data.session?.user ?? null)) {
+      await supabase.auth.signOut();
+      throw new Error('Verify your email with the signup code first, then come back and sign in.');
     }
   };
 
@@ -244,7 +370,7 @@ const useAuthBootstrap = () => {
     }
 
     const { error } = await supabase.auth.signInWithOtp({
-      email,
+      email: email.trim().toLowerCase(),
       options: {
         shouldCreateUser: false,
       },
@@ -260,14 +386,19 @@ const useAuthBootstrap = () => {
       throw new Error('Supabase client env is missing on the frontend.');
     }
 
-    const { error } = await supabase.auth.verifyOtp({
-      email,
+    const { data, error } = await supabase.auth.verifyOtp({
+      email: email.trim().toLowerCase(),
       token,
       type: 'email',
     });
 
     if (error) {
       throw new Error(error.message);
+    }
+
+    if (isUnverifiedEmailAuthUser(data.user ?? data.session?.user ?? null)) {
+      await supabase.auth.signOut();
+      throw new Error('This email still needs signup verification before it can unlock the workspace.');
     }
   };
 
@@ -288,14 +419,12 @@ const useAuthBootstrap = () => {
     const trimmedFullName = fullName.trim();
     const trimmedPhoneNumber = phoneNumber.trim();
 
+    const normalizedEmail = email.trim().toLowerCase();
+
     const { data, error } = await supabase.auth.signUp({
-      email,
+      email: normalizedEmail,
       password,
       options: {
-        emailRedirectTo:
-          typeof window === 'undefined'
-            ? undefined
-            : `${window.location.origin}/login`,
         data: {
           full_name: trimmedFullName,
           name: trimmedFullName,
@@ -308,9 +437,34 @@ const useAuthBootstrap = () => {
       throw new Error(error.message);
     }
 
+    if (data.session && isUnverifiedEmailAuthUser(data.user ?? data.session.user ?? null)) {
+      await supabase.auth.signOut();
+    }
+
     return {
-      requiresEmailConfirmation: !data.session,
+      requiresEmailConfirmation: true,
     };
+  };
+
+  const verifySignupOtp = async (email: string, token: string) => {
+    if (!supabase) {
+      throw new Error('Supabase client env is missing on the frontend.');
+    }
+
+    const { data, error } = await supabase.auth.verifyOtp({
+      email: email.trim().toLowerCase(),
+      token,
+      type: 'signup',
+    });
+
+    if (error) {
+      throw new Error(error.message);
+    }
+
+    if (isUnverifiedEmailAuthUser(data.user ?? data.session?.user ?? null)) {
+      await supabase.auth.signOut();
+      throw new Error('That code did not finish email verification. Request a fresh code and try again.');
+    }
   };
 
   const resendSignupConfirmation = async (email: string) => {
@@ -320,13 +474,7 @@ const useAuthBootstrap = () => {
 
     const { error } = await supabase.auth.resend({
       type: 'signup',
-      email,
-      options: {
-        emailRedirectTo:
-          typeof window === 'undefined'
-            ? undefined
-            : `${window.location.origin}/login`,
-      },
+      email: email.trim().toLowerCase(),
     });
 
     if (error) {
@@ -408,6 +556,7 @@ const useAuthBootstrap = () => {
       return;
     }
 
+    removeCachedProfile(user?.id);
     const { error } = await supabase.auth.signOut();
 
     if (error) {
@@ -439,6 +588,7 @@ const useAuthBootstrap = () => {
     requestEmailOtpSignIn,
     verifyEmailOtpSignIn,
     signUp,
+    verifySignupOtp,
     resendSignupConfirmation,
     requestPasswordReset,
     verifyPasswordResetOtp,

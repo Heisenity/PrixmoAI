@@ -6,6 +6,11 @@ import {
   RequestCancelledError,
   throwIfRequestCancelled,
 } from '../lib/requestCancellation';
+import {
+  isProviderCircuitOpen,
+  recordProviderCircuitFailure,
+  recordProviderCircuitSuccess,
+} from '../services/providerCircuit.service';
 
 dotenv.config();
 
@@ -65,11 +70,6 @@ type ImageProvider = {
   ) => Promise<string>;
 };
 
-type ProviderCircuitState = {
-  consecutiveFailures: number;
-  openUntil: number;
-};
-
 type FluxApiMode = 'huggingface' | 'bfl' | 'generic';
 
 type FluxConfig = {
@@ -126,16 +126,8 @@ const PIXAZO_MAX_POLLS = Number(process.env.PIXAZO_MAX_POLLS || 20);
 const AIMLAPI_MAX_PROMPT_LENGTH = Number(
   process.env.AIMLAPI_MAX_PROMPT_LENGTH || 1900
 );
-const IMAGE_PROVIDER_FAILURE_THRESHOLD = Number(
-  process.env.IMAGE_PROVIDER_FAILURE_THRESHOLD || 3
-);
-const IMAGE_PROVIDER_OPEN_MS = Number(
-  process.env.IMAGE_PROVIDER_OPEN_MS || 60_000
-);
 const DEFAULT_AIMLAPI_MODEL =
   process.env.AIMLAPI_IMAGE_MODEL || 'alibaba/wan-2-6-image';
-
-const providerCircuits = new Map<ImageGenerationProvider, ProviderCircuitState>();
 type HuggingFaceTextToImageClient = {
   textToImage: (
     args: {
@@ -1016,36 +1008,6 @@ const getPixazoHeaders = (): Record<string, string> => {
 
 const getAimlApiKey = () => getOptionalEnv('AIMLAPI_KEY');
 
-const getCircuitState = (provider: ImageGenerationProvider): ProviderCircuitState =>
-  providerCircuits.get(provider) ?? {
-    consecutiveFailures: 0,
-    openUntil: 0,
-  };
-
-const shouldSkipProvider = (provider: ImageGenerationProvider) =>
-  getCircuitState(provider).openUntil > Date.now();
-
-const recordProviderSuccess = (provider: ImageGenerationProvider) => {
-  providerCircuits.set(provider, {
-    consecutiveFailures: 0,
-    openUntil: 0,
-  });
-};
-
-const recordProviderFailure = (provider: ImageGenerationProvider) => {
-  const current = getCircuitState(provider);
-  const consecutiveFailures = current.consecutiveFailures + 1;
-  const openUntil =
-    consecutiveFailures >= IMAGE_PROVIDER_FAILURE_THRESHOLD
-      ? Date.now() + IMAGE_PROVIDER_OPEN_MS
-      : 0;
-
-  providerCircuits.set(provider, {
-    consecutiveFailures,
-    openUntil,
-  });
-};
-
 const pollFluxStatusUrl = async (
   config: FluxConfig,
   statusUrl: string,
@@ -1499,9 +1461,12 @@ const tryProvider = async (
   provider: ImageProvider,
   prompt: string,
   input: ResolvedGenerateImageInput,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  onProviderChange?: (
+    provider: ImageGenerationProvider
+  ) => void | Promise<void>
 ): Promise<ProviderAttemptResult> => {
-  if (shouldSkipProvider(provider.provider)) {
+  if (await isProviderCircuitOpen('image', provider.provider)) {
     const failure = classifyProviderFailure(
       provider.provider,
       `${provider.provider} temporarily skipped after repeated failures`
@@ -1515,9 +1480,10 @@ const tryProvider = async (
   }
 
   try {
+    await onProviderChange?.(provider.provider);
     throwIfRequestCancelled(signal, 'Image generation cancelled by user.');
     const imageUrl = await provider.generate(prompt, input, signal);
-    recordProviderSuccess(provider.provider);
+    await recordProviderCircuitSuccess('image', provider.provider);
 
     return {
       success: true,
@@ -1530,7 +1496,7 @@ const tryProvider = async (
     }
 
     const failure = classifyProviderFailure(provider.provider, error);
-    recordProviderFailure(provider.provider);
+    await recordProviderCircuitFailure('image', provider.provider);
     console.warn(`[image-generation] ${provider.provider} provider failed`, {
       code: failure.code,
       error: failure.message,
@@ -1549,6 +1515,9 @@ export const generateProductImage = async (
   input: ResolvedGenerateImageInput,
   options: {
     signal?: AbortSignal;
+    onProviderChange?: (
+      provider: ImageGenerationProvider
+    ) => void | Promise<void>;
   } = {}
 ): Promise<GeneratedImageResult> => {
   const promptUsed = buildImagePrompt(brandProfile, input);
@@ -1557,7 +1526,13 @@ export const generateProductImage = async (
 
   for (const provider of providers) {
     throwIfRequestCancelled(signal, 'Image generation cancelled by user.');
-    const result = await tryProvider(provider, promptUsed, input, signal);
+    const result = await tryProvider(
+      provider,
+      promptUsed,
+      input,
+      signal,
+      options.onProviderChange
+    );
 
     if (result.success) {
       return {

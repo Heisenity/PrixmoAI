@@ -5,7 +5,10 @@ import {
   DEFAULT_GEMINI_MODEL,
   DEFAULT_GROQ_MODEL,
   GEMINI_GENERATION_TIMEOUT_MS,
+  GROQ_FIRST_TOKEN_TIMEOUT_MS,
   GROQ_GENERATION_TIMEOUT_MS,
+  GROQ_MAX_GENERATION_TIMEOUT_MS,
+  GROQ_STREAM_IDLE_TIMEOUT_MS,
   HASHTAG_VARIATION_COUNT,
 } from '../config/constants';
 import type {
@@ -26,7 +29,7 @@ import {
 
 dotenv.config();
 
-type GenerationProvider = 'gemini' | 'groq';
+export type GenerationProvider = 'gemini' | 'groq';
 
 type GeminiPart = {
   text?: string;
@@ -46,8 +49,13 @@ type GroqMessage = {
   content?: string | null;
 };
 
+type GroqDelta = {
+  content?: string | null;
+};
+
 type GroqChoice = {
   message?: GroqMessage | null;
+  delta?: GroqDelta | null;
 };
 
 type GroqResponse = {
@@ -57,9 +65,12 @@ type GroqResponse = {
 type GenerationRequestOptions = {
   includeReelScript?: boolean;
   signal?: AbortSignal;
+  onProviderChange?: (
+    provider: GenerationProvider
+  ) => void | Promise<void>;
 };
 
-type GeneratedContentPackWithProvider = {
+export type GeneratedContentPackWithProvider = {
   contentPack: GeneratedContentPack;
   provider: GenerationProvider;
 };
@@ -86,6 +97,99 @@ const PROVIDER_TIMEOUTS: Record<GenerationProvider, number> = {
   gemini: GEMINI_GENERATION_TIMEOUT_MS,
   groq: GROQ_GENERATION_TIMEOUT_MS,
 };
+
+const formatProviderTimeoutLabel = (timeoutMs: number) => {
+  if (timeoutMs % 1000 === 0) {
+    return `${timeoutMs / 1000}s`;
+  }
+
+  return `${(timeoutMs / 1000).toFixed(1)}s`;
+};
+
+const createAdaptiveTimeoutController = (baseSignal?: AbortSignal) => {
+  const controller = new AbortController();
+  let firstTokenTimer: ReturnType<typeof setTimeout> | null = null;
+  let idleTimer: ReturnType<typeof setTimeout> | null = null;
+  let maxTimer: ReturnType<typeof setTimeout> | null = null;
+  let timeoutMessage = '';
+
+  const abortWithMessage = (message: string) => {
+    timeoutMessage = message;
+    controller.abort();
+  };
+
+  const clearTimer = (timer: ReturnType<typeof setTimeout> | null) => {
+    if (timer) {
+      clearTimeout(timer);
+    }
+  };
+
+  const startFirstTokenTimer = () => {
+    clearTimer(firstTokenTimer);
+    firstTokenTimer = setTimeout(() => {
+      abortWithMessage(
+        `groq request timed out waiting for first token after ${formatProviderTimeoutLabel(
+          GROQ_FIRST_TOKEN_TIMEOUT_MS
+        )}`
+      );
+    }, GROQ_FIRST_TOKEN_TIMEOUT_MS);
+  };
+
+  const resetIdleTimer = () => {
+    clearTimer(idleTimer);
+    idleTimer = setTimeout(() => {
+      abortWithMessage(
+        `groq stream went idle for ${formatProviderTimeoutLabel(
+          GROQ_STREAM_IDLE_TIMEOUT_MS
+        )}`
+      );
+    }, GROQ_STREAM_IDLE_TIMEOUT_MS);
+  };
+
+  startFirstTokenTimer();
+  maxTimer = setTimeout(() => {
+    abortWithMessage(
+      `groq request reached safety cap after ${formatProviderTimeoutLabel(
+        GROQ_MAX_GENERATION_TIMEOUT_MS
+      )}`
+    );
+  }, GROQ_MAX_GENERATION_TIMEOUT_MS);
+
+  const handleBaseAbort = () => {
+    controller.abort();
+  };
+
+  baseSignal?.addEventListener('abort', handleBaseAbort, { once: true });
+
+  return {
+    signal: controller.signal,
+    hasTimedOut: () => Boolean(timeoutMessage),
+    getTimeoutMessage: () => timeoutMessage,
+    markFirstChunkReceived: () => {
+      clearTimer(firstTokenTimer);
+      firstTokenTimer = null;
+      resetIdleTimer();
+    },
+    markChunkActivity: () => {
+      if (firstTokenTimer) {
+        clearTimer(firstTokenTimer);
+        firstTokenTimer = null;
+      }
+
+      resetIdleTimer();
+    },
+    cleanup: () => {
+      clearTimer(firstTokenTimer);
+      clearTimer(idleTimer);
+      clearTimer(maxTimer);
+      baseSignal?.removeEventListener('abort', handleBaseAbort);
+    },
+  };
+};
+
+type AdaptiveTimeoutController = ReturnType<
+  typeof createAdaptiveTimeoutController
+>;
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -244,6 +348,11 @@ const withTimeout = async <T>(
   operation: (signal: AbortSignal) => Promise<T>,
   requestSignal?: AbortSignal
 ): Promise<T> => {
+  if (provider === 'groq') {
+    throwIfRequestCancelled(requestSignal);
+    return operation(requestSignal ?? new AbortController().signal);
+  }
+
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), PROVIDER_TIMEOUTS[provider]);
   const handleRequestAbort = () => {
@@ -263,7 +372,11 @@ const withTimeout = async <T>(
         throw new RequestCancelledError();
       }
 
-      throw new Error(`${provider} request timed out`);
+      throw new Error(
+        `${provider} request timed out after ${formatProviderTimeoutLabel(
+          PROVIDER_TIMEOUTS[provider]
+        )}`
+      );
     }
 
     throw error;
@@ -324,6 +437,96 @@ const callGemini = async (
   return text;
 };
 
+const extractGroqStreamChunkText = (payload: string) => {
+  const parsed = JSON.parse(payload) as GroqResponse;
+  return parsed.choices?.[0]?.delta?.content ?? '';
+};
+
+const readGroqStreamText = async (
+  response: Response,
+  signal: AbortSignal,
+  adaptiveTimeout: AdaptiveTimeoutController
+) => {
+  if (!response.body) {
+    throw new Error('groq returned an empty response stream');
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let combinedText = '';
+  let hasReceivedFirstChunk = false;
+
+  try {
+    while (true) {
+      throwIfRequestCancelled(signal);
+      const { done, value } = await reader.read();
+
+      if (done) {
+        break;
+      }
+
+      if (!hasReceivedFirstChunk) {
+        adaptiveTimeout.markFirstChunkReceived();
+        hasReceivedFirstChunk = true;
+      } else {
+        adaptiveTimeout.markChunkActivity();
+      }
+
+      buffer += decoder.decode(value, { stream: true });
+      const events = buffer.split('\n\n');
+      buffer = events.pop() ?? '';
+
+      for (const event of events) {
+        const lines = event
+          .split('\n')
+          .map((line) => line.trim())
+          .filter(Boolean);
+
+        for (const line of lines) {
+          if (!line.startsWith('data:')) {
+            continue;
+          }
+
+          const payload = line.slice(5).trim();
+
+          if (!payload || payload === '[DONE]') {
+            continue;
+          }
+
+          combinedText += extractGroqStreamChunkText(payload);
+        }
+      }
+    }
+
+    const trailing = buffer.trim();
+
+    if (trailing.startsWith('data:')) {
+      const payload = trailing.slice(5).trim();
+
+      if (payload && payload !== '[DONE]') {
+        combinedText += extractGroqStreamChunkText(payload);
+      }
+    }
+  } catch (error) {
+    if (isAbortError(error)) {
+      if (adaptiveTimeout.hasTimedOut()) {
+        throw new Error(adaptiveTimeout.getTimeoutMessage());
+      }
+
+      if (signal.aborted) {
+        throw new RequestCancelledError();
+      }
+    }
+
+    throw error;
+  } finally {
+    reader.releaseLock();
+  }
+
+  return combinedText.trim();
+};
+
 const callGroq = async (prompt: string, signal: AbortSignal): Promise<string> => {
   const apiKey = process.env.GROQ_API_KEY;
 
@@ -331,39 +534,57 @@ const callGroq = async (prompt: string, signal: AbortSignal): Promise<string> =>
     throw new Error('GROQ_API_KEY is not configured');
   }
 
-  const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model: DEFAULT_GROQ_MODEL,
-      temperature: 0.7,
-      messages: [
-        {
-          role: 'user',
-          content: prompt,
-        },
-      ],
-    }),
-    signal,
-  });
+  const adaptiveTimeout = createAdaptiveTimeoutController(signal);
 
-  if (!response.ok) {
-    throw new Error(
-      toProviderErrorMessage('groq', await response.text(), response.status)
-    );
+  try {
+    const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: DEFAULT_GROQ_MODEL,
+        temperature: 0.7,
+        stream: true,
+        messages: [
+          {
+            role: 'user',
+            content: prompt,
+          },
+        ],
+      }),
+      signal: adaptiveTimeout.signal,
+    });
+
+    if (!response.ok) {
+      throw new Error(
+        toProviderErrorMessage('groq', await response.text(), response.status)
+      );
+    }
+
+    const text = await readGroqStreamText(response, adaptiveTimeout.signal, adaptiveTimeout);
+
+    if (!text) {
+      throw new Error('groq returned an empty response');
+    }
+
+    return text;
+  } catch (error) {
+    if (isAbortError(error)) {
+      if (signal.aborted) {
+        throw new RequestCancelledError();
+      }
+
+      if (adaptiveTimeout.hasTimedOut()) {
+        throw new Error(adaptiveTimeout.getTimeoutMessage());
+      }
+    }
+
+    throw error;
+  } finally {
+    adaptiveTimeout.cleanup();
   }
-
-  const data = (await response.json()) as GroqResponse;
-  const text = data.choices?.[0]?.message?.content?.trim();
-
-  if (!text) {
-    throw new Error('groq returned an empty response');
-  }
-
-  return text;
 };
 
 const callProvider = async (
@@ -568,6 +789,7 @@ export const generateContentPackWithFallback = async (
   });
 
   try {
+    await options.onProviderChange?.('gemini');
     const contentPack = await generateContentPackWithProvider(
       'gemini',
       brandProfile,
@@ -597,6 +819,7 @@ export const generateContentPackWithFallback = async (
   }
 
   try {
+    await options.onProviderChange?.('groq');
     const contentPack = await generateContentPackWithProvider(
       'groq',
       brandProfile,

@@ -8,6 +8,7 @@ import {
   listWorkspaceConversations,
   updateWorkspaceConversation,
 } from '../controllers/generateWorkspace.controller';
+import { transcribeGenerateAudio } from '../controllers/transcription.controller';
 import { authMiddleware } from '../middleware/auth.middleware';
 import {
   imagePlanLimitMiddleware,
@@ -21,6 +22,7 @@ import {
   generateConversationImageSchema,
   updateGenerateConversationSchema,
 } from '../schemas/generateWorkspace.schema';
+import { transcribeAudioSchema } from '../schemas/transcription.schema';
 
 const router = Router();
 
@@ -55,6 +57,13 @@ router.post(
   imagePlanLimitMiddleware,
   imageRuntimePolicyMiddleware,
   generateWorkspaceImage
+);
+
+router.post(
+  '/transcribe',
+  authMiddleware,
+  validate(transcribeAudioSchema),
+  transcribeGenerateAudio
 );
 
 export default router;

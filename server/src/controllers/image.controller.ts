@@ -2,7 +2,6 @@ import { Request, Response } from 'express';
 import type { User } from '@supabase/supabase-js';
 import {
   ImageGenerationProvidersExhaustedError,
-  generateProductImage,
 } from '../ai/imageGen';
 import { getBrandProfileByUserId } from '../db/queries/brandProfiles';
 import {
@@ -19,7 +18,6 @@ import type {
   UploadSourceImageInput,
 } from '../schemas/image.schema';
 import {
-  enqueueImageGeneration,
   releaseImageRateLimitReservation,
   resolveImageRuntimePolicy,
 } from '../services/imageRuntimePolicy.service';
@@ -34,6 +32,9 @@ import {
   isRequestCancelledError,
   throwIfRequestCancelled,
 } from '../lib/requestCancellation';
+import { storeGeneratedImageInR2 } from '../services/r2Storage.service';
+import { enqueueImageGenerationJob } from '../services/imageGenerationQueue.service';
+import { invalidateAnalyticsRuntimeCache } from '../services/runtimeCache.service';
 
 type AuthenticatedRequest<
   Params = Record<string, string>,
@@ -44,7 +45,7 @@ type AuthenticatedRequest<
   user?: User;
   accessToken?: string;
   imageRuntimePolicy?: ReturnType<typeof resolveImageRuntimePolicy>;
-  imageRateLimitReservation?: number;
+  imageRateLimitReservation?: string;
 };
 
 const parsePositiveInt = (value: unknown, fallback: number): number => {
@@ -192,24 +193,39 @@ export const generateImage = async (
     };
     const runtimePolicy =
       req.imageRuntimePolicy ?? resolveImageRuntimePolicy('free', 0);
-    const result = await enqueueImageGeneration(
-      runtimePolicy,
-      () =>
-        generateProductImage(brandProfile, generationInput, {
-          signal: cancellation.signal,
-        }),
+    const { jobId, result } = await enqueueImageGenerationJob(
+      {
+        runtimePolicy,
+        data: {
+          userId: req.user.id,
+          brandProfile,
+          input: generationInput,
+        },
+      },
       cancellation.signal
     );
     throwIfRequestCancelled(
       cancellation.signal,
       'Image generation cancelled by user.'
     );
+    const storedImageAsset = await storeGeneratedImageInR2({
+      userId: req.user.id,
+      productName: generationInput.productName,
+      imageUrl: result.imageUrl,
+      signal: cancellation.signal,
+    });
     const image = await saveGeneratedImage(client, req.user.id, {
       contentId: generationInput.contentId ?? null,
       sourceImageUrl: generationInput.sourceImageUrl ?? null,
-      generatedImageUrl: result.imageUrl,
+      generatedImageUrl: storedImageAsset?.publicUrl ?? result.imageUrl,
       backgroundStyle: generationInput.backgroundStyle ?? null,
       prompt: result.promptUsed,
+      storageProvider: storedImageAsset?.provider ?? null,
+      storageBucket: storedImageAsset?.bucket ?? null,
+      storageObjectKey: storedImageAsset?.objectKey ?? null,
+      storagePublicUrl: storedImageAsset?.publicUrl ?? null,
+      storageContentType: storedImageAsset?.contentType ?? null,
+      storageSizeBytes: storedImageAsset?.sizeBytes ?? null,
     });
 
     throwIfRequestCancelled(
@@ -231,6 +247,7 @@ export const generateImage = async (
       throttleDelayMs: runtimePolicy.throttleDelayMs,
       dailyUsageCountBeforeRequest: runtimePolicy.usageCount,
     }, `image-generation:${image.id}`);
+    await invalidateAnalyticsRuntimeCache(req.user.id);
 
     res.setHeader('X-PrixmoAI-Queue-Tier', runtimePolicy.queueTier);
     res.setHeader('X-PrixmoAI-Speed-Tier', runtimePolicy.speedTier);
@@ -254,12 +271,13 @@ export const generateImage = async (
         provider: result.provider,
       },
       meta: {
+        jobId,
         runtime: runtimePolicy,
       },
     });
   } catch (error) {
     if (isRequestCancelledError(error)) {
-      releaseImageRateLimitReservation(
+      await releaseImageRateLimitReservation(
         req.user?.id ?? '',
         req.imageRateLimitReservation
       );

@@ -20,6 +20,12 @@ type GeneratedImageRow = {
   generated_image_url: string;
   background_style: string | null;
   prompt: string | null;
+  storage_provider: string | null;
+  storage_bucket: string | null;
+  storage_object_key: string | null;
+  storage_public_url: string | null;
+  storage_content_type: string | null;
+  storage_size_bytes: number | null;
   created_at: string;
   updated_at: string;
 };
@@ -41,6 +47,13 @@ const toGeneratedImage = (row: GeneratedImageRow): GeneratedImage => ({
   generatedImageUrl: row.generated_image_url,
   backgroundStyle: row.background_style,
   prompt: row.prompt,
+  storageProvider: row.storage_provider,
+  storageBucket: row.storage_bucket,
+  storageObjectKey: row.storage_object_key,
+  storagePublicUrl: row.storage_public_url,
+  storageContentType: row.storage_content_type,
+  storageSizeBytes:
+    typeof row.storage_size_bytes === 'number' ? row.storage_size_bytes : null,
   createdAt: row.created_at,
   updatedAt: row.updated_at,
 });
@@ -60,6 +73,12 @@ export const saveGeneratedImage = async (
       generated_image_url: input.generatedImageUrl,
       background_style: input.backgroundStyle ?? null,
       prompt: input.prompt ?? null,
+      storage_provider: input.storageProvider ?? null,
+      storage_bucket: input.storageBucket ?? null,
+      storage_object_key: input.storageObjectKey ?? null,
+      storage_public_url: input.storagePublicUrl ?? null,
+      storage_content_type: input.storageContentType ?? null,
+      storage_size_bytes: input.storageSizeBytes ?? null,
     })
     .select('*')
     .single();

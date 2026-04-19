@@ -1,16 +1,13 @@
+import { randomUUID } from 'crypto';
 import {
   FREE_IMAGE_NORMAL_QUEUE_DAILY_THRESHOLD,
   FREE_IMAGE_STANDARD_SPEED_DAILY_THRESHOLD,
-  IMAGE_QUEUE_CONCURRENCY,
   IMAGE_RUNTIME_POLICIES,
   type ImageQueueTier,
   type ImageSpeedTier,
 } from '../config/constants';
+import { getRedisClient, buildRedisKey } from '../lib/redis';
 import type { PlanType } from '../types';
-import {
-  RequestCancelledError,
-  throwIfRequestCancelled,
-} from '../lib/requestCancellation';
 
 export type ImageRuntimePolicy = {
   plan: PlanType;
@@ -25,163 +22,95 @@ export type ImageRuntimePolicy = {
   usageCount: number;
 };
 
-type QueueJob<T> = {
-  queueTier: ImageQueueTier;
-  throttleDelayMs: number;
-  signal?: AbortSignal;
-  started: boolean;
-  run: () => Promise<T>;
-  resolve: (value: T | PromiseLike<T>) => void;
-  reject: (reason?: unknown) => void;
-};
-
-const queueBuckets: Record<ImageQueueTier, QueueJob<any>[]> = {
-  priority: [],
-  normal: [],
-  slow: [],
-};
-
-let activeImageJobs = 0;
-
-const wait = (delayMs: number, signal?: AbortSignal) =>
-  new Promise<void>((resolve, reject) => {
-    if (signal?.aborted) {
-      reject(new RequestCancelledError('Image generation cancelled by user.'));
-      return;
+type RateLimitWindowResult =
+  | {
+      allowed: true;
+      remaining: number | null;
+      throttleDelayMs: number;
+      burstRequestCount: number | null;
+      reservationId: string;
     }
-
-    const timeout = setTimeout(() => {
-      signal?.removeEventListener('abort', handleAbort);
-      resolve();
-    }, delayMs);
-
-    const handleAbort = () => {
-      clearTimeout(timeout);
-      reject(new RequestCancelledError('Image generation cancelled by user.'));
+  | {
+      allowed: false;
+      retryAfterSeconds: number;
+      remaining: 0;
+      throttleDelayMs: number;
+      burstRequestCount: number | null;
     };
 
-    signal?.addEventListener('abort', handleAbort, {
-      once: true,
-    });
-  });
+const ONE_MINUTE_MS = 60_000;
 
-const getNextJob = () =>
-  queueBuckets.priority.shift() ??
-  queueBuckets.normal.shift() ??
-  queueBuckets.slow.shift() ??
-  null;
+const RATE_LIMIT_SCRIPT = `
+local key = KEYS[1]
+local now = tonumber(ARGV[1])
+local minuteWindow = tonumber(ARGV[2])
+local maxWindow = tonumber(ARGV[3])
+local requestsPerMinute = tonumber(ARGV[4])
+local burstWindow = tonumber(ARGV[5])
+local burstLimit = tonumber(ARGV[6])
+local throttleAfterBurst = tonumber(ARGV[7])
+local reservationId = ARGV[8]
 
-const pumpQueue = () => {
-  while (activeImageJobs < IMAGE_QUEUE_CONCURRENCY) {
-    const nextJob = getNextJob();
+redis.call('ZREMRANGEBYSCORE', key, '-inf', now - maxWindow)
 
-    if (!nextJob) {
-      return;
-    }
+local minuteStart = now - minuteWindow + 1
+local minuteCount = redis.call('ZCOUNT', key, minuteStart, '+inf')
 
-    activeImageJobs += 1;
+if requestsPerMinute >= 0 and minuteCount >= requestsPerMinute then
+  local oldest = redis.call('ZRANGEBYSCORE', key, minuteStart, '+inf', 'WITHSCORES', 'LIMIT', 0, 1)
+  local retryAfter = 1
 
-    void (async () => {
-      try {
-        if (nextJob.signal?.aborted) {
-          throw new RequestCancelledError('Image generation cancelled by user.');
-        }
+  if oldest[2] ~= nil then
+    retryAfter = math.max(1, math.ceil(((tonumber(oldest[2]) + minuteWindow) - now) / 1000))
+  end
 
-        nextJob.started = true;
+  local burstCount = -1
 
-        if (nextJob.throttleDelayMs > 0) {
-          await wait(nextJob.throttleDelayMs, nextJob.signal);
-        }
+  if burstWindow >= 0 then
+    burstCount = redis.call('ZCOUNT', key, now - burstWindow + 1, '+inf')
+  end
 
-        throwIfRequestCancelled(
-          nextJob.signal,
-          'Image generation cancelled by user.'
-        );
-        const result = await nextJob.run();
-        nextJob.resolve(result);
-      } catch (error) {
-        nextJob.reject(error);
-      } finally {
-        activeImageJobs = Math.max(0, activeImageJobs - 1);
-        pumpQueue();
-      }
-    })();
-  }
-};
+  return {0, 0, 0, burstCount, retryAfter}
+end
 
-export const enqueueImageGeneration = <T>(
-  policy: Pick<ImageRuntimePolicy, 'queueTier' | 'throttleDelayMs'>,
-  run: () => Promise<T>,
-  signal?: AbortSignal
-) =>
-  new Promise<T>((resolve, reject) => {
-    if (signal?.aborted) {
-      reject(new RequestCancelledError('Image generation cancelled by user.'));
-      return;
-    }
+redis.call('ZADD', key, now, reservationId)
+redis.call('PEXPIRE', key, maxWindow)
 
-    let settled = false;
-    let job: QueueJob<T>;
+local burstCount = -1
+local throttleDelay = 0
 
-    const cleanup = () => {
-      signal?.removeEventListener('abort', handleAbort);
-    };
+if burstWindow >= 0 then
+  burstCount = redis.call('ZCOUNT', key, now - burstWindow + 1, '+inf')
+end
 
-    const settleResolve = (value: T | PromiseLike<T>) => {
-      if (settled) {
-        return;
-      }
+if burstLimit >= 0 and burstCount > burstLimit then
+  throttleDelay = throttleAfterBurst
+end
 
-      settled = true;
-      cleanup();
-      resolve(value);
-    };
+local remaining = -1
 
-    const settleReject = (reason?: unknown) => {
-      if (settled) {
-        return;
-      }
+if requestsPerMinute >= 0 then
+  remaining = math.max(0, requestsPerMinute - minuteCount - 1)
+end
 
-      settled = true;
-      cleanup();
-      reject(reason);
-    };
+return {1, remaining, throttleDelay, burstCount, 0}
+`;
 
-    const removeQueuedJob = () => {
-      const bucket = queueBuckets[policy.queueTier];
-      const jobIndex = bucket.indexOf(job as QueueJob<any>);
+const RELEASE_RATE_LIMIT_SCRIPT = `
+local key = KEYS[1]
+local reservationId = ARGV[1]
 
-      if (jobIndex !== -1) {
-        bucket.splice(jobIndex, 1);
-      }
-    };
+redis.call('ZREM', key, reservationId)
 
-    const handleAbort = () => {
-      if (job.started) {
-        return;
-      }
+if redis.call('ZCARD', key) == 0 then
+  redis.call('DEL', key)
+end
 
-      removeQueuedJob();
-      settleReject(new RequestCancelledError('Image generation cancelled by user.'));
-    };
+return 1
+`;
 
-    job = {
-      queueTier: policy.queueTier,
-      throttleDelayMs: policy.throttleDelayMs,
-      signal,
-      started: false,
-      run,
-      resolve: settleResolve,
-      reject: settleReject,
-    };
-
-    signal?.addEventListener('abort', handleAbort, {
-      once: true,
-    });
-    queueBuckets[policy.queueTier].push(job);
-
-    pumpQueue();
-  });
+const getRateLimitKey = (userId: string) =>
+  buildRedisKey('rate-limit', 'image', userId);
 
 export const resolveImageRuntimePolicy = (
   plan: PlanType,
@@ -224,26 +153,7 @@ export const resolveImageRuntimePolicy = (
   };
 };
 
-type RateLimitWindowResult =
-  | {
-      allowed: true;
-      remaining: number | null;
-      throttleDelayMs: number;
-      burstRequestCount: number | null;
-      reservationTimestamp: number;
-    }
-  | {
-      allowed: false;
-      retryAfterSeconds: number;
-      remaining: 0;
-      throttleDelayMs: number;
-      burstRequestCount: number | null;
-    };
-
-const requestWindows = new Map<string, number[]>();
-const ONE_MINUTE_MS = 60_000;
-
-export const checkImageRateLimit = (
+export const checkImageRateLimit = async (
   userId: string,
   policy: Pick<
     ImageRuntimePolicy,
@@ -252,100 +162,64 @@ export const checkImageRateLimit = (
     | 'burstWindowMs'
     | 'throttleDelayMsAfterBurst'
   >
-): RateLimitWindowResult => {
+): Promise<RateLimitWindowResult> => {
   const now = Date.now();
-  const windowStart = now - ONE_MINUTE_MS;
-  const key = `image:${userId}`;
-  const maxWindowMs = Math.max(ONE_MINUTE_MS, policy.burstWindowMs ?? 0);
-  const activeRequests =
-    requestWindows.get(key)?.filter((timestamp) => timestamp > now - maxWindowMs) ?? [];
-  const activeMinuteRequests = activeRequests.filter(
-    (timestamp) => timestamp > windowStart
-  );
+  const reservationId = `${now}:${randomUUID()}`;
+  const requestsPerMinute = policy.requestsPerMinute ?? -1;
+  const burstLimit = policy.burstLimit ?? -1;
+  const burstWindowMs = policy.burstWindowMs ?? -1;
+  const maxWindowMs = Math.max(ONE_MINUTE_MS, burstWindowMs > 0 ? burstWindowMs : 0);
+  const rawResult = (await getRedisClient().eval(
+    RATE_LIMIT_SCRIPT,
+    1,
+    getRateLimitKey(userId),
+    String(now),
+    String(ONE_MINUTE_MS),
+    String(maxWindowMs),
+    String(requestsPerMinute),
+    String(burstWindowMs),
+    String(burstLimit),
+    String(policy.throttleDelayMsAfterBurst),
+    reservationId
+  )) as Array<number | string>;
 
-  if (
-    policy.requestsPerMinute !== null &&
-    activeMinuteRequests.length >= policy.requestsPerMinute
-  ) {
-    const oldestRequest = activeMinuteRequests[0];
-    const retryAfterSeconds = Math.max(
-      1,
-      Math.ceil((oldestRequest + ONE_MINUTE_MS - now) / 1000)
-    );
+  const allowed = Number(rawResult[0]) === 1;
+  const remaining = Number(rawResult[1]);
+  const throttleDelayMs = Number(rawResult[2]);
+  const burstRequestCount = Number(rawResult[3]);
+  const retryAfterSeconds = Number(rawResult[4]);
 
-    requestWindows.set(key, activeRequests);
-
+  if (!allowed) {
     return {
       allowed: false,
       retryAfterSeconds,
       remaining: 0,
       throttleDelayMs: 0,
-      burstRequestCount: policy.burstLimit === null ? null : activeRequests.length,
-    };
-  }
-
-  activeRequests.push(now);
-  requestWindows.set(key, activeRequests);
-
-  const burstRequestCount =
-    policy.burstWindowMs === null
-      ? null
-      : activeRequests.filter(
-          (timestamp) => timestamp > now - policy.burstWindowMs!
-        ).length;
-  const throttleDelayMs =
-    policy.burstLimit !== null &&
-    burstRequestCount !== null &&
-    burstRequestCount > policy.burstLimit
-      ? policy.throttleDelayMsAfterBurst
-      : 0;
-
-  if (policy.requestsPerMinute === null) {
-    return {
-      allowed: true,
-      remaining: null,
-      throttleDelayMs,
-      burstRequestCount,
-      reservationTimestamp: now,
+      burstRequestCount: burstRequestCount >= 0 ? burstRequestCount : null,
     };
   }
 
   return {
     allowed: true,
-    remaining: Math.max(0, policy.requestsPerMinute - activeMinuteRequests.length - 1),
+    remaining: remaining >= 0 ? remaining : null,
     throttleDelayMs,
-    burstRequestCount,
-    reservationTimestamp: now,
+    burstRequestCount: burstRequestCount >= 0 ? burstRequestCount : null,
+    reservationId,
   };
 };
 
-export const releaseImageRateLimitReservation = (
+export const releaseImageRateLimitReservation = async (
   userId: string,
-  reservationTimestamp: number | null | undefined
+  reservationId: string | null | undefined
 ) => {
-  if (!reservationTimestamp) {
+  if (!reservationId) {
     return;
   }
 
-  const key = `image:${userId}`;
-  const activeRequests = requestWindows.get(key);
-
-  if (!activeRequests?.length) {
-    return;
-  }
-
-  const reservationIndex = activeRequests.indexOf(reservationTimestamp);
-
-  if (reservationIndex === -1) {
-    return;
-  }
-
-  activeRequests.splice(reservationIndex, 1);
-
-  if (activeRequests.length) {
-    requestWindows.set(key, activeRequests);
-    return;
-  }
-
-  requestWindows.delete(key);
+  await getRedisClient().eval(
+    RELEASE_RATE_LIMIT_SCRIPT,
+    1,
+    getRateLimitKey(userId),
+    reservationId
+  );
 };

@@ -7,6 +7,18 @@ type AuthenticatedRequest = Request & {
   accessToken?: string;
 };
 
+const isUnverifiedEmailAuthUser = (user: User | null | undefined) => {
+  if (!user) {
+    return false;
+  }
+
+  const provider = ((user.app_metadata?.provider as string | undefined) ?? 'email')
+    .trim()
+    .toLowerCase();
+
+  return Boolean(user.email) && provider === 'email' && !user.email_confirmed_at;
+};
+
 export const authMiddleware = async (
   req: AuthenticatedRequest,
   res: Response,
@@ -42,6 +54,14 @@ export const authMiddleware = async (
       return res.status(401).json({
         status: 'fail',
         error: 'Invalid or expired token',
+      });
+    }
+
+    if (isUnverifiedEmailAuthUser(user)) {
+      return res.status(403).json({
+        status: 'fail',
+        error: 'Email verification required',
+        message: 'Verify your email code first, then come back and unlock the workspace.',
       });
     }
 

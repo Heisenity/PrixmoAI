@@ -200,6 +200,19 @@ export interface UploadedSourceImage {
   contentType: string;
 }
 
+export interface AudioTranscriptionSegment {
+  start: number | null;
+  end: number | null;
+  text: string;
+}
+
+export interface AudioTranscriptionResult {
+  transcript: string;
+  detectedLanguage: string | null;
+  durationSeconds: number | null;
+  segments: AudioTranscriptionSegment[];
+}
+
 export interface MediaAsset {
   id: string;
   userId: string;

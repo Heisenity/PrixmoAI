@@ -2,12 +2,10 @@ import { Request, Response } from 'express';
 import type { User } from '@supabase/supabase-js';
 import {
   ContentGenerationProvidersExhaustedError,
-  generateContentPackWithFallback,
   hasMeaningfulReelScript,
 } from '../ai/gemini';
 import {
   ImageGenerationProvidersExhaustedError,
-  generateProductImage,
 } from '../ai/imageGen';
 import { FEATURE_KEYS } from '../config/constants';
 import { getBrandProfileByUserId } from '../db/queries/brandProfiles';
@@ -40,7 +38,6 @@ import type {
   UpdateGenerateConversationInput,
 } from '../schemas/generateWorkspace.schema';
 import {
-  enqueueImageGeneration,
   releaseImageRateLimitReservation,
   resolveImageRuntimePolicy,
 } from '../services/imageRuntimePolicy.service';
@@ -54,6 +51,14 @@ import {
   isRequestCancelledError,
   throwIfRequestCancelled,
 } from '../lib/requestCancellation';
+import { buildGeneratedContentFilePayload } from '../lib/generatedAssetPayloads';
+import {
+  storeGeneratedContentInR2,
+  storeGeneratedImageInR2,
+} from '../services/r2Storage.service';
+import { enqueueContentGenerationJob } from '../services/contentGenerationQueue.service';
+import { enqueueImageGenerationJob } from '../services/imageGenerationQueue.service';
+import { invalidateAnalyticsRuntimeCache } from '../services/runtimeCache.service';
 
 type AuthenticatedRequest<
   Params = Record<string, string>,
@@ -64,7 +69,7 @@ type AuthenticatedRequest<
   user?: User;
   accessToken?: string;
   imageRuntimePolicy?: ReturnType<typeof resolveImageRuntimePolicy>;
-  imageRateLimitReservation?: number;
+  imageRateLimitReservation?: string;
 };
 
 const trimText = (value: string, maxLength = 120) => {
@@ -454,13 +459,17 @@ export const generateWorkspaceCopy = async (
     );
     const includeReelScript =
       reelScriptLimit === null || reelScriptUsageCount < reelScriptLimit;
-    const { contentPack, provider } = await generateContentPackWithFallback(
-      brandProfile,
-      generationInput,
+    const {
+      jobId,
+      result: { contentPack, provider },
+    } = await enqueueContentGenerationJob(
       {
+        userId: req.user.id,
+        brandProfile,
+        input: generationInput,
         includeReelScript,
-        signal: cancellation.signal,
-      }
+      },
+      cancellation.signal
     );
     const hasReelScript = hasMeaningfulReelScript(contentPack.reelScript);
     const userPromptSummary = buildCopyPromptSummary(generationInput);
@@ -485,10 +494,30 @@ export const generateWorkspaceCopy = async (
       cancellation.signal,
       'Content generation cancelled by user.'
     );
+    const storedContentAsset = await storeGeneratedContentInR2({
+      userId: req.user.id,
+      productName: generationInput.productName,
+      payload: buildGeneratedContentFilePayload({
+        userId: req.user.id,
+        provider,
+        brandProfileId: brandProfile?.id ?? null,
+        conversationId: conversation.id,
+        productInput: generationInput,
+        contentPack,
+        reelScriptIncluded: hasReelScript,
+      }),
+      signal: cancellation.signal,
+    });
     const content = await saveGeneratedContent(client, req.user.id, {
       ...generationInput,
       conversationId: conversation.id,
       brandProfileId: brandProfile?.id ?? null,
+      storageProvider: storedContentAsset?.provider ?? null,
+      storageBucket: storedContentAsset?.bucket ?? null,
+      storageObjectKey: storedContentAsset?.objectKey ?? null,
+      storagePublicUrl: storedContentAsset?.publicUrl ?? null,
+      storageContentType: storedContentAsset?.contentType ?? null,
+      storageSizeBytes: storedContentAsset?.sizeBytes ?? null,
       ...contentPack,
     });
 
@@ -598,6 +627,7 @@ export const generateWorkspaceCopy = async (
         productName: generationInput.productName,
       }, `reel-script-generation:${content.id}`);
     }
+    await invalidateAnalyticsRuntimeCache(req.user.id);
 
     const thread = await getGenerateConversationThread(
       client,
@@ -617,6 +647,9 @@ export const generateWorkspaceCopy = async (
       status: 'success',
       message: 'Content generated successfully',
       data: thread,
+      meta: {
+        jobId,
+      },
     });
   } catch (error) {
     if (isRequestCancelledError(error)) {
@@ -676,12 +709,15 @@ export const generateWorkspaceImage = async (
     };
     const runtimePolicy =
       req.imageRuntimePolicy ?? resolveImageRuntimePolicy('free', 0);
-    const result = await enqueueImageGeneration(
-      runtimePolicy,
-      () =>
-        generateProductImage(brandProfile, generationInput, {
-          signal: cancellation.signal,
-        }),
+    const { jobId, result } = await enqueueImageGenerationJob(
+      {
+        runtimePolicy,
+        data: {
+          userId: req.user.id,
+          brandProfile,
+          input: generationInput,
+        },
+      },
       cancellation.signal
     );
     const userPromptSummary = buildImagePromptSummary(generationInput);
@@ -689,6 +725,12 @@ export const generateWorkspaceImage = async (
       cancellation.signal,
       'Image generation cancelled by user.'
     );
+    const storedImageAsset = await storeGeneratedImageInR2({
+      userId: req.user.id,
+      productName: generationInput.productName,
+      imageUrl: result.imageUrl,
+      signal: cancellation.signal,
+    });
 
     const conversation: GenerateConversation =
       existingConversation ??
@@ -710,9 +752,15 @@ export const generateWorkspaceImage = async (
       contentId: generationInput.contentId ?? null,
       conversationId: conversation.id,
       sourceImageUrl: generationInput.sourceImageUrl ?? null,
-      generatedImageUrl: result.imageUrl,
+      generatedImageUrl: storedImageAsset?.publicUrl ?? result.imageUrl,
       backgroundStyle: generationInput.backgroundStyle ?? null,
       prompt: result.promptUsed,
+      storageProvider: storedImageAsset?.provider ?? null,
+      storageBucket: storedImageAsset?.bucket ?? null,
+      storageObjectKey: storedImageAsset?.objectKey ?? null,
+      storagePublicUrl: storedImageAsset?.publicUrl ?? null,
+      storageContentType: storedImageAsset?.contentType ?? null,
+      storageSizeBytes: storedImageAsset?.sizeBytes ?? null,
     });
 
     throwIfRequestCancelled(
@@ -797,6 +845,7 @@ export const generateWorkspaceImage = async (
       throttleDelayMs: runtimePolicy.throttleDelayMs,
       dailyUsageCountBeforeRequest: runtimePolicy.usageCount,
     }, `image-generation:${image.id}`);
+    await invalidateAnalyticsRuntimeCache(req.user.id);
 
     res.setHeader('X-PrixmoAI-Queue-Tier', runtimePolicy.queueTier);
     res.setHeader('X-PrixmoAI-Speed-Tier', runtimePolicy.speedTier);
@@ -823,12 +872,13 @@ export const generateWorkspaceImage = async (
       message: `Image generated successfully using ${result.provider}`,
       data: thread,
       meta: {
+        jobId,
         runtime: runtimePolicy,
       },
     });
   } catch (error) {
     if (isRequestCancelledError(error)) {
-      releaseImageRateLimitReservation(
+      await releaseImageRateLimitReservation(
         req.user?.id ?? '',
         req.imageRateLimitReservation
       );

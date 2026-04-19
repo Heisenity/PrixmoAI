@@ -58,18 +58,25 @@ export const BillingPage = () => {
   const activePlan = subscription?.plan || catalog?.currentSubscription.plan || 'free';
   const planDetails = PLAN_DASHBOARD_DETAILS[activePlan];
   const resolvedSubscription = subscription || catalog?.currentSubscription;
-  const hasUsageOverview = Boolean(overview);
-  const contentUsage = getUsageSnapshot(
-    overview?.generation.contentGenerationsToday ?? 0,
-    planDetails.contentLimit
-  );
-  const imageUsage = getUsageSnapshot(
-    overview?.generation.imageGenerationsToday ?? 0,
-    planDetails.imageLimit
-  );
+  const generationOverview = overview?.generation ?? null;
+  const hasUsageOverview = Boolean(generationOverview);
+  const contentGenerationsToday = generationOverview?.contentGenerationsToday ?? null;
+  const imageGenerationsToday = generationOverview?.imageGenerationsToday ?? null;
+  const contentUsage = contentGenerationsToday !== null
+    ? getUsageSnapshot(
+        contentGenerationsToday,
+        planDetails.contentLimit
+      )
+    : null;
+  const imageUsage = imageGenerationsToday !== null
+    ? getUsageSnapshot(
+        imageGenerationsToday,
+        planDetails.imageLimit
+      )
+    : null;
   const percentCandidates = [
-    contentUsage.percentLeft,
-    imageUsage.percentLeft,
+    contentUsage?.percentLeft ?? null,
+    imageUsage?.percentLeft ?? null,
   ].filter((value): value is number => value !== null);
   const overallPercentLeft =
     hasUsageOverview && percentCandidates.length > 0
@@ -92,16 +99,23 @@ export const BillingPage = () => {
     ? 'Loading today’s allowance...'
     : !hasUsageOverview
       ? 'Waiting for the latest usage snapshot...'
-    : [
-        contentUsage.remaining === null
+      : [
+        contentUsage?.remaining === null
           ? 'Unlimited content left'
-          : `${formatCompactNumber(contentUsage.remaining)} content left`,
-        imageUsage.remaining === null
+          : `${formatCompactNumber(contentUsage?.remaining ?? 0)} content left`,
+        imageUsage?.remaining === null
           ? 'Unlimited images left'
-          : `${formatCompactNumber(imageUsage.remaining)} images left`,
+          : `${formatCompactNumber(imageUsage?.remaining ?? 0)} images left`,
       ].join(' • ');
-  const allowancePercent = overallPercentLeft ?? 0;
-  const allowanceTone = getAllowanceTone(allowancePercent);
+  const allowancePercent = overallPercentLeft ?? 58;
+  const allowanceTone =
+    overallPercentLeft === null
+      ? {
+          tone: '#83d8ff',
+          toneSoft: 'rgba(131, 216, 255, 0.24)',
+          border: 'rgba(131, 216, 255, 0.28)',
+        }
+      : getAllowanceTone(allowancePercent);
   const allowanceBadgeStyle = {
     '--billing-allowance-fill': `${Math.max(0, Math.min(100, allowancePercent))}%`,
     '--billing-allowance-tone': allowanceTone.tone,
@@ -144,7 +158,9 @@ export const BillingPage = () => {
                 <small>{remainingSummary}</small>
               </div>
               <div
-                className="billing-allowance-badge"
+                className={`billing-allowance-badge ${
+                  !hasUsageOverview ? 'billing-allowance-badge--pending' : ''
+                }`}
                 style={allowanceBadgeStyle}
                 aria-label="Daily allowance remaining"
               >

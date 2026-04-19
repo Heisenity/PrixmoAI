@@ -58,9 +58,10 @@ export const Sidebar = ({ collapsed, onToggleCollapse }: SidebarProps) => {
   const usageSummary = getOverallUsageSummary({
     contentLimit: planDetails.contentLimit,
     imageLimit: planDetails.imageLimit,
-    contentUsed: overview?.generation.contentGenerationsToday ?? 0,
-    imageUsed: overview?.generation.imageGenerationsToday ?? 0,
+    contentUsed: overview?.generation.contentGenerationsToday ?? null,
+    imageUsed: overview?.generation.imageGenerationsToday ?? null,
     isLoading: isUsageLoading,
+    hasUsageData: Boolean(overview),
     usageWindowLabel: planDetails.usageWindowLabel,
   });
 

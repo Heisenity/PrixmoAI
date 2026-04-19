@@ -31,6 +31,7 @@ import { buttonClassName } from '../../components/ui/button';
 import { Card } from '../../components/ui/card';
 import { useAuth } from '../../hooks/useAuth';
 import { APP_NAME } from '../../lib/constants';
+import { getPlayfulErrorMessage } from '../../lib/errorTone';
 import { cn } from '../../lib/utils';
 
 type OAuthProvider = 'google' | 'github' | 'facebook';
@@ -573,7 +574,7 @@ export const HomePage = () => {
 
               {authError ? (
                 <p className={cn('landing-auth-panel__note', 'landing-auth-panel__note--error')}>
-                  {authError}
+                  {getPlayfulErrorMessage(authError)}
                 </p>
               ) : null}
             </div>

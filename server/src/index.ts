@@ -9,12 +9,22 @@ import billingRouter from "./routes/billing.routes";
 import contentRouter from "./routes/content.routes";
 import generateRouter from "./routes/generate.routes";
 import imageRouter from "./routes/image.routes";
+import runtimeRouter from "./routes/runtime.routes";
 import schedulerRouter from "./routes/scheduler.routes";
-import { APP_PORT } from "./config/constants";
+import {
+  APP_PORT,
+  LOW_REDIS_COMMAND_MODE,
+  START_BACKGROUND_WORKERS_ON_BOOT,
+  START_GENERATION_WORKERS_ON_BOOT,
+  isMetaOAuthConfigured,
+} from "./config/constants";
 import { startAnalyticsSyncWorker } from './services/analyticsSync.service';
+import { startContentGenerationWorker } from './services/contentGenerationQueue.service';
+import { startImageGenerationWorker } from './services/imageGenerationQueue.service';
 import { startSchedulerPublisherWorker } from './services/schedulerPublisher.service';
 import { formatIstTimestamp } from './lib/timezone';
 import { version } from '../package.json';
+import { isRedisConfigured } from './lib/redis';
 
 
 const app = express();
@@ -54,6 +64,7 @@ app.use('/api/billing', billingRouter);
 app.use('/api/content', contentRouter);
 app.use('/api/generate', generateRouter);
 app.use('/api/images', imageRouter);
+app.use('/api/runtime', runtimeRouter);
 app.use('/api/scheduler', schedulerRouter);
 
 app.use((req, _res, next) => {
@@ -73,6 +84,34 @@ app.use(errorHandler);
 app.listen(PORT, () => {
   console.log(`🚀 [${formatIstTimestamp()}] Server running at http://localhost:${PORT}`);
   console.log(`✅ [${formatIstTimestamp()}] Check health at http://localhost:${PORT}/health`);
-  startSchedulerPublisherWorker();
-  startAnalyticsSyncWorker();
+  if (START_GENERATION_WORKERS_ON_BOOT) {
+    startContentGenerationWorker();
+    startImageGenerationWorker();
+  }
+  if (START_BACKGROUND_WORKERS_ON_BOOT) {
+    startSchedulerPublisherWorker();
+    startAnalyticsSyncWorker();
+  }
+  if (!isRedisConfigured) {
+    console.warn(
+      '[runtime] Redis-backed queues are disabled because REDIS_URL is missing.'
+    );
+  } else {
+    console.log(
+      `[runtime] Redis is configured. Low-command mode is ${
+        LOW_REDIS_COMMAND_MODE ? 'on' : 'off'
+      }.`
+    );
+    if (!START_GENERATION_WORKERS_ON_BOOT) {
+      console.log('[runtime] Generation workers will wake only when jobs are submitted.');
+    }
+    if (!START_BACKGROUND_WORKERS_ON_BOOT) {
+      console.log('[runtime] Background workers will wake only when app actions enqueue work.');
+    }
+  }
+  if (!isMetaOAuthConfigured) {
+    console.warn(
+      '[runtime] Meta-dependent background jobs are idle until Meta OAuth credentials are configured.'
+    );
+  }
 });

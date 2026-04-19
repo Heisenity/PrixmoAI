@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { apiRequest } from '../lib/axios';
+import {
+  isBrowserCacheFresh,
+  readBrowserCache,
+  writeBrowserCache,
+} from '../lib/browserCache';
 import { useAuth } from './useAuth';
 import type { AnalyticsDashboard, AnalyticsPlatformScope } from '../types';
 
@@ -13,8 +18,16 @@ type AnalyticsDashboardFilters = {
 const buildDashboardCacheKey = (filters: AnalyticsDashboardFilters) =>
   [filters.preset, filters.platform, filters.start || '', filters.end || ''].join('::');
 
+const ANALYTICS_DASHBOARD_CACHE_KEY_PREFIX = 'prixmoai.analytics.dashboard';
+const ANALYTICS_DASHBOARD_CACHE_TTL_MS = 2 * 60_000;
+
+const buildStoredDashboardCacheKey = (
+  userId: string,
+  filters: AnalyticsDashboardFilters
+) => `${ANALYTICS_DASHBOARD_CACHE_KEY_PREFIX}:${userId}:${buildDashboardCacheKey(filters)}`;
+
 export const useAnalyticsDashboard = (filters: AnalyticsDashboardFilters) => {
-  const { token } = useAuth();
+  const { token, user } = useAuth();
   const [dashboard, setDashboard] = useState<AnalyticsDashboard | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -53,6 +66,13 @@ export const useAnalyticsDashboard = (filters: AnalyticsDashboardFilters) => {
 
       cacheRef.current[buildDashboardCacheKey(nextFilters)] = nextDashboard;
 
+      if (user?.id) {
+        writeBrowserCache(
+          buildStoredDashboardCacheKey(user.id, nextFilters),
+          nextDashboard
+        );
+      }
+
       if (options?.setAsCurrent !== false) {
         setDashboard(nextDashboard);
         setLastUpdatedTime(new Date().toISOString());
@@ -61,13 +81,36 @@ export const useAnalyticsDashboard = (filters: AnalyticsDashboardFilters) => {
 
       return nextDashboard;
     },
-    [resolveFilters, token]
+    [resolveFilters, token, user?.id]
+  );
+
+  const getCachedDashboardEntry = useCallback(
+    (overrides?: Partial<AnalyticsDashboardFilters>) => {
+      const nextFilters = resolveFilters(overrides);
+      const memoryValue = cacheRef.current[buildDashboardCacheKey(nextFilters)];
+
+      if (memoryValue) {
+        return {
+          value: memoryValue,
+          cachedAt: new Date().toISOString(),
+        };
+      }
+
+      if (!user?.id) {
+        return null;
+      }
+
+      return readBrowserCache<AnalyticsDashboard>(
+        buildStoredDashboardCacheKey(user.id, nextFilters)
+      );
+    },
+    [resolveFilters, user?.id]
   );
 
   const getCachedDashboard = useCallback(
     (overrides?: Partial<AnalyticsDashboardFilters>) =>
-      cacheRef.current[buildDashboardCacheKey(resolveFilters(overrides))] ?? null,
-    [resolveFilters]
+      getCachedDashboardEntry(overrides)?.value ?? null,
+    [getCachedDashboardEntry]
   );
 
   const previewDashboard = useCallback(
@@ -83,11 +126,24 @@ export const useAnalyticsDashboard = (filters: AnalyticsDashboardFilters) => {
       }
 
       const isManualRefresh = Boolean(options?.sync);
+      const cachedEntry = getCachedDashboardEntry();
+
+      if (
+        !isManualRefresh &&
+        cachedEntry?.cachedAt &&
+        isBrowserCacheFresh(cachedEntry.cachedAt, ANALYTICS_DASHBOARD_CACHE_TTL_MS)
+      ) {
+        setDashboard(cachedEntry.value);
+        setError(null);
+        return;
+      }
 
       if (isManualRefresh) {
         setIsRefreshing(true);
-      } else {
+      } else if (!cachedEntry?.value) {
         setIsLoading(true);
+      } else {
+        setDashboard(cachedEntry.value);
       }
 
       try {
@@ -121,7 +177,7 @@ export const useAnalyticsDashboard = (filters: AnalyticsDashboardFilters) => {
         }
       }
     },
-    [fetchDashboard, token]
+    [fetchDashboard, getCachedDashboardEntry, token]
   );
 
   useEffect(() => {
@@ -131,17 +187,24 @@ export const useAnalyticsDashboard = (filters: AnalyticsDashboardFilters) => {
       return;
     }
 
-    const cachedDashboard = getCachedDashboard();
+    const cachedEntry = getCachedDashboardEntry();
+    const cachedDashboard = cachedEntry?.value ?? null;
 
     if (cachedDashboard) {
       setDashboard(cachedDashboard);
       setError(null);
-      return;
+
+      if (
+        cachedEntry?.cachedAt &&
+        isBrowserCacheFresh(cachedEntry.cachedAt, ANALYTICS_DASHBOARD_CACHE_TTL_MS)
+      ) {
+        return;
+      }
     }
 
     let isCancelled = false;
 
-    setIsLoading(true);
+    setIsLoading(!cachedDashboard);
 
     void fetchDashboard()
       .catch((dashboardError) => {
@@ -164,7 +227,7 @@ export const useAnalyticsDashboard = (filters: AnalyticsDashboardFilters) => {
     return () => {
       isCancelled = true;
     };
-  }, [fetchDashboard, getCachedDashboard, token]);
+  }, [fetchDashboard, getCachedDashboardEntry, token]);
 
   const displayedLastUpdatedTime = useMemo(
     () => lastUpdatedTime ?? dashboard?.lastUpdatedAt ?? null,

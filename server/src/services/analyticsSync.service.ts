@@ -1,11 +1,12 @@
 import {
-  ANALYTICS_SYNC_BATCH_SIZE,
+  ANALYTICS_WORKER_IDLE_SHUTDOWN_MS,
+  ANALYTICS_SYNC_JOB_CONCURRENCY,
   ANALYTICS_SYNC_LOOKBACK_DAYS,
-  ANALYTICS_SYNC_POLL_MS,
   META_GRAPH_VERSION,
   META_OAUTH_DEBUG,
   isMetaOAuthConfigured,
 } from '../config/constants';
+import { Queue, Worker } from 'bullmq';
 import {
   saveAnalyticsAudienceSnapshot,
   saveAnalyticsData,
@@ -21,6 +22,10 @@ import type {
   CreateAnalyticsInput,
   SchedulerMediaType,
 } from '../types';
+import { getBullMqConfig, isRedisConfigured } from '../lib/redis';
+import { QUEUE_NAMES } from '../queues/queueNames';
+import { getLowCommandWorkerOptions } from '../queues/workerOptions';
+import { invalidateAnalyticsRuntimeCache } from './runtimeCache.service';
 
 type SyncSocialAccountRow = {
   id: string;
@@ -124,8 +129,16 @@ const GRAPH_BASE_URL = `https://graph.facebook.com/${META_GRAPH_VERSION}`;
 const INSTAGRAM_GRAPH_BASE_URL = 'https://graph.instagram.com';
 const SYNC_DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'] as const;
 
-let syncHandle: NodeJS.Timeout | null = null;
-let isSyncTickRunning = false;
+type AnalyticsSyncUserJobData = {
+  userId: string;
+  lookbackDays?: number;
+  postIds?: string[];
+  socialAccountIds?: string[];
+};
+
+let analyticsSyncUserQueue: Queue<AnalyticsSyncUserJobData> | null = null;
+let analyticsSyncUserWorker: Worker<AnalyticsSyncUserJobData> | null = null;
+let analyticsSyncWorkerIdleTimer: NodeJS.Timeout | null = null;
 
 const inferMediaTypeFromUrl = (
   value: string | null | undefined
@@ -1330,74 +1343,126 @@ export const syncAnalyticsForUser = async (
     }
   }
 
+  await invalidateAnalyticsRuntimeCache(userId);
+
   return summary;
 };
 
-const tickAnalyticsSyncWorker = async () => {
-  if (isSyncTickRunning || !isSupabaseAdminConfigured) {
+const getAnalyticsSyncUserQueue = () => {
+  if (!analyticsSyncUserQueue) {
+    analyticsSyncUserQueue = new Queue<AnalyticsSyncUserJobData>(
+      QUEUE_NAMES.analyticsSyncUser,
+      getBullMqConfig('prixmoai:queue:analytics-user')
+    );
+  }
+
+  return analyticsSyncUserQueue;
+};
+
+const clearAnalyticsSyncWorkerIdleTimer = () => {
+  if (!analyticsSyncWorkerIdleTimer) {
     return;
   }
 
-  isSyncTickRunning = true;
+  clearTimeout(analyticsSyncWorkerIdleTimer);
+  analyticsSyncWorkerIdleTimer = null;
+};
 
-  try {
-    const client = requireSupabaseAdmin();
-    const publishedSince = new Date(
-      Date.now() - ANALYTICS_SYNC_LOOKBACK_DAYS * 24 * 60 * 60 * 1000
-    ).toISOString();
-    const { data, error } = await client
-      .from('scheduled_posts')
-      .select('user_id')
-      .eq('status', 'published')
-      .gte('published_at', publishedSince)
-      .order('published_at', { ascending: false })
-      .limit(ANALYTICS_SYNC_BATCH_SIZE * 8);
-
-    if (error) {
-      throw new Error(error.message || 'Failed to load users for analytics sync');
-    }
-
-    const userIds = [
-      ...new Set(
-        (data ?? [])
-          .map((row) => toRecord(row).user_id)
-          .filter((value): value is string => typeof value === 'string')
-      ),
-    ].slice(0, ANALYTICS_SYNC_BATCH_SIZE);
-
-    for (const userId of userIds) {
-      try {
-        await syncAnalyticsForUser(client, userId);
-      } catch (error) {
-        console.error(
-          `[analytics-sync] ${userId}: ${
-            error instanceof Error ? error.message : 'Worker sync failed.'
-          }`
-        );
-      }
-    }
-  } catch (error) {
-    console.error(
-      `[analytics-sync] ${
-        error instanceof Error ? error.message : 'Worker tick failed.'
-      }`
-    );
-  } finally {
-    isSyncTickRunning = false;
+const scheduleAnalyticsSyncWorkerIdleShutdown = () => {
+  if (ANALYTICS_WORKER_IDLE_SHUTDOWN_MS <= 0 || !analyticsSyncUserWorker) {
+    return;
   }
+
+  clearAnalyticsSyncWorkerIdleTimer();
+  const workerToClose = analyticsSyncUserWorker;
+
+  analyticsSyncWorkerIdleTimer = setTimeout(() => {
+    if (analyticsSyncUserWorker !== workerToClose) {
+      return;
+    }
+
+    analyticsSyncUserWorker = null;
+    void workerToClose.close().catch((error) => {
+      console.error(
+        `[analytics-sync] ${
+          error instanceof Error
+            ? error.message
+            : 'Failed to close idle analytics sync worker.'
+        }`
+      );
+    });
+  }, ANALYTICS_WORKER_IDLE_SHUTDOWN_MS);
+  analyticsSyncWorkerIdleTimer.unref?.();
+};
+
+export const enqueueAnalyticsSyncJob = async (
+  data: AnalyticsSyncUserJobData
+) => {
+  if (!isRedisConfigured) {
+    throw new Error(
+      'Redis is not configured. Set REDIS_URL (or UPSTASH_REDIS_URL) before starting analytics sync jobs.'
+    );
+  }
+
+  await getAnalyticsSyncUserQueue().add(
+    'sync-user',
+    data,
+    {
+      jobId: [
+        'analytics',
+        data.userId,
+        data.postIds?.join(',') || 'all-posts',
+        data.socialAccountIds?.join(',') || 'all-accounts',
+      ].join('-'),
+      removeOnComplete: true,
+      removeOnFail: {
+        age: 60 * 60,
+        count: 100,
+      },
+      attempts: 3,
+      backoff: {
+        type: 'exponential',
+        delay: 5_000,
+      },
+    }
+  );
+
+  startAnalyticsSyncWorker();
 };
 
 export const startAnalyticsSyncWorker = () => {
-  if (syncHandle || !isSupabaseAdminConfigured || !isMetaOAuthConfigured) {
+  if (
+    !isSupabaseAdminConfigured ||
+    !isMetaOAuthConfigured ||
+    !isRedisConfigured
+  ) {
     return;
   }
 
-  syncHandle = setInterval(() => {
-    void tickAnalyticsSyncWorker();
-  }, ANALYTICS_SYNC_POLL_MS);
+  if (analyticsSyncUserWorker) {
+    clearAnalyticsSyncWorkerIdleTimer();
+    return;
+  }
 
-  void tickAnalyticsSyncWorker();
-  console.log(
-    `[analytics-sync] Worker started. Polling every ${ANALYTICS_SYNC_POLL_MS}ms.`
+  analyticsSyncUserWorker = new Worker<AnalyticsSyncUserJobData>(
+    QUEUE_NAMES.analyticsSyncUser,
+    async (job) => {
+      const client = requireSupabaseAdmin();
+      return syncAnalyticsForUser(client, job.data.userId, {
+        lookbackDays: job.data.lookbackDays,
+        postIds: job.data.postIds,
+        socialAccountIds: job.data.socialAccountIds,
+      });
+    },
+    {
+      ...getBullMqConfig('prixmoai:worker:analytics-user'),
+      ...getLowCommandWorkerOptions(),
+      concurrency: ANALYTICS_SYNC_JOB_CONCURRENCY,
+    }
   );
+
+  analyticsSyncUserWorker.on('active', clearAnalyticsSyncWorkerIdleTimer);
+  analyticsSyncUserWorker.on('drained', scheduleAnalyticsSyncWorkerIdleShutdown);
+
+  console.log('[analytics-sync] Worker started. Waiting for sync jobs.');
 };

@@ -8,20 +8,25 @@ export const UsageMeter = ({
   limitLabel,
 }: {
   label: string;
-  value: number;
+  value: number | null;
   limit: number | null;
   limitLabel?: string;
 }) => {
-  const ratio = limit ? Math.min(100, (value / limit) * 100) : Math.min(100, value > 0 ? 16 : 10);
+  const hasValue = value !== null;
+  const ratio = !hasValue
+    ? 0
+    : limit
+      ? Math.min(100, (value / limit) * 100)
+      : Math.min(100, value > 0 ? 16 : 10);
   const resolvedLimitLabel =
     limitLabel ?? (limit !== null ? formatCompactNumber(limit) : null);
 
   return (
-    <Card className="usage-meter">
+    <Card className={`usage-meter ${!hasValue ? 'usage-meter--pending' : ''}`}>
       <div className="usage-meter__header">
         <span>{label}</span>
         <strong>
-          {formatCompactNumber(value)}
+          {hasValue ? formatCompactNumber(value) : '—'}
           {resolvedLimitLabel ? ` / ${resolvedLimitLabel}` : ''}
         </strong>
       </div>

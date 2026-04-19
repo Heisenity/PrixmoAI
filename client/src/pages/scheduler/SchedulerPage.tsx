@@ -51,6 +51,10 @@ import {
   writeSchedulerGeneratedMediaIntent,
 } from '../../lib/schedulerGeneratedMedia';
 import {
+  getPlayfulErrorMessage,
+  getPlayfulErrorTitle,
+} from '../../lib/errorTone';
+import {
   toDisplayDateTimeLocalValue,
   toIsoStringFromDisplayDateTimeLocalValue,
 } from '../../lib/timezone';
@@ -2393,8 +2397,16 @@ export const SchedulerPage = () => {
                 )}
               </div>
               <div className="scheduler-toast__copy">
-                <strong>{toast.title}</strong>
-                <span>{toast.message}</span>
+                <strong>
+                  {toast.type === 'error'
+                    ? getPlayfulErrorTitle(toast.title, toast.message)
+                    : toast.title}
+                </strong>
+                <span>
+                  {toast.type === 'error'
+                    ? getPlayfulErrorMessage(toast.message)
+                    : toast.message}
+                </span>
               </div>
               <button
                 type="button"
@@ -3008,7 +3020,9 @@ export const SchedulerPage = () => {
 
           <div className="field field--full">
             {!composerError && plannerValidationMessage ? (
-              <p className="scheduler-bulk-builder__validation">{plannerValidationMessage}</p>
+              <p className="scheduler-bulk-builder__validation">
+                {getPlayfulErrorMessage(plannerValidationMessage)}
+              </p>
             ) : null}
             <div className="scheduler-bulk-builder__footer">
               <Button
@@ -3158,8 +3172,8 @@ export const SchedulerPage = () => {
               </div>
             ) : draftBatchesError ? (
               <div className="scheduler-channel-empty scheduler-channel-empty--compact">
-                <h3>Couldn’t load drafts</h3>
-                <p>{draftBatchesError}</p>
+                <h3>{getPlayfulErrorTitle('Couldn’t load drafts', draftBatchesError)}</h3>
+                <p>{getPlayfulErrorMessage(draftBatchesError)}</p>
               </div>
             ) : draftBatches.length ? (
               <div className="scheduler-drafts-list">

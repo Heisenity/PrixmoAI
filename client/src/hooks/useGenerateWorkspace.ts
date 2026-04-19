@@ -1,6 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { apiRequest } from '../lib/axios';
 import {
+  isBrowserCacheFresh,
+  readBrowserCache,
+  writeBrowserCache,
+} from '../lib/browserCache';
+import {
   readActiveGenerateConversationId,
   setActiveGenerateConversationId,
 } from '../lib/generateWorkspace';
@@ -37,13 +42,39 @@ const readFileAsDataUrl = (file: File): Promise<string> =>
     reader.readAsDataURL(file);
   });
 
+type GenerateWorkspaceCache = {
+  conversations: GenerateConversation[];
+  threads: Record<string, GenerateConversationThread>;
+};
+
+const GENERATE_WORKSPACE_CACHE_KEY_PREFIX = 'prixmoai.generate.workspace';
+const GENERATE_WORKSPACE_CACHE_TTL_MS = 60_000;
+
+const buildGenerateWorkspaceCacheKey = (userId: string) =>
+  `${GENERATE_WORKSPACE_CACHE_KEY_PREFIX}:${userId}`;
+
+const readGenerateWorkspaceCache = (userId: string) =>
+  readBrowserCache<GenerateWorkspaceCache>(buildGenerateWorkspaceCacheKey(userId));
+
+const writeGenerateWorkspaceCache = (
+  userId: string | null | undefined,
+  value: GenerateWorkspaceCache
+) => {
+  if (!userId) {
+    return;
+  }
+
+  writeBrowserCache(buildGenerateWorkspaceCacheKey(userId), value);
+};
+
 export const useGenerateWorkspace = () => {
-  const { token } = useAuth();
+  const { token, user } = useAuth();
   const copyGenerationControllerRef = useRef<AbortController | null>(null);
   const imageGenerationControllerRef = useRef<AbortController | null>(null);
+  const lastUserIdRef = useRef<string | null>(user?.id ?? null);
   const [conversations, setConversations] = useState<GenerateConversation[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<string | null>(
-    () => readActiveGenerateConversationId()
+    () => readActiveGenerateConversationId(user?.id)
   );
   const [activeThread, setActiveThread] = useState<GenerateConversationThread | null>(
     null
@@ -55,13 +86,18 @@ export const useGenerateWorkspace = () => {
   const [isUploadingSource, setIsUploadingSource] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const refreshConversations = async (preferredConversationId?: string | null) => {
+  const refreshConversations = async (
+    preferredConversationId?: string | null,
+    options?: { silent?: boolean }
+  ) => {
     if (!token) {
       setConversations([]);
       return [];
     }
 
-    setIsLoadingConversations(true);
+    if (!options?.silent) {
+      setIsLoadingConversations(true);
+    }
 
     try {
       const nextConversations = await apiRequest<GenerateConversation[]>(
@@ -69,6 +105,15 @@ export const useGenerateWorkspace = () => {
         { token }
       );
       setConversations(nextConversations);
+      const userId = user?.id ?? lastUserIdRef.current;
+
+      if (userId) {
+        const cached = readGenerateWorkspaceCache(userId)?.value;
+        writeGenerateWorkspaceCache(userId, {
+          conversations: nextConversations,
+          threads: cached?.threads ?? {},
+        });
+      }
 
       const nextActiveConversationId =
         preferredConversationId !== undefined
@@ -82,7 +127,7 @@ export const useGenerateWorkspace = () => {
         )
       ) {
         setActiveConversationId(null);
-        setActiveGenerateConversationId(null);
+        setActiveGenerateConversationId(null, user?.id ?? lastUserIdRef.current);
       }
 
       return nextConversations;
@@ -94,16 +139,23 @@ export const useGenerateWorkspace = () => {
       );
       return [];
     } finally {
-      setIsLoadingConversations(false);
+      if (!options?.silent) {
+        setIsLoadingConversations(false);
+      }
     }
   };
 
-  const refreshThread = async (conversationId: string) => {
+  const refreshThread = async (
+    conversationId: string,
+    options?: { silent?: boolean }
+  ) => {
     if (!token) {
       return null;
     }
 
-    setIsLoadingThread(true);
+    if (!options?.silent) {
+      setIsLoadingThread(true);
+    }
 
     try {
       const nextThread = await apiRequest<GenerateConversationThread>(
@@ -111,6 +163,18 @@ export const useGenerateWorkspace = () => {
         { token }
       );
       setActiveThread(nextThread);
+      const userId = user?.id ?? lastUserIdRef.current;
+
+      if (userId) {
+        const cached = readGenerateWorkspaceCache(userId)?.value;
+        writeGenerateWorkspaceCache(userId, {
+          conversations: cached?.conversations ?? conversations,
+          threads: {
+            ...(cached?.threads ?? {}),
+            [conversationId]: nextThread,
+          },
+        });
+      }
       setError(null);
       return nextThread;
     } catch (threadError) {
@@ -121,12 +185,20 @@ export const useGenerateWorkspace = () => {
       setError(message);
       throw new Error(message);
     } finally {
-      setIsLoadingThread(false);
+      if (!options?.silent) {
+        setIsLoadingThread(false);
+      }
     }
   };
 
   useEffect(() => {
-    if (!token) {
+    lastUserIdRef.current = user?.id ?? lastUserIdRef.current;
+  }, [user?.id]);
+
+  useEffect(() => {
+    const userId = user?.id ?? lastUserIdRef.current;
+
+    if (!token || !userId) {
       copyGenerationControllerRef.current?.abort();
       copyGenerationControllerRef.current = null;
       imageGenerationControllerRef.current?.abort();
@@ -134,23 +206,73 @@ export const useGenerateWorkspace = () => {
       setConversations([]);
       setActiveThread(null);
       setActiveConversationId(null);
-      setActiveGenerateConversationId(null);
+      setActiveGenerateConversationId(null, lastUserIdRef.current);
       return;
     }
 
-    void refreshConversations();
-  }, [token]);
+    const storedConversationId = readActiveGenerateConversationId(userId);
+    const cached = readGenerateWorkspaceCache(userId);
+
+    if (cached?.value) {
+      setConversations(cached.value.conversations);
+      if (storedConversationId && cached.value.threads[storedConversationId]) {
+        setActiveThread(cached.value.threads[storedConversationId]);
+      }
+    }
+
+    setActiveConversationId(storedConversationId);
+
+    if (
+      cached?.cachedAt &&
+      isBrowserCacheFresh(cached.cachedAt, GENERATE_WORKSPACE_CACHE_TTL_MS)
+    ) {
+      return;
+    }
+
+    void refreshConversations(undefined, { silent: Boolean(cached?.value) });
+  }, [token, user?.id]);
 
   useEffect(() => {
-    setActiveGenerateConversationId(activeConversationId);
+    setActiveGenerateConversationId(
+      activeConversationId,
+      user?.id ?? lastUserIdRef.current
+    );
 
-    if (!token || !activeConversationId) {
+    const userId = user?.id ?? lastUserIdRef.current;
+
+    if (!token || !userId || !activeConversationId) {
       setActiveThread(null);
       return;
     }
 
-    void refreshThread(activeConversationId);
-  }, [token, activeConversationId]);
+    const cached = readGenerateWorkspaceCache(userId);
+    const cachedThread = cached?.value.threads[activeConversationId];
+
+    if (cachedThread) {
+      setActiveThread(cachedThread);
+    }
+
+    if (
+      cachedThread &&
+      cached?.cachedAt &&
+      isBrowserCacheFresh(cached.cachedAt, GENERATE_WORKSPACE_CACHE_TTL_MS)
+    ) {
+      return;
+    }
+
+    void refreshThread(activeConversationId, { silent: Boolean(cachedThread) }).catch((threadError) => {
+      if (
+        threadError instanceof Error &&
+        /conversation not found|no longer available/i.test(threadError.message)
+      ) {
+        setActiveConversationId(null);
+        setActiveThread(null);
+        setError(null);
+        setActiveGenerateConversationId(null, user?.id ?? lastUserIdRef.current);
+        return;
+      }
+    });
+  }, [token, activeConversationId, user?.id]);
 
   useEffect(
     () => () => {
@@ -171,7 +293,7 @@ export const useGenerateWorkspace = () => {
     setActiveConversationId(null);
     setActiveThread(null);
     setError(null);
-    setActiveGenerateConversationId(null);
+    setActiveGenerateConversationId(null, user?.id ?? lastUserIdRef.current);
   };
 
   const createConversation = async (title?: string, type?: GenerateConversation['type']) => {
@@ -282,6 +404,14 @@ export const useGenerateWorkspace = () => {
 
       setActiveConversationId(nextThread.conversation.id);
       setActiveThread(nextThread);
+      writeGenerateWorkspaceCache(user?.id ?? lastUserIdRef.current, {
+        conversations,
+        threads: {
+          ...(readGenerateWorkspaceCache(user?.id ?? lastUserIdRef.current ?? '')?.value
+            .threads ?? {}),
+          [nextThread.conversation.id]: nextThread,
+        },
+      });
       await refreshConversations(nextThread.conversation.id);
 
       return nextThread;
@@ -342,6 +472,14 @@ export const useGenerateWorkspace = () => {
 
       setActiveConversationId(nextThread.conversation.id);
       setActiveThread(nextThread);
+      writeGenerateWorkspaceCache(user?.id ?? lastUserIdRef.current, {
+        conversations,
+        threads: {
+          ...(readGenerateWorkspaceCache(user?.id ?? lastUserIdRef.current ?? '')?.value
+            .threads ?? {}),
+          [nextThread.conversation.id]: nextThread,
+        },
+      });
       await refreshConversations(nextThread.conversation.id);
 
       return nextThread;

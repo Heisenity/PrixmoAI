@@ -91,6 +91,10 @@ import {
   readSignedMetaOAuthState,
   verifyClaimedMetaAccount,
 } from '../services/meta.service';
+import {
+  scheduleScheduledPostPublish,
+  unscheduleScheduledPostPublish,
+} from '../services/schedulerPublisher.service';
 import { importExternalSourceImage } from '../services/storage.service';
 
 type AuthenticatedRequest<
@@ -2065,6 +2069,12 @@ export const submitScheduleBatch = async (
         scheduledFor: item.scheduledAt,
         status: 'scheduled',
       });
+      await scheduleScheduledPostPublish({
+        id: scheduledPost.id,
+        userId: scheduledPost.userId,
+        scheduledFor: scheduledPost.scheduledFor,
+        status: scheduledPost.status,
+      });
 
       const updatedItem = await updateScheduledItem(client, req.user.id, item.id, {
         scheduledPostId: scheduledPost.id,
@@ -2197,10 +2207,14 @@ export const updateScheduleItemRecord = async (
         throw new Error('Media asset not found');
       }
 
-      await updateScheduledPost(client, req.user.id, existingItem.scheduledPostId, {
-        socialAccountId: updatedItem.socialAccountId,
-        contentId: mediaAsset.contentId,
-        generatedImageId: mediaAsset.generatedImageId,
+      const updatedPost = await updateScheduledPost(
+        client,
+        req.user.id,
+        existingItem.scheduledPostId,
+        {
+          socialAccountId: updatedItem.socialAccountId,
+          contentId: mediaAsset.contentId,
+          generatedImageId: mediaAsset.generatedImageId,
         platform: updatedItem.platform,
         caption: updatedItem.caption,
         mediaUrl: mediaAsset.storageUrl,
@@ -2212,7 +2226,19 @@ export const updateScheduleItemRecord = async (
             : updatedItem.status === 'published' || updatedItem.status === 'failed'
               ? updatedItem.status
               : 'scheduled',
-      });
+        }
+      );
+
+      if (updatedPost.status === 'cancelled') {
+        await unscheduleScheduledPostPublish(updatedPost.id);
+      } else {
+        await scheduleScheduledPostPublish({
+          id: updatedPost.id,
+          userId: updatedPost.userId,
+          scheduledFor: updatedPost.scheduledFor,
+          status: updatedPost.status,
+        });
+      }
     }
 
     await syncBatchStatusFromItems(client, req.user.id, updatedItem.batchId);
@@ -2263,13 +2289,14 @@ export const cancelScheduleItemRecord = async (
       );
 
       if (scheduledPost && ['pending', 'scheduled'].includes(scheduledPost.status)) {
-        await updateScheduledPostStatus(
+        const updatedPost = await updateScheduledPostStatus(
           client,
           req.user.id,
           scheduledPost.id,
           'cancelled',
           null
         );
+        await unscheduleScheduledPostPublish(updatedPost.id);
       }
     }
 
@@ -2342,6 +2369,12 @@ export const createPostSchedule = async (
       mediaType: resolved.mediaType,
       scheduledFor: req.body.scheduledFor,
       status: req.body.status ?? 'scheduled',
+    });
+    await scheduleScheduledPostPublish({
+      id: scheduledPost.id,
+      userId: scheduledPost.userId,
+      scheduledFor: scheduledPost.scheduledFor,
+      status: scheduledPost.status,
     });
 
     return res.status(201).json({
@@ -2487,6 +2520,16 @@ export const updatePostSchedule = async (
         status: req.body.status ?? existingPost.status,
       }
     );
+    if (updatedPost.status === 'cancelled') {
+      await unscheduleScheduledPostPublish(updatedPost.id);
+    } else {
+      await scheduleScheduledPostPublish({
+        id: updatedPost.id,
+        userId: updatedPost.userId,
+        scheduledFor: updatedPost.scheduledFor,
+        status: updatedPost.status,
+      });
+    }
 
     await syncScheduledItemStatusByScheduledPostId(client, updatedPost.id, {
       status:
@@ -2578,6 +2621,20 @@ export const updatePostScheduleStatus = async (
       req.body.status,
       publishedAt
     );
+    if (
+      updatedPost.status === 'cancelled' ||
+      updatedPost.status === 'published' ||
+      updatedPost.status === 'failed'
+    ) {
+      await unscheduleScheduledPostPublish(updatedPost.id);
+    } else {
+      await scheduleScheduledPostPublish({
+        id: updatedPost.id,
+        userId: updatedPost.userId,
+        scheduledFor: updatedPost.scheduledFor,
+        status: updatedPost.status,
+      });
+    }
 
     const syncedItems = await syncScheduledItemStatusByScheduledPostId(
       client,
@@ -2657,6 +2714,7 @@ export const cancelPostSchedule = async (
       'cancelled',
       null
     );
+    await unscheduleScheduledPostPublish(updatedPost.id);
 
     const syncedItems = await syncScheduledItemStatusByScheduledPostId(
       client,
@@ -2729,6 +2787,7 @@ export const deletePostSchedule = async (
     }
 
     await deleteScheduledPost(client, req.user.id, req.params.id);
+    await unscheduleScheduledPostPublish(req.params.id);
 
     return res.status(200).json({
       status: 'success',

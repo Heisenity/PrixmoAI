@@ -1,5 +1,6 @@
 import { useId } from 'react';
 import type { InputHTMLAttributes } from 'react';
+import { getPlayfulErrorMessage } from '../../lib/errorTone';
 import { cn } from '../../lib/utils';
 
 type InputProps = InputHTMLAttributes<HTMLInputElement> & {
@@ -11,6 +12,7 @@ type InputProps = InputHTMLAttributes<HTMLInputElement> & {
 export const Input = ({ label, hint, error, className, id, ...props }: InputProps) => {
   const fallbackId = useId();
   const inputId = id ?? fallbackId;
+  const displayError = getPlayfulErrorMessage(error);
 
   return (
     <label className="field" htmlFor={inputId}>
@@ -29,11 +31,15 @@ export const Input = ({ label, hint, error, className, id, ...props }: InputProp
       ) : null}
       <input
         id={inputId}
-        className={cn('field__control', error && 'field__control--invalid', className)}
-        aria-invalid={Boolean(error)}
+        className={cn('field__control', displayError && 'field__control--invalid', className)}
+        aria-invalid={Boolean(displayError)}
         {...props}
       />
-      {error ? <span className="field__error">{error}</span> : hint ? <span className="field__hint">{hint}</span> : null}
+      {displayError ? (
+        <span className="field__error">{displayError}</span>
+      ) : hint ? (
+        <span className="field__hint">{hint}</span>
+      ) : null}
     </label>
   );
 };

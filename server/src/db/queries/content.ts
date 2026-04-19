@@ -29,6 +29,12 @@ type GeneratedContentRow = {
   captions: unknown;
   hashtags: unknown;
   reel_script: unknown;
+  storage_provider: string | null;
+  storage_bucket: string | null;
+  storage_object_key: string | null;
+  storage_public_url: string | null;
+  storage_content_type: string | null;
+  storage_size_bytes: number | null;
   created_at: string;
   updated_at: string;
 };
@@ -167,6 +173,13 @@ const toGeneratedContent = (row: GeneratedContentRow): GeneratedContent => ({
   userId: row.user_id,
   brandProfileId: row.brand_profile_id,
   conversationId: row.conversation_id,
+  storageProvider: row.storage_provider,
+  storageBucket: row.storage_bucket,
+  storageObjectKey: row.storage_object_key,
+  storagePublicUrl: row.storage_public_url,
+  storageContentType: row.storage_content_type,
+  storageSizeBytes:
+    typeof row.storage_size_bytes === 'number' ? row.storage_size_bytes : null,
   productName: row.product_name,
   productDescription: row.product_description,
   productImageUrl: row.product_image_url,
@@ -210,6 +223,12 @@ export const saveGeneratedContent = async (
       captions: input.captions,
       hashtags: input.hashtags,
       reel_script: input.reelScript,
+      storage_provider: input.storageProvider ?? null,
+      storage_bucket: input.storageBucket ?? null,
+      storage_object_key: input.storageObjectKey ?? null,
+      storage_public_url: input.storagePublicUrl ?? null,
+      storage_content_type: input.storageContentType ?? null,
+      storage_size_bytes: input.storageSizeBytes ?? null,
     })
     .select('*')
     .single();

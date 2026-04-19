@@ -24,13 +24,15 @@ export const getOverallUsageSummary = ({
   contentUsed,
   imageUsed,
   isLoading,
+  hasUsageData = true,
   usageWindowLabel = 'today',
 }: {
   contentLimit: number | null;
   imageLimit: number | null;
-  contentUsed: number;
-  imageUsed: number;
+  contentUsed: number | null;
+  imageUsed: number | null;
   isLoading: boolean;
+  hasUsageData?: boolean;
   usageWindowLabel?: string;
 }) => {
   if (contentLimit === null && imageLimit === null) {
@@ -39,6 +41,10 @@ export const getOverallUsageSummary = ({
 
   if (isLoading) {
     return 'Checking limits…';
+  }
+
+  if (!hasUsageData || contentUsed === null || imageUsed === null) {
+    return 'Syncing limits…';
   }
 
   const contentUsage = getUsageSnapshot(contentUsed, contentLimit);

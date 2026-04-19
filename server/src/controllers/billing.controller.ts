@@ -1,6 +1,9 @@
 import { Request, Response } from 'express';
 import type { User } from '@supabase/supabase-js';
-import { BILLING_PLAN_CATALOG, PLAN_LIMITS } from '../config/constants';
+import {
+  BILLING_PLAN_CATALOG,
+  PLAN_LIMITS,
+} from '../config/constants';
 import {
   getCurrentSubscriptionByUserId,
   upsertSubscription,
@@ -21,6 +24,12 @@ import {
   toSubscriptionUpsertPayload,
   verifyRazorpayWebhookSignature,
 } from '../services/razorpay.service';
+import {
+  buildBillingPlansCacheKey,
+  buildBillingSubscriptionCacheKey,
+  getOrSetJsonCache,
+  invalidateBillingRuntimeCache,
+} from '../services/runtimeCache.service';
 import type { PlanType } from '../types';
 
 type AuthenticatedRequest<
@@ -84,6 +93,7 @@ export const getBillingPlanCatalog = async (
   }
 
   try {
+    const userId = req.user.id;
     const client = getAuthenticatedClient(req);
 
     if (!client) {
@@ -93,16 +103,23 @@ export const getBillingPlanCatalog = async (
       });
     }
 
-    const currentSubscription =
-      (await getCurrentSubscriptionByUserId(client, req.user.id)) ??
-      getDefaultFreeSubscription(req.user.id);
+    const data = await getOrSetJsonCache(
+      buildBillingPlansCacheKey(userId),
+      async () => {
+        const currentSubscription =
+          (await getCurrentSubscriptionByUserId(client, userId)) ??
+          getDefaultFreeSubscription(userId);
+
+        return {
+          currentSubscription,
+          plans: getBillingPlans(),
+        };
+      }
+    );
 
     return res.status(200).json({
       status: 'success',
-      data: {
-        currentSubscription,
-        plans: getBillingPlans(),
-      },
+      data,
     });
   } catch (error) {
     return res.status(500).json({
@@ -125,6 +142,7 @@ export const getCurrentBillingSubscription = async (
   }
 
   try {
+    const userId = req.user.id;
     const client = getAuthenticatedClient(req);
 
     if (!client) {
@@ -134,9 +152,12 @@ export const getCurrentBillingSubscription = async (
       });
     }
 
-    const subscription =
-      (await getCurrentSubscriptionByUserId(client, req.user.id)) ??
-      getDefaultFreeSubscription(req.user.id);
+    const subscription = await getOrSetJsonCache(
+      buildBillingSubscriptionCacheKey(userId),
+      async () =>
+        (await getCurrentSubscriptionByUserId(client, userId)) ??
+        getDefaultFreeSubscription(userId)
+    );
 
     return res.status(200).json({
       status: 'success',
@@ -165,6 +186,7 @@ export const createBillingCheckout = async (
   }
 
   try {
+    const userId = req.user.id;
     const client = getAuthenticatedClient(req);
 
     if (!client) {
@@ -176,7 +198,7 @@ export const createBillingCheckout = async (
 
     const existingSubscription = await getCurrentSubscriptionByUserId(
       client,
-      req.user.id
+      userId
     );
 
     if (
@@ -192,7 +214,7 @@ export const createBillingCheckout = async (
     }
 
     const checkout = await createHostedSubscriptionCheckout({
-      userId: req.user.id,
+      userId,
       plan: req.body.plan,
       email: req.user.email ?? null,
       totalCount: req.body.totalCount,
@@ -203,8 +225,9 @@ export const createBillingCheckout = async (
 
     const localSubscription = await upsertSubscription(
       client,
-      toSubscriptionUpsertPayload(req.user.id, checkout, req.body.plan)
+      toSubscriptionUpsertPayload(userId, checkout, req.body.plan)
     );
+    await invalidateBillingRuntimeCache(userId);
 
     return res.status(200).json({
       status: 'success',
@@ -239,6 +262,7 @@ export const syncBillingSubscription = async (
   }
 
   try {
+    const userId = req.user.id;
     const client = getAuthenticatedClient(req);
 
     if (!client) {
@@ -250,7 +274,7 @@ export const syncBillingSubscription = async (
 
     const currentSubscription = await getCurrentSubscriptionByUserId(
       client,
-      req.user.id
+      userId
     );
     const subscriptionId =
       req.body.subscriptionId ?? currentSubscription?.razorpaySubscriptionId;
@@ -266,8 +290,9 @@ export const syncBillingSubscription = async (
     const fallbackPlan = currentSubscription?.plan ?? 'free';
     const localSubscription = await upsertSubscription(
       client,
-      toSubscriptionUpsertPayload(req.user.id, remoteSubscription, fallbackPlan)
+      toSubscriptionUpsertPayload(userId, remoteSubscription, fallbackPlan)
     );
+    await invalidateBillingRuntimeCache(userId);
 
     return res.status(200).json({
       status: 'success',
@@ -300,6 +325,7 @@ export const cancelBillingSubscriptionController = async (
   }
 
   try {
+    const userId = req.user.id;
     const client = getAuthenticatedClient(req);
 
     if (!client) {
@@ -311,7 +337,7 @@ export const cancelBillingSubscriptionController = async (
 
     const currentSubscription = await getCurrentSubscriptionByUserId(
       client,
-      req.user.id
+      userId
     );
 
     if (!currentSubscription?.razorpaySubscriptionId) {
@@ -329,11 +355,12 @@ export const cancelBillingSubscriptionController = async (
     const localSubscription = await upsertSubscription(
       client,
       toSubscriptionUpsertPayload(
-        req.user.id,
+        userId,
         remoteSubscription,
         currentSubscription.plan
       )
     );
+    await invalidateBillingRuntimeCache(userId);
 
     return res.status(200).json({
       status: 'success',
@@ -407,6 +434,7 @@ export const handleRazorpayWebhook = async (
       adminClient,
       toSubscriptionUpsertPayload(userId, subscriptionEntity, fallbackPlan)
     );
+    await invalidateBillingRuntimeCache(userId);
 
     return res.status(200).json({
       status: 'success',

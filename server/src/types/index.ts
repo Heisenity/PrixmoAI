@@ -128,6 +128,12 @@ export interface GeneratedContent
   userId: string;
   brandProfileId: string | null;
   conversationId: string | null;
+  storageProvider?: string | null;
+  storageBucket?: string | null;
+  storageObjectKey?: string | null;
+  storagePublicUrl?: string | null;
+  storageContentType?: string | null;
+  storageSizeBytes?: number | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -137,6 +143,12 @@ export interface CreateGeneratedContentInput
     GeneratedContentPack {
   brandProfileId?: string | null;
   conversationId?: string | null;
+  storageProvider?: string | null;
+  storageBucket?: string | null;
+  storageObjectKey?: string | null;
+  storagePublicUrl?: string | null;
+  storageContentType?: string | null;
+  storageSizeBytes?: number | null;
 }
 
 export interface GeneratedImage {
@@ -148,6 +160,12 @@ export interface GeneratedImage {
   generatedImageUrl: string;
   backgroundStyle: string | null;
   prompt: string | null;
+  storageProvider?: string | null;
+  storageBucket?: string | null;
+  storageObjectKey?: string | null;
+  storagePublicUrl?: string | null;
+  storageContentType?: string | null;
+  storageSizeBytes?: number | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -159,6 +177,12 @@ export interface CreateGeneratedImageInput {
   generatedImageUrl: string;
   backgroundStyle?: string | null;
   prompt?: string | null;
+  storageProvider?: string | null;
+  storageBucket?: string | null;
+  storageObjectKey?: string | null;
+  storagePublicUrl?: string | null;
+  storageContentType?: string | null;
+  storageSizeBytes?: number | null;
 }
 
 export interface GenerateConversation {
