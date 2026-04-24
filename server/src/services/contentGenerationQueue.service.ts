@@ -219,6 +219,13 @@ export const enqueueContentGenerationJob = async (
       }
     );
 
+    console.info('[content-generation] job queued', {
+      jobId: job.id,
+      userId: data.userId,
+      productName: data.input.productName,
+      includeReelScript: data.includeReelScript,
+    });
+
     await setJobQueued(
       job.id!,
       QUEUE_NAMES.contentGenerate,
@@ -231,6 +238,16 @@ export const enqueueContentGenerationJob = async (
       queueEvents,
       signal
     );
+
+    console.info('[content-generation] job completed', {
+      jobId: job.id,
+      userId: data.userId,
+      provider: result.provider,
+      hasReelScript:
+        Boolean(result.contentPack.reelScript.hook.trim()) &&
+        Boolean(result.contentPack.reelScript.body.trim()) &&
+        Boolean(result.contentPack.reelScript.cta.trim()),
+    });
 
     return {
       jobId: job.id!,

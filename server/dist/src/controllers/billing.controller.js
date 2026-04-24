@@ -5,6 +5,7 @@ const constants_1 = require("../config/constants");
 const subscriptions_1 = require("../db/queries/subscriptions");
 const supabase_1 = require("../db/supabase");
 const razorpay_service_1 = require("../services/razorpay.service");
+const runtimeCache_service_1 = require("../services/runtimeCache.service");
 const getDefaultFreeSubscription = (userId) => ({
     id: 'free-plan-local',
     userId,
@@ -44,6 +45,7 @@ const getBillingPlanCatalog = async (req, res) => {
         });
     }
     try {
+        const userId = req.user.id;
         const client = getAuthenticatedClient(req);
         if (!client) {
             return res.status(401).json({
@@ -51,14 +53,17 @@ const getBillingPlanCatalog = async (req, res) => {
                 message: 'Unauthorized',
             });
         }
-        const currentSubscription = (await (0, subscriptions_1.getCurrentSubscriptionByUserId)(client, req.user.id)) ??
-            getDefaultFreeSubscription(req.user.id);
-        return res.status(200).json({
-            status: 'success',
-            data: {
+        const data = await (0, runtimeCache_service_1.getOrSetJsonCache)((0, runtimeCache_service_1.buildBillingPlansCacheKey)(userId), async () => {
+            const currentSubscription = (await (0, subscriptions_1.getCurrentSubscriptionByUserId)(client, userId)) ??
+                getDefaultFreeSubscription(userId);
+            return {
                 currentSubscription,
                 plans: (0, razorpay_service_1.getBillingPlans)(),
-            },
+            };
+        });
+        return res.status(200).json({
+            status: 'success',
+            data,
         });
     }
     catch (error) {
@@ -77,6 +82,7 @@ const getCurrentBillingSubscription = async (req, res) => {
         });
     }
     try {
+        const userId = req.user.id;
         const client = getAuthenticatedClient(req);
         if (!client) {
             return res.status(401).json({
@@ -84,8 +90,8 @@ const getCurrentBillingSubscription = async (req, res) => {
                 message: 'Unauthorized',
             });
         }
-        const subscription = (await (0, subscriptions_1.getCurrentSubscriptionByUserId)(client, req.user.id)) ??
-            getDefaultFreeSubscription(req.user.id);
+        const subscription = await (0, runtimeCache_service_1.getOrSetJsonCache)((0, runtimeCache_service_1.buildBillingSubscriptionCacheKey)(userId), async () => (await (0, subscriptions_1.getCurrentSubscriptionByUserId)(client, userId)) ??
+            getDefaultFreeSubscription(userId));
         return res.status(200).json({
             status: 'success',
             data: subscription,
@@ -109,6 +115,7 @@ const createBillingCheckout = async (req, res) => {
         });
     }
     try {
+        const userId = req.user.id;
         const client = getAuthenticatedClient(req);
         if (!client) {
             return res.status(401).json({
@@ -116,7 +123,7 @@ const createBillingCheckout = async (req, res) => {
                 message: 'Unauthorized',
             });
         }
-        const existingSubscription = await (0, subscriptions_1.getCurrentSubscriptionByUserId)(client, req.user.id);
+        const existingSubscription = await (0, subscriptions_1.getCurrentSubscriptionByUserId)(client, userId);
         if (existingSubscription &&
             existingSubscription.plan === req.body.plan &&
             (existingSubscription.status === 'active' ||
@@ -127,7 +134,7 @@ const createBillingCheckout = async (req, res) => {
             });
         }
         const checkout = await (0, razorpay_service_1.createHostedSubscriptionCheckout)({
-            userId: req.user.id,
+            userId,
             plan: req.body.plan,
             email: req.user.email ?? null,
             totalCount: req.body.totalCount,
@@ -135,7 +142,8 @@ const createBillingCheckout = async (req, res) => {
             startAt: req.body.startAt,
             expireBy: req.body.expireBy,
         });
-        const localSubscription = await (0, subscriptions_1.upsertSubscription)(client, (0, razorpay_service_1.toSubscriptionUpsertPayload)(req.user.id, checkout, req.body.plan));
+        const localSubscription = await (0, subscriptions_1.upsertSubscription)(client, (0, razorpay_service_1.toSubscriptionUpsertPayload)(userId, checkout, req.body.plan));
+        await (0, runtimeCache_service_1.invalidateBillingRuntimeCache)(userId);
         return res.status(200).json({
             status: 'success',
             message: 'Billing checkout created successfully',
@@ -165,6 +173,7 @@ const syncBillingSubscription = async (req, res) => {
         });
     }
     try {
+        const userId = req.user.id;
         const client = getAuthenticatedClient(req);
         if (!client) {
             return res.status(401).json({
@@ -172,7 +181,7 @@ const syncBillingSubscription = async (req, res) => {
                 message: 'Unauthorized',
             });
         }
-        const currentSubscription = await (0, subscriptions_1.getCurrentSubscriptionByUserId)(client, req.user.id);
+        const currentSubscription = await (0, subscriptions_1.getCurrentSubscriptionByUserId)(client, userId);
         const subscriptionId = req.body.subscriptionId ?? currentSubscription?.razorpaySubscriptionId;
         if (!subscriptionId) {
             return res.status(400).json({
@@ -182,7 +191,8 @@ const syncBillingSubscription = async (req, res) => {
         }
         const remoteSubscription = await (0, razorpay_service_1.fetchRazorpaySubscription)(subscriptionId);
         const fallbackPlan = currentSubscription?.plan ?? 'free';
-        const localSubscription = await (0, subscriptions_1.upsertSubscription)(client, (0, razorpay_service_1.toSubscriptionUpsertPayload)(req.user.id, remoteSubscription, fallbackPlan));
+        const localSubscription = await (0, subscriptions_1.upsertSubscription)(client, (0, razorpay_service_1.toSubscriptionUpsertPayload)(userId, remoteSubscription, fallbackPlan));
+        await (0, runtimeCache_service_1.invalidateBillingRuntimeCache)(userId);
         return res.status(200).json({
             status: 'success',
             message: 'Subscription synced successfully',
@@ -210,6 +220,7 @@ const cancelBillingSubscriptionController = async (req, res) => {
         });
     }
     try {
+        const userId = req.user.id;
         const client = getAuthenticatedClient(req);
         if (!client) {
             return res.status(401).json({
@@ -217,7 +228,7 @@ const cancelBillingSubscriptionController = async (req, res) => {
                 message: 'Unauthorized',
             });
         }
-        const currentSubscription = await (0, subscriptions_1.getCurrentSubscriptionByUserId)(client, req.user.id);
+        const currentSubscription = await (0, subscriptions_1.getCurrentSubscriptionByUserId)(client, userId);
         if (!currentSubscription?.razorpaySubscriptionId) {
             return res.status(400).json({
                 status: 'fail',
@@ -225,7 +236,8 @@ const cancelBillingSubscriptionController = async (req, res) => {
             });
         }
         const remoteSubscription = await (0, razorpay_service_1.cancelRazorpaySubscription)(currentSubscription.razorpaySubscriptionId, req.body.cancelAtCycleEnd ?? true);
-        const localSubscription = await (0, subscriptions_1.upsertSubscription)(client, (0, razorpay_service_1.toSubscriptionUpsertPayload)(req.user.id, remoteSubscription, currentSubscription.plan));
+        const localSubscription = await (0, subscriptions_1.upsertSubscription)(client, (0, razorpay_service_1.toSubscriptionUpsertPayload)(userId, remoteSubscription, currentSubscription.plan));
+        await (0, runtimeCache_service_1.invalidateBillingRuntimeCache)(userId);
         return res.status(200).json({
             status: 'success',
             message: 'Subscription cancelled successfully',
@@ -279,6 +291,7 @@ const handleRazorpayWebhook = async (req, res) => {
             ? notes.plan
             : (0, razorpay_service_1.inferPlanFromRazorpayData)(subscriptionEntity, 'free');
         const localSubscription = await (0, subscriptions_1.upsertSubscription)(adminClient, (0, razorpay_service_1.toSubscriptionUpsertPayload)(userId, subscriptionEntity, fallbackPlan));
+        await (0, runtimeCache_service_1.invalidateBillingRuntimeCache)(userId);
         return res.status(200).json({
             status: 'success',
             message: 'Webhook processed successfully',

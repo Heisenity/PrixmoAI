@@ -2,6 +2,15 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.authMiddleware = void 0;
 const supabase_1 = require("../db/supabase");
+const isUnverifiedEmailAuthUser = (user) => {
+    if (!user) {
+        return false;
+    }
+    const provider = (user.app_metadata?.provider ?? 'email')
+        .trim()
+        .toLowerCase();
+    return Boolean(user.email) && provider === 'email' && !user.email_confirmed_at;
+};
 const authMiddleware = async (req, res, next) => {
     if (!supabase_1.supabaseAuth) {
         return res.status(503).json({
@@ -25,6 +34,13 @@ const authMiddleware = async (req, res, next) => {
             return res.status(401).json({
                 status: 'fail',
                 error: 'Invalid or expired token',
+            });
+        }
+        if (isUnverifiedEmailAuthUser(user)) {
+            return res.status(403).json({
+                status: 'fail',
+                error: 'Email verification required',
+                message: 'Verify your email code first, then come back and unlock the workspace.',
             });
         }
         req.user = user;

@@ -427,6 +427,7 @@ export const generateWorkspaceCopy = async (
   }
 
   const cancellation = createRequestCancellation(req, res);
+  const startedAt = Date.now();
 
   try {
     console.info('[workspace-copy] Generate content request started', {
@@ -471,6 +472,12 @@ export const generateWorkspaceCopy = async (
       },
       cancellation.signal
     );
+    console.info('[workspace-copy] Queue job resolved', {
+      userId: req.user.id,
+      jobId,
+      provider,
+      durationMs: Date.now() - startedAt,
+    });
     const hasReelScript = hasMeaningfulReelScript(contentPack.reelScript);
     const userPromptSummary = buildCopyPromptSummary(generationInput);
     throwIfRequestCancelled(
@@ -641,6 +648,7 @@ export const generateWorkspaceCopy = async (
       contentId: content.id,
       provider,
       hasReelScript,
+      durationMs: Date.now() - startedAt,
     });
 
     return res.status(200).json({

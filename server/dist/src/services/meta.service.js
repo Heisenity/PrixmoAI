@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.getMetaOAuthFacebookPageSelectionRedirectUrl = exports.getMetaOAuthErrorRedirectUrl = exports.getMetaOAuthSuccessRedirectUrl = exports.publishScheduledMetaPost = exports.verifyClaimedMetaAccount = exports.exchangeMetaAuthorizationCode = exports.buildMetaOAuthUrl = exports.readSignedMetaOAuthState = exports.createSignedMetaOAuthState = void 0;
+exports.getMetaOAuthFacebookPageSelectionRedirectUrl = exports.getMetaOAuthErrorRedirectUrl = exports.getMetaOAuthSuccessRedirectUrl = exports.publishScheduledMetaPost = exports.verifyClaimedMetaAccount = exports.exchangeMetaAuthorizationCode = exports.buildMetaOAuthUrl = exports.readSignedMetaOAuthState = exports.createSignedMetaOAuthState = exports.buildFacebookNoPagesMessage = void 0;
 const crypto_1 = require("crypto");
 const constants_1 = require("../config/constants");
 const META_AUTH_URL = `https://www.facebook.com/${constants_1.META_GRAPH_VERSION}/dialog/oauth`;
@@ -9,6 +9,10 @@ const INSTAGRAM_CONSENT_URL = 'https://www.instagram.com/consent/';
 const INSTAGRAM_AUTH_URL = 'https://www.instagram.com/oauth/authorize';
 const INSTAGRAM_GRAPH_URL = 'https://graph.instagram.com';
 const INSTAGRAM_TOKEN_URL = 'https://api.instagram.com/oauth/access_token';
+const DEV_FACEBOOK_TEST_SCOPES = [
+    'pages_manage_metadata',
+    'business_management',
+];
 const normalizeHandle = (value) => value.trim().toLowerCase().replace(/^@+/, '');
 const normalizeLooseText = (value) => value.trim().toLowerCase().replace(/^@+/, '').replace(/[^a-z0-9]+/g, '');
 const readRecord = (value) => value && typeof value === 'object' && !Array.isArray(value)
@@ -17,35 +21,107 @@ const readRecord = (value) => value && typeof value === 'object' && !Array.isArr
 const wait = (ms) => new Promise((resolve) => {
     setTimeout(resolve, ms);
 });
+const uniqueStrings = (values) => [
+    ...new Set(values
+        .filter((value) => Boolean(value?.trim()))
+        .map((value) => value.trim())),
+];
+const getFacebookOAuthScopes = () => uniqueStrings([
+    ...constants_1.META_FACEBOOK_OAUTH_SCOPES,
+    ...(constants_1.META_OAUTH_DEBUG ? DEV_FACEBOOK_TEST_SCOPES : []),
+]);
+const countConnectablePages = (pages) => pages.filter((page) => Boolean(page.access_token)).length;
+const summarizeMetaPages = (pages) => pages.map((page) => ({
+    id: page.id,
+    name: page.name,
+    hasAccessToken: Boolean(page.access_token),
+    tasks: Array.isArray(page.tasks)
+        ? page.tasks.filter((task) => typeof task === 'string')
+        : [],
+}));
+const mergeMetaPages = (primaryPages, secondaryPages) => {
+    const pagesById = new Map();
+    for (const page of primaryPages) {
+        pagesById.set(page.id, {
+            ...page,
+            tasks: Array.isArray(page.tasks) ? [...page.tasks] : [],
+        });
+    }
+    for (const page of secondaryPages) {
+        const existing = pagesById.get(page.id);
+        if (!existing) {
+            pagesById.set(page.id, {
+                ...page,
+                tasks: Array.isArray(page.tasks) ? [...page.tasks] : [],
+            });
+            continue;
+        }
+        pagesById.set(page.id, {
+            ...page,
+            ...existing,
+            link: existing.link ?? page.link,
+            access_token: existing.access_token ?? page.access_token,
+            tasks: uniqueStrings([...(existing.tasks ?? []), ...(page.tasks ?? [])]),
+            instagram_business_account: existing.instagram_business_account ?? page.instagram_business_account ?? null,
+            connected_instagram_account: existing.connected_instagram_account ??
+                page.connected_instagram_account ??
+                null,
+        });
+    }
+    return [...pagesById.values()];
+};
+const logMetaOAuthDebug = (stage, payload) => {
+    if (!constants_1.META_OAUTH_DEBUG) {
+        return;
+    }
+    console.log(`[meta-oauth] ${stage} ${JSON.stringify(payload)}`);
+};
+const buildFacebookNoPagesMessage = (debug) => {
+    if (!debug) {
+        return ('Meta did not return any Facebook Pages for this login. Reconnect and use ' +
+            'Edit access to enable the Page for this app. If the app is still in ' +
+            'development mode, the Facebook profile you use must be added to the app Roles.');
+    }
+    const grantedScopes = new Set(debug.grantedScopes);
+    const missingScopes = getFacebookOAuthScopes().filter((scope) => !grantedScopes.has(scope));
+    if (missingScopes.length) {
+        return (`Meta did not grant the required Page permissions (${missingScopes.join(', ')}). ` +
+            'Reconnect and approve full Page access for the app.');
+    }
+    if (debug.pages.length) {
+        return ('Meta returned Facebook Pages, but none included a usable Page access token. ' +
+            'Reconnect and use Edit access to enable the Page for this app.');
+    }
+    if (debug.granularPageTargetIds.length === 0 && grantedScopes.has('pages_show_list')) {
+        return ('Meta granted Page-list access, but no specific Pages were selected for this app. ' +
+            'Reconnect, click Edit access, and choose the Page you want to connect.');
+    }
+    return ('Meta did not return any Facebook Pages for this login. Reconnect and use ' +
+        'Edit access to enable the Page for this app. If the app is still in ' +
+        'development mode, the Facebook profile you use must be added to the app Roles.');
+};
+exports.buildFacebookNoPagesMessage = buildFacebookNoPagesMessage;
 const getDirectInstagramOAuthScopes = () => constants_1.META_INSTAGRAM_OAUTH_SCOPES.map((scope) => {
-    if (scope === 'instagram_business_basic') {
-        return 'instagram_basic';
+    if (scope === 'instagram_basic') {
+        return 'instagram_business_basic';
     }
-    if (scope === 'instagram_business_content_publish') {
-        return 'instagram_content_publish';
+    if (scope === 'instagram_content_publish') {
+        return 'instagram_business_content_publish';
     }
-    return scope;
-});
-const getInstagramConsentScopes = () => constants_1.META_INSTAGRAM_OAUTH_SCOPES.map((scope) => {
-    if (scope === 'instagram_business_basic' || scope === 'instagram_basic') {
-        return 'business_basic';
+    if (scope === 'instagram_manage_comments') {
+        return 'instagram_business_manage_comments';
     }
-    if (scope === 'instagram_business_content_publish' ||
-        scope === 'instagram_content_publish') {
-        return 'business_content_publish';
-    }
-    if (scope === 'instagram_business_manage_comments' ||
-        scope === 'instagram_manage_comments') {
-        return 'business_manage_comments';
-    }
-    if (scope === 'instagram_business_manage_insights' ||
-        scope === 'instagram_manage_insights') {
+    if (scope === 'instagram_manage_insights') {
         return 'instagram_business_manage_insights';
     }
     return scope;
 });
-const getInstagramLoginClientId = () => constants_1.META_INSTAGRAM_APP_ID || constants_1.META_FACEBOOK_APP_ID;
-const getInstagramLoginClientSecret = () => constants_1.META_INSTAGRAM_APP_SECRET || constants_1.META_FACEBOOK_APP_SECRET;
+const getInstagramConsentScopes = () => uniqueStrings(getDirectInstagramOAuthScopes());
+const getInstagramLoginClientId = () => constants_1.META_INSTAGRAM_APP_ID;
+const getInstagramLoginClientSecret = () => constants_1.META_INSTAGRAM_APP_SECRET;
+const getMetaOAuthRedirectUri = (platform) => platform === 'instagram'
+    ? constants_1.META_INSTAGRAM_REDIRECT_URI
+    : constants_1.META_FACEBOOK_REDIRECT_URI;
 const toProfileUrl = (platform, accountId, fallback) => {
     if (fallback?.trim()) {
         return fallback.trim();
@@ -202,7 +278,7 @@ const instagramGraphFetch = async (path, params, init) => {
 const exchangeCodeForShortLivedUserToken = async (code) => metaGraphFetch('/oauth/access_token', {
     client_id: constants_1.META_FACEBOOK_APP_ID,
     client_secret: constants_1.META_FACEBOOK_APP_SECRET,
-    redirect_uri: constants_1.META_REDIRECT_URI,
+    redirect_uri: getMetaOAuthRedirectUri('facebook'),
     code,
 });
 const exchangeInstagramCodeForShortLivedUserToken = async (code) => {
@@ -210,7 +286,7 @@ const exchangeInstagramCodeForShortLivedUserToken = async (code) => {
         client_id: getInstagramLoginClientId(),
         client_secret: getInstagramLoginClientSecret(),
         grant_type: 'authorization_code',
-        redirect_uri: constants_1.META_REDIRECT_URI,
+        redirect_uri: getMetaOAuthRedirectUri('instagram'),
         code,
     });
     const response = await fetch(INSTAGRAM_TOKEN_URL, {
@@ -250,10 +326,15 @@ const fetchMetaPages = async (accessToken) => metaGraphFetch('/me/accounts', {
         'name',
         'link',
         'access_token',
+        'tasks',
         'instagram_business_account{id,username,name,profile_picture_url}',
         'connected_instagram_account{id,username,name,profile_picture_url}',
     ].join(','),
     limit: 100,
+});
+const debugMetaUserToken = async (accessToken) => metaGraphFetch('/debug_token', {
+    input_token: accessToken,
+    access_token: `${constants_1.META_FACEBOOK_APP_ID}|${constants_1.META_FACEBOOK_APP_SECRET}`,
 });
 const fetchInstagramBusinessProfile = async (accessToken, userId) => {
     const readProfile = async (path) => instagramGraphFetch(path, {
@@ -281,13 +362,23 @@ const fetchInstagramBusinessProfile = async (accessToken, userId) => {
         profile_picture_url: profile.profile_picture_url,
     };
 };
-const createFacebookPagePost = async (pageId, accessToken, caption, mediaUrl) => {
+const createFacebookPagePost = async (pageId, accessToken, caption, mediaUrl, mediaType) => {
     if (!mediaUrl) {
         const feedResponse = await metaGraphFetch(`/${pageId}/feed`, {
             access_token: accessToken,
             message: caption || 'Published via PrixmoAI',
         });
         return feedResponse.id;
+    }
+    if (mediaType === 'video') {
+        const videoResponse = await metaGraphFetch(`/${pageId}/videos`, {
+            access_token: accessToken,
+            file_url: mediaUrl,
+            description: caption || undefined,
+        }, {
+            method: 'POST',
+        });
+        return videoResponse.id;
     }
     const photoResponse = await metaGraphFetch(`/${pageId}/photos`, {
         access_token: accessToken,
@@ -350,6 +441,28 @@ const publishInstagramImage = async (instagramAccountId, accessToken, caption, m
     });
     return publishResponse.id;
 };
+const publishInstagramVideo = async (instagramAccountId, accessToken, caption, mediaUrl) => {
+    if (!mediaUrl) {
+        throw new Error('Instagram publishing requires a video. Add media to the scheduled post first.');
+    }
+    const container = await metaGraphFetch(`/${instagramAccountId}/media`, {
+        access_token: accessToken,
+        media_type: 'REELS',
+        video_url: mediaUrl,
+        share_to_feed: true,
+        caption: caption || undefined,
+    }, {
+        method: 'POST',
+    });
+    await pollInstagramContainerUntilReady(container.id, accessToken);
+    const publishResponse = await metaGraphFetch(`/${instagramAccountId}/media_publish`, {
+        access_token: accessToken,
+        creation_id: container.id,
+    }, {
+        method: 'POST',
+    });
+    return publishResponse.id;
+};
 const publishInstagramBusinessLoginImage = async (instagramAccountId, accessToken, caption, mediaUrl) => {
     if (!mediaUrl) {
         throw new Error('Instagram publishing requires an image. Add media to the scheduled post first.');
@@ -357,6 +470,28 @@ const publishInstagramBusinessLoginImage = async (instagramAccountId, accessToke
     const container = await instagramGraphFetch(`/${instagramAccountId}/media`, {
         access_token: accessToken,
         image_url: mediaUrl,
+        caption: caption || undefined,
+    }, {
+        method: 'POST',
+    });
+    await pollInstagramBusinessContainerUntilReady(container.id, accessToken);
+    const publishResponse = await instagramGraphFetch(`/${instagramAccountId}/media_publish`, {
+        access_token: accessToken,
+        creation_id: container.id,
+    }, {
+        method: 'POST',
+    });
+    return publishResponse.id;
+};
+const publishInstagramBusinessLoginVideo = async (instagramAccountId, accessToken, caption, mediaUrl) => {
+    if (!mediaUrl) {
+        throw new Error('Instagram publishing requires a video. Add media to the scheduled post first.');
+    }
+    const container = await instagramGraphFetch(`/${instagramAccountId}/media`, {
+        access_token: accessToken,
+        media_type: 'REELS',
+        video_url: mediaUrl,
+        share_to_feed: true,
         caption: caption || undefined,
     }, {
         method: 'POST',
@@ -420,7 +555,7 @@ const buildMetaOAuthUrl = (state) => {
         authUrl.searchParams.set('flow', 'ig_biz_login_oauth');
         authUrl.searchParams.set('params_json', JSON.stringify({
             client_id: instagramClientId,
-            redirect_uri: constants_1.META_REDIRECT_URI,
+            redirect_uri: getMetaOAuthRedirectUri('instagram'),
             response_type: 'code',
             state,
             scope: getInstagramConsentScopes().join('-'),
@@ -433,10 +568,11 @@ const buildMetaOAuthUrl = (state) => {
     }
     const authUrl = new URL(META_AUTH_URL);
     authUrl.searchParams.set('client_id', constants_1.META_FACEBOOK_APP_ID);
-    authUrl.searchParams.set('redirect_uri', constants_1.META_REDIRECT_URI);
+    authUrl.searchParams.set('redirect_uri', getMetaOAuthRedirectUri('facebook'));
     authUrl.searchParams.set('state', state);
     authUrl.searchParams.set('response_type', 'code');
-    authUrl.searchParams.set('scope', constants_1.META_FACEBOOK_OAUTH_SCOPES.join(','));
+    authUrl.searchParams.set('scope', getFacebookOAuthScopes().join(','));
+    authUrl.searchParams.set('auth_type', 'rerequest');
     authUrl.searchParams.set('display', 'popup');
     return authUrl.toString();
 };
@@ -490,10 +626,61 @@ const exchangeMetaAuthorizationCode = async (code, platform) => {
     }
     const shortLivedToken = await exchangeCodeForShortLivedUserToken(code);
     const longLivedToken = await exchangeForLongLivedUserToken(shortLivedToken.access_token);
-    const [metaUser, pageResponse] = await Promise.all([
+    const [metaUser, longLivedPageResponse] = await Promise.all([
         fetchMetaUserProfile(longLivedToken.access_token),
         fetchMetaPages(longLivedToken.access_token),
     ]);
+    const longLivedPages = longLivedPageResponse.data ?? [];
+    let shortLivedPages = [];
+    if (!longLivedPages.length || countConnectablePages(longLivedPages) === 0) {
+        try {
+            const shortLivedPageResponse = await fetchMetaPages(shortLivedToken.access_token);
+            shortLivedPages = shortLivedPageResponse.data ?? [];
+        }
+        catch (error) {
+            logMetaOAuthDebug('facebook_page_fetch_short_lived_failed', {
+                metaUserId: metaUser.id,
+                message: error instanceof Error ? error.message : 'Unknown Meta error',
+            });
+        }
+    }
+    const mergedPages = mergeMetaPages(longLivedPages, shortLivedPages);
+    let debug;
+    if (constants_1.META_OAUTH_DEBUG ||
+        !mergedPages.length ||
+        countConnectablePages(mergedPages) === 0) {
+        let tokenDebug;
+        try {
+            tokenDebug = (await debugMetaUserToken(longLivedToken.access_token)).data;
+        }
+        catch (error) {
+            logMetaOAuthDebug('facebook_token_debug_failed', {
+                metaUserId: metaUser.id,
+                message: error instanceof Error ? error.message : 'Unknown Meta error',
+            });
+        }
+        const granularPageTargetIds = uniqueStrings((tokenDebug?.granular_scopes ?? [])
+            .filter((scope) => scope.scope?.startsWith('pages_'))
+            .flatMap((scope) => (scope.target_ids ?? []).map((targetId) => String(targetId))));
+        debug = {
+            longLivedPageCount: longLivedPages.length,
+            longLivedConnectablePageCount: countConnectablePages(longLivedPages),
+            shortLivedPageCount: shortLivedPages.length,
+            shortLivedConnectablePageCount: countConnectablePages(shortLivedPages),
+            grantedScopes: Array.isArray(tokenDebug?.scopes)
+                ? tokenDebug.scopes.filter((scope) => typeof scope === 'string')
+                : [],
+            granularPageTargetIds,
+            pages: summarizeMetaPages(mergedPages),
+            usedShortLivedFallback: countConnectablePages(longLivedPages) === 0 &&
+                countConnectablePages(shortLivedPages) > 0,
+        };
+        logMetaOAuthDebug('facebook_oauth_exchange', {
+            metaUserId: metaUser.id,
+            metaUserName: metaUser.name ?? null,
+            ...debug,
+        });
+    }
     const tokenExpiresAt = typeof longLivedToken.expires_in === 'number'
         ? new Date(Date.now() + longLivedToken.expires_in * 1000).toISOString()
         : null;
@@ -502,7 +689,8 @@ const exchangeMetaAuthorizationCode = async (code, platform) => {
         longLivedUserToken: longLivedToken.access_token,
         tokenExpiresAt,
         metaUser,
-        pages: pageResponse.data ?? [],
+        pages: mergedPages,
+        debug,
     };
 };
 exports.exchangeMetaAuthorizationCode = exchangeMetaAuthorizationCode;
@@ -546,6 +734,7 @@ const verifyClaimedMetaAccount = (input) => {
                     tokenExpiresAt: input.exchange.tokenExpiresAt,
                     metadata: {
                         connectionSource: 'meta_oauth',
+                        oauthApp: 'facebook',
                         metaUserId: input.exchange.metaUser?.id ?? null,
                         metaUserName: input.exchange.metaUser?.name ?? null,
                         metaPageId: match.id,
@@ -591,12 +780,14 @@ const verifyClaimedMetaAccount = (input) => {
                 tokenExpiresAt: input.exchange.tokenExpiresAt,
                 metadata: {
                     connectionSource: 'meta_oauth',
+                    oauthApp: 'instagram',
                     metaUserId: input.exchange.instagramProfile.id,
                     metaUserName: input.exchange.instagramProfile.name ?? null,
                     metaInstagramAccountId: input.exchange.instagramProfile.id,
                     metaInstagramUsername: input.exchange.instagramProfile.username ?? null,
                     metaInstagramProfilePictureUrl: input.exchange.instagramProfile.profile_picture_url ?? null,
                     instagramLoginType: 'instagram_business_login',
+                    instagramApiMode: 'instagram_login',
                     profileUrl,
                     verificationClaim: {
                         accountId: input.claim.accountId,
@@ -661,7 +852,7 @@ const publishScheduledMetaPost = async (account, post) => {
         if (!pageId) {
             throw new Error(getMetaPublishingErrorMessage('facebook', metadata));
         }
-        const externalPostId = await createFacebookPagePost(pageId, account.accessToken, post.caption, post.mediaUrl);
+        const externalPostId = await createFacebookPagePost(pageId, account.accessToken, post.caption, post.mediaUrl, post.mediaType);
         return {
             externalPostId,
             publishedAt: now,
@@ -673,9 +864,13 @@ const publishScheduledMetaPost = async (account, post) => {
     if (!instagramAccountId) {
         throw new Error(getMetaPublishingErrorMessage('instagram', metadata));
     }
-    const externalPostId = metadata.instagramLoginType === 'instagram_business_login'
-        ? await publishInstagramBusinessLoginImage(instagramAccountId, account.accessToken, post.caption, post.mediaUrl)
-        : await publishInstagramImage(instagramAccountId, account.accessToken, post.caption, post.mediaUrl);
+    const externalPostId = post.mediaType === 'video'
+        ? metadata.instagramLoginType === 'instagram_business_login'
+            ? await publishInstagramBusinessLoginVideo(instagramAccountId, account.accessToken, post.caption, post.mediaUrl)
+            : await publishInstagramVideo(instagramAccountId, account.accessToken, post.caption, post.mediaUrl)
+        : metadata.instagramLoginType === 'instagram_business_login'
+            ? await publishInstagramBusinessLoginImage(instagramAccountId, account.accessToken, post.caption, post.mediaUrl)
+            : await publishInstagramImage(instagramAccountId, account.accessToken, post.caption, post.mediaUrl);
     return {
         externalPostId,
         publishedAt: now,

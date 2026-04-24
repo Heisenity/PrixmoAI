@@ -7,11 +7,15 @@ export const SettingsPage = () => {
   return (
     <ProfileFormPanel
       profile={profile}
-      heading=""
-      subheading=""
+      saveContext="settings"
+      heading="Update your brand profile."
+      subheading="Keep your market, website, visual identity, and brand colors current."
       submitLabel="Save brand settings"
+      persistProfile={async (input) => {
+        await saveProfile(input, { saveContext: 'settings' });
+      }}
       onSubmit={async (input) => {
-        await saveProfile(input);
+        await saveProfile(input, { saveContext: 'settings' });
       }}
     />
   );

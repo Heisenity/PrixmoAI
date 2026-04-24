@@ -1,8 +1,9 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.getDeveloperResearchEvents = exports.getDeveloperResearchSummary = exports.getGenerationOverview = exports.getWeeklyAnalyticsComparison = exports.getBestPerformingPostThisWeek = exports.getAnalyticsSummary = exports.getAnalyticsHistory = exports.getAnalyticsByUserId = exports.saveAnalyticsData = void 0;
+exports.getDeveloperResearchEvents = exports.getDeveloperResearchSummary = exports.getGenerationOverview = exports.getWeeklyAnalyticsComparison = exports.getBestPerformingPostThisWeek = exports.getAnalyticsSummary = exports.getAnalyticsHistory = exports.getAnalyticsAudienceSnapshotsByUserId = exports.saveAnalyticsAudienceSnapshot = exports.getAnalyticsByUserId = exports.saveAnalyticsData = void 0;
 const constants_1 = require("../../config/constants");
 const subscriptions_1 = require("./subscriptions");
+const timezone_1 = require("../../lib/timezone");
 const DEFAULT_PAGE = 1;
 const DEFAULT_LIMIT = 20;
 const toNumber = (value) => typeof value === 'number'
@@ -18,6 +19,39 @@ const toStringArray = (value) => Array.isArray(value)
         .map((entry) => entry.trim())
         .filter(Boolean)
     : [];
+const toAudienceBreakdownItems = (value) => {
+    if (Array.isArray(value)) {
+        return value
+            .map((entry) => {
+            if (typeof entry === 'string' && entry.trim()) {
+                return { label: entry.trim(), value: 1 };
+            }
+            const record = toRecord(entry);
+            const label = typeof record.label === 'string'
+                ? record.label
+                : typeof record.name === 'string'
+                    ? record.name
+                    : typeof record.key === 'string'
+                        ? record.key
+                        : null;
+            if (!label?.trim()) {
+                return null;
+            }
+            return {
+                label: label.trim(),
+                value: toNumber(record.value ?? record.count ?? record.total ?? record.percentage),
+            };
+        })
+            .filter((entry) => Boolean(entry));
+    }
+    return Object.entries(toRecord(value))
+        .map(([label, rawValue]) => ({
+        label,
+        value: toNumber(rawValue),
+    }))
+        .filter((entry) => entry.label.trim().length > 0);
+};
+const toActiveHoursMap = (value) => Object.fromEntries(Object.entries(toRecord(value)).map(([key, rawValue]) => [key, toNumber(rawValue)]));
 const incrementCounter = (map, rawValue, normalizer) => {
     if (typeof rawValue !== 'string') {
         return;
@@ -43,7 +77,7 @@ const topItemsFromMap = (map, limit = 5) => [...map.entries()]
 }));
 const normalizePage = (page) => Number.isFinite(page) && page && page > 0 ? page : DEFAULT_PAGE;
 const normalizeLimit = (limit) => Number.isFinite(limit) && limit && limit > 0 ? limit : DEFAULT_LIMIT;
-const getEngagementScore = (item) => item.likes + item.comments + item.shares + item.saves;
+const getEngagementScore = (item) => item.likes + item.comments + item.shares + item.saves + item.reactions;
 const normalizePlatformLabel = (value) => {
     if (!value) {
         return 'Other';
@@ -69,22 +103,14 @@ const normalizePlatformLabel = (value) => {
     }
     return normalized.charAt(0).toUpperCase() + normalized.slice(1);
 };
-const getCurrentMonthWindow = () => {
-    const now = new Date();
-    const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
-    const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
-    return {
-        start: start.toISOString(),
-        end: end.toISOString(),
-    };
-};
+const getCurrentMonthWindow = () => (0, timezone_1.getIstMonthWindow)();
 const getCurrentWeekWindow = () => {
     const now = new Date();
-    const currentDay = now.getUTCDay();
+    const currentDay = (0, timezone_1.getIstDayOfWeek)(now);
     const daysSinceMonday = (currentDay + 6) % 7;
-    const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - daysSinceMonday));
-    const end = new Date(start);
-    end.setUTCDate(end.getUTCDate() + 7);
+    const todayStart = (0, timezone_1.startOfIstDay)(now);
+    const start = (0, timezone_1.addIstDays)(todayStart, -daysSinceMonday);
+    const end = (0, timezone_1.addIstDays)(start, 7);
     return {
         start: start.toISOString(),
         end: end.toISOString(),
@@ -93,13 +119,14 @@ const getCurrentWeekWindow = () => {
 const getPreviousWeekWindow = () => {
     const { start } = getCurrentWeekWindow();
     const currentStart = new Date(start);
-    const previousStart = new Date(currentStart);
-    previousStart.setUTCDate(previousStart.getUTCDate() - 7);
+    const previousStart = (0, timezone_1.addIstDays)(currentStart, -7);
     return {
         start: previousStart.toISOString(),
         end: currentStart.toISOString(),
     };
 };
+const startOfIstDayIso = (value) => (0, timezone_1.getIstDayWindow)(new Date(value)).start;
+const endOfIstDayIso = (value) => (0, timezone_1.getIstDayWindow)(new Date(value)).end;
 const toAnalyticsData = (row) => ({
     id: row.id,
     userId: row.user_id,
@@ -107,13 +134,50 @@ const toAnalyticsData = (row) => ({
     contentId: row.content_id,
     platform: row.platform,
     postExternalId: row.post_external_id,
+    postType: row.post_type ?? null,
+    caption: row.caption ?? null,
+    mediaUrl: row.media_url ?? null,
+    thumbnailUrl: row.thumbnail_url ?? row.media_url ?? null,
     reach: toNumber(row.reach),
     impressions: toNumber(row.impressions),
     likes: toNumber(row.likes),
     comments: toNumber(row.comments),
     shares: toNumber(row.shares),
     saves: toNumber(row.saves),
+    reactions: toNumber(row.reactions),
+    videoPlays: toNumber(row.video_plays),
+    replays: toNumber(row.replays),
+    exits: toNumber(row.exits),
+    profileVisits: toNumber(row.profile_visits),
+    postClicks: toNumber(row.post_clicks),
+    pageLikes: toNumber(row.page_likes),
+    completionRate: row.completion_rate === null || row.completion_rate === undefined
+        ? null
+        : Number(row.completion_rate),
+    followersAtPostTime: row.followers_at_post_time === null || row.followers_at_post_time === undefined
+        ? null
+        : toNumber(row.followers_at_post_time),
     engagementRate: row.engagement_rate === null ? null : Number(row.engagement_rate),
+    publishedTime: row.published_time ?? null,
+    topComments: toStringArray(row.top_comments),
+    recordedAt: row.recorded_at,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+});
+const toAnalyticsAudienceSnapshot = (row) => ({
+    id: row.id,
+    userId: row.user_id,
+    socialAccountId: row.social_account_id,
+    platform: row.platform,
+    followers: toNumber(row.followers),
+    impressions: toNumber(row.impressions),
+    reach: toNumber(row.reach),
+    profileVisits: toNumber(row.profile_visits),
+    pageLikes: toNumber(row.page_likes),
+    ageDistribution: toAudienceBreakdownItems(row.age_distribution),
+    genderDistribution: toAudienceBreakdownItems(row.gender_distribution),
+    topLocations: toAudienceBreakdownItems(row.top_locations),
+    activeHours: toActiveHoursMap(row.active_hours),
     recordedAt: row.recorded_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -146,9 +210,7 @@ const getTableCount = async (client, table, userId) => {
     return count ?? 0;
 };
 const saveAnalyticsData = async (client, userId, input) => {
-    const { data, error } = await client
-        .from('analytics')
-        .insert({
+    const buildInsertPayload = (includeExtendedFields) => ({
         user_id: userId,
         scheduled_post_id: input.scheduledPostId ?? null,
         content_id: input.contentId ?? null,
@@ -162,9 +224,41 @@ const saveAnalyticsData = async (client, userId, input) => {
         saves: input.saves ?? 0,
         engagement_rate: input.engagementRate ?? null,
         recorded_at: input.recordedAt ?? new Date().toISOString(),
-    })
+        ...(includeExtendedFields
+            ? {
+                post_type: input.postType ?? null,
+                caption: input.caption ?? null,
+                media_url: input.mediaUrl ?? null,
+                thumbnail_url: input.thumbnailUrl ?? null,
+                reactions: input.reactions ?? 0,
+                video_plays: input.videoPlays ?? 0,
+                replays: input.replays ?? 0,
+                exits: input.exits ?? 0,
+                profile_visits: input.profileVisits ?? 0,
+                post_clicks: input.postClicks ?? 0,
+                page_likes: input.pageLikes ?? 0,
+                completion_rate: input.completionRate ?? null,
+                followers_at_post_time: input.followersAtPostTime ?? null,
+                published_time: input.publishedTime ?? null,
+                top_comments: input.topComments ?? [],
+            }
+            : {}),
+    });
+    let { data, error } = await client
+        .from('analytics')
+        .insert(buildInsertPayload(true))
         .select('*')
         .single();
+    if (error &&
+        /column .* does not exist|schema cache/i.test(error.message || '')) {
+        const fallback = await client
+            .from('analytics')
+            .insert(buildInsertPayload(false))
+            .select('*')
+            .single();
+        data = fallback.data;
+        error = fallback.error;
+    }
     if (error || !data) {
         throw new Error(error?.message || 'Failed to save analytics data');
     }
@@ -185,6 +279,80 @@ const getAnalyticsByUserId = async (client, userId, options = {}) => {
     return (data ?? []).map((row) => toAnalyticsData(row));
 };
 exports.getAnalyticsByUserId = getAnalyticsByUserId;
+const saveAnalyticsAudienceSnapshot = async (client, userId, input) => {
+    const recordedAt = input.recordedAt ?? new Date().toISOString();
+    const lookupResult = await client
+        .from('analytics_audience_snapshots')
+        .select('*')
+        .eq('user_id', userId)
+        .eq('social_account_id', input.socialAccountId)
+        .gte('recorded_at', startOfIstDayIso(recordedAt))
+        .lt('recorded_at', endOfIstDayIso(recordedAt))
+        .order('recorded_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+    if (lookupResult.error &&
+        /relation .*analytics_audience_snapshots.* does not exist|schema cache/i.test(lookupResult.error.message || '')) {
+        return null;
+    }
+    if (lookupResult.error) {
+        throw new Error(lookupResult.error.message || 'Failed to query audience analytics snapshots');
+    }
+    const payload = {
+        user_id: userId,
+        social_account_id: input.socialAccountId,
+        platform: input.platform,
+        followers: input.followers ?? 0,
+        impressions: input.impressions ?? 0,
+        reach: input.reach ?? 0,
+        profile_visits: input.profileVisits ?? 0,
+        page_likes: input.pageLikes ?? 0,
+        age_distribution: input.ageDistribution ?? [],
+        gender_distribution: input.genderDistribution ?? [],
+        top_locations: input.topLocations ?? [],
+        active_hours: input.activeHours ?? {},
+        recorded_at: recordedAt,
+    };
+    const result = lookupResult.data
+        ? await client
+            .from('analytics_audience_snapshots')
+            .update(payload)
+            .eq('id', lookupResult.data.id)
+            .select('*')
+            .single()
+        : await client
+            .from('analytics_audience_snapshots')
+            .insert(payload)
+            .select('*')
+            .single();
+    if (result.error &&
+        /relation .*analytics_audience_snapshots.* does not exist|schema cache/i.test(result.error.message || '')) {
+        return null;
+    }
+    if (result.error || !result.data) {
+        throw new Error(result.error?.message || 'Failed to save audience analytics snapshot');
+    }
+    return toAnalyticsAudienceSnapshot(result.data);
+};
+exports.saveAnalyticsAudienceSnapshot = saveAnalyticsAudienceSnapshot;
+const getAnalyticsAudienceSnapshotsByUserId = async (client, userId, options = {}) => {
+    let query = client
+        .from('analytics_audience_snapshots')
+        .select('*')
+        .eq('user_id', userId)
+        .order('recorded_at', { ascending: false });
+    query = applyDateRange(query, 'recorded_at', options);
+    const { data, error } = await query;
+    if (error &&
+        /relation .*analytics_audience_snapshots.* does not exist|schema cache/i.test(error.message || '')) {
+        return [];
+    }
+    if (error) {
+        throw new Error(error.message || 'Failed to fetch audience analytics snapshots');
+    }
+    return (data ?? []).map((row) => toAnalyticsAudienceSnapshot(row));
+};
+exports.getAnalyticsAudienceSnapshotsByUserId = getAnalyticsAudienceSnapshotsByUserId;
 const getAnalyticsHistory = async (client, userId, options = {}) => {
     const page = normalizePage(options.page);
     const limit = normalizeLimit(options.limit);
@@ -285,10 +453,14 @@ const getWeeklyAnalyticsComparison = async (client, userId) => {
 exports.getWeeklyAnalyticsComparison = getWeeklyAnalyticsComparison;
 const getGenerationOverview = async (client, userId) => {
     const { start, end } = getCurrentMonthWindow();
-    const [totalGeneratedContent, totalGeneratedImages, totalScheduledPosts, contentGenerationsToday, imageGenerationsToday, contentGenerationsThisMonth, imageGenerationsThisMonth, scheduledStatusesResult, generatedContentInsightsResult, analyticsRecordsThisMonthResult,] = await Promise.all([
+    const [totalGeneratedContent, totalGeneratedImages, totalScheduledPostsResult, contentGenerationsToday, imageGenerationsToday, contentGenerationsThisMonth, imageGenerationsThisMonth, scheduledStatusesResult, generatedContentInsightsResult, analyticsRecordsThisMonthResult,] = await Promise.all([
         getTableCount(client, 'generated_content', userId),
         getTableCount(client, 'generated_images', userId),
-        getTableCount(client, 'scheduled_posts', userId),
+        client
+            .from('scheduled_posts')
+            .select('*', { count: 'exact', head: true })
+            .eq('user_id', userId)
+            .in('status', ['pending', 'scheduled']),
         (0, subscriptions_1.getDailyUsageCount)(client, userId, constants_1.FEATURE_KEYS.contentGeneration),
         (0, subscriptions_1.getDailyUsageCount)(client, userId, constants_1.FEATURE_KEYS.imageGeneration),
         (0, subscriptions_1.getMonthlyUsageCount)(client, userId, constants_1.FEATURE_KEYS.contentGeneration),
@@ -316,6 +488,10 @@ const getGenerationOverview = async (client, userId) => {
     if (analyticsRecordsThisMonthResult.error) {
         throw new Error(analyticsRecordsThisMonthResult.error.message ||
             'Failed to fetch analytics record count');
+    }
+    if (totalScheduledPostsResult.error) {
+        throw new Error(totalScheduledPostsResult.error.message ||
+            'Failed to fetch active scheduled post count');
     }
     const scheduledPostStatusBreakdown = constants_1.SCHEDULED_POST_STATUSES.reduce((accumulator, status) => ({
         ...accumulator,
@@ -418,7 +594,7 @@ const getGenerationOverview = async (client, userId) => {
     return {
         totalGeneratedContent,
         totalGeneratedImages,
-        totalScheduledPosts,
+        totalScheduledPosts: totalScheduledPostsResult.count ?? 0,
         scheduledPostStatusBreakdown,
         contentGenerationsToday,
         imageGenerationsToday,

@@ -11,6 +11,12 @@ const images_1 = require("../db/queries/images");
 const subscriptions_1 = require("../db/queries/subscriptions");
 const supabase_1 = require("../db/supabase");
 const imageRuntimePolicy_service_1 = require("../services/imageRuntimePolicy.service");
+const requestCancellation_1 = require("../lib/requestCancellation");
+const generatedAssetPayloads_1 = require("../lib/generatedAssetPayloads");
+const r2Storage_service_1 = require("../services/r2Storage.service");
+const contentGenerationQueue_service_1 = require("../services/contentGenerationQueue.service");
+const imageGenerationQueue_service_1 = require("../services/imageGenerationQueue.service");
+const runtimeCache_service_1 = require("../services/runtimeCache.service");
 const trimText = (value, maxLength = 120) => {
     const normalized = value.replace(/\s+/g, ' ').trim();
     return normalized.length > maxLength
@@ -49,6 +55,32 @@ const buildImagePromptSummary = (input) => {
 };
 const buildAssistantCopySummary = (productName) => `Generated a copy pack for ${productName}.`;
 const buildAssistantImageSummary = (productName) => `Generated an image for ${productName}.`;
+const logWorkspaceCopyFailure = (userId, error) => {
+    if (error instanceof gemini_1.ContentGenerationProvidersExhaustedError) {
+        console.error('[workspace-copy] All content generation providers failed', {
+            userId,
+            failures: error.failures,
+        });
+        return;
+    }
+    console.error('[workspace-copy] Content generation failed', {
+        userId,
+        error: error instanceof Error ? error.message : error,
+    });
+};
+const logWorkspaceImageFailure = (userId, error) => {
+    if (error instanceof imageGen_1.ImageGenerationProvidersExhaustedError) {
+        console.error('[workspace-image] All image generation providers failed', {
+            userId,
+            failures: error.failures,
+        });
+        return;
+    }
+    console.error('[workspace-image] Image generation failed', {
+        userId,
+        error: error instanceof Error ? error.message : error,
+    });
+};
 const resolveConversationType = (currentType, nextType) => {
     if (!currentType || currentType === nextType) {
         return nextType;
@@ -244,7 +276,16 @@ const generateWorkspaceCopy = async (req, res) => {
             message: 'Unauthorized',
         });
     }
+    const cancellation = (0, requestCancellation_1.createRequestCancellation)(req, res);
+    const startedAt = Date.now();
     try {
+        console.info('[workspace-copy] Generate content request started', {
+            userId: req.user.id,
+            productName: req.body.productName,
+            conversationId: req.body.conversationId ?? null,
+            platform: req.body.platform ?? null,
+            goal: req.body.goal ?? null,
+        });
         const client = (0, supabase_1.requireUserClient)(req.accessToken);
         const existingConversation = await ensureConversation(client, req.user.id, req.body.conversationId);
         const [brandProfile, subscription, reelScriptUsageCount] = await Promise.all([
@@ -259,10 +300,21 @@ const generateWorkspaceCopy = async (req, res) => {
         const plan = subscription?.plan ?? 'free';
         const reelScriptLimit = (0, subscriptions_1.getPlanFeatureLimit)(plan, constants_1.FEATURE_KEYS.reelScriptGeneration);
         const includeReelScript = reelScriptLimit === null || reelScriptUsageCount < reelScriptLimit;
-        const contentPack = await (0, gemini_1.generateContentPack)(brandProfile, generationInput, {
+        const { jobId, result: { contentPack, provider }, } = await (0, contentGenerationQueue_service_1.enqueueContentGenerationJob)({
+            userId: req.user.id,
+            brandProfile,
+            input: generationInput,
             includeReelScript,
+        }, cancellation.signal);
+        console.info('[workspace-copy] Queue job resolved', {
+            userId: req.user.id,
+            jobId,
+            provider,
+            durationMs: Date.now() - startedAt,
         });
+        const hasReelScript = (0, gemini_1.hasMeaningfulReelScript)(contentPack.reelScript);
         const userPromptSummary = buildCopyPromptSummary(generationInput);
+        (0, requestCancellation_1.throwIfRequestCancelled)(cancellation.signal, 'Content generation cancelled by user.');
         const conversation = existingConversation ??
             (await (0, generateWorkspace_1.createGenerateConversation)(client, req.user.id, {
                 title: deriveConversationTitle([
@@ -273,12 +325,34 @@ const generateWorkspaceCopy = async (req, res) => {
                 type: 'copy',
                 lastMessagePreview: userPromptSummary,
             }));
+        (0, requestCancellation_1.throwIfRequestCancelled)(cancellation.signal, 'Content generation cancelled by user.');
+        const storedContentAsset = await (0, r2Storage_service_1.storeGeneratedContentInR2)({
+            userId: req.user.id,
+            productName: generationInput.productName,
+            payload: (0, generatedAssetPayloads_1.buildGeneratedContentFilePayload)({
+                userId: req.user.id,
+                provider,
+                brandProfileId: brandProfile?.id ?? null,
+                conversationId: conversation.id,
+                productInput: generationInput,
+                contentPack,
+                reelScriptIncluded: hasReelScript,
+            }),
+            signal: cancellation.signal,
+        });
         const content = await (0, content_1.saveGeneratedContent)(client, req.user.id, {
             ...generationInput,
             conversationId: conversation.id,
             brandProfileId: brandProfile?.id ?? null,
+            storageProvider: storedContentAsset?.provider ?? null,
+            storageBucket: storedContentAsset?.bucket ?? null,
+            storageObjectKey: storedContentAsset?.objectKey ?? null,
+            storagePublicUrl: storedContentAsset?.publicUrl ?? null,
+            storageContentType: storedContentAsset?.contentType ?? null,
+            storageSizeBytes: storedContentAsset?.sizeBytes ?? null,
             ...contentPack,
         });
+        (0, requestCancellation_1.throwIfRequestCancelled)(cancellation.signal, 'Content generation cancelled by user.');
         const userMessage = await (0, generateWorkspace_1.createGenerateMessage)(client, req.user.id, {
             conversationId: conversation.id,
             role: 'user',
@@ -300,6 +374,7 @@ const generateWorkspaceCopy = async (req, res) => {
             },
             generationId: content.id,
         });
+        (0, requestCancellation_1.throwIfRequestCancelled)(cancellation.signal, 'Content generation cancelled by user.');
         await (0, generateWorkspace_1.createGeneratedAssets)(client, req.user.id, {
             conversationId: conversation.id,
             messageId: assistantMessage.id,
@@ -320,7 +395,7 @@ const generateWorkspaceCopy = async (req, res) => {
                         hashtags: content.hashtags,
                     },
                 },
-                ...(includeReelScript
+                ...(hasReelScript
                     ? [
                         {
                             assetType: 'script',
@@ -337,10 +412,11 @@ const generateWorkspaceCopy = async (req, res) => {
             type: resolveConversationType(conversation.type, 'copy'),
             isArchived: false,
         });
+        (0, requestCancellation_1.throwIfRequestCancelled)(cancellation.signal, 'Content generation cancelled by user.');
         await (0, content_1.trackContentGenerationUsage)(client, req.user.id, {
             contentId: content.id,
             conversationId: conversation.id,
-            provider: 'gemini',
+            provider,
             brandProfileId: brandProfile?.id ?? null,
             platform: generationInput.platform ?? null,
             goal: generationInput.goal ?? null,
@@ -349,35 +425,61 @@ const generateWorkspaceCopy = async (req, res) => {
             productName: generationInput.productName,
             productDescription: generationInput.productDescription ?? null,
             keywords: generationInput.keywords ?? [],
-            reelScriptIncluded: includeReelScript,
-        });
-        if (includeReelScript) {
+            reelScriptIncluded: hasReelScript,
+        }, `content-generation:${content.id}`);
+        if (hasReelScript) {
+            (0, requestCancellation_1.throwIfRequestCancelled)(cancellation.signal, 'Content generation cancelled by user.');
             await (0, content_1.trackReelScriptGenerationUsage)(client, req.user.id, {
                 contentId: content.id,
                 conversationId: conversation.id,
-                provider: 'gemini',
+                provider,
                 brandProfileId: brandProfile?.id ?? null,
                 platform: generationInput.platform ?? null,
                 goal: generationInput.goal ?? null,
                 tone: generationInput.tone ?? null,
                 audience: generationInput.audience ?? null,
                 productName: generationInput.productName,
-            });
+            }, `reel-script-generation:${content.id}`);
         }
+        await (0, runtimeCache_service_1.invalidateAnalyticsRuntimeCache)(req.user.id);
         const thread = await (0, generateWorkspace_1.getGenerateConversationThread)(client, req.user.id, conversation.id);
+        console.info('[workspace-copy] Generate content request succeeded', {
+            userId: req.user.id,
+            conversationId: conversation.id,
+            contentId: content.id,
+            provider,
+            hasReelScript,
+            durationMs: Date.now() - startedAt,
+        });
         return res.status(200).json({
             status: 'success',
             message: 'Content generated successfully',
             data: thread,
+            meta: {
+                jobId,
+            },
         });
     }
     catch (error) {
+        if ((0, requestCancellation_1.isRequestCancelledError)(error)) {
+            console.info('[workspace-copy] Generate content request cancelled', {
+                userId: req.user?.id ?? 'unknown-user',
+                conversationId: req.body.conversationId ?? null,
+            });
+            return;
+        }
+        logWorkspaceCopyFailure(req.user?.id ?? 'unknown-user', error);
         return res.status(500).json({
             status: 'error',
-            message: error instanceof Error
+            message: error instanceof gemini_1.ContentGenerationProvidersExhaustedError
                 ? error.message
-                : 'Failed to generate content',
+                : error instanceof Error
+                    ? error.message
+                    : 'Failed to generate content',
         });
+    }
+    finally {
+        cancellation.cleanup();
     }
 };
 exports.generateWorkspaceCopy = generateWorkspaceCopy;
@@ -388,7 +490,14 @@ const generateWorkspaceImage = async (req, res) => {
             message: 'Unauthorized',
         });
     }
+    const cancellation = (0, requestCancellation_1.createRequestCancellation)(req, res);
     try {
+        console.info('[workspace-image] Generate image request started', {
+            userId: req.user.id,
+            productName: req.body.productName,
+            conversationId: req.body.conversationId ?? null,
+            contentId: req.body.contentId ?? null,
+        });
         const client = (0, supabase_1.requireUserClient)(req.accessToken);
         const existingConversation = await ensureConversation(client, req.user.id, req.body.conversationId);
         const brandProfile = await (0, brandProfiles_1.getBrandProfileByUserId)(client, req.user.id);
@@ -397,8 +506,22 @@ const generateWorkspaceImage = async (req, res) => {
             ...resolveBrandPreference(brandProfile, req.body.useBrandName),
         };
         const runtimePolicy = req.imageRuntimePolicy ?? (0, imageRuntimePolicy_service_1.resolveImageRuntimePolicy)('free', 0);
-        const result = await (0, imageRuntimePolicy_service_1.enqueueImageGeneration)(runtimePolicy, () => (0, imageGen_1.generateProductImage)(brandProfile, generationInput));
+        const { jobId, result } = await (0, imageGenerationQueue_service_1.enqueueImageGenerationJob)({
+            runtimePolicy,
+            data: {
+                userId: req.user.id,
+                brandProfile,
+                input: generationInput,
+            },
+        }, cancellation.signal);
         const userPromptSummary = buildImagePromptSummary(generationInput);
+        (0, requestCancellation_1.throwIfRequestCancelled)(cancellation.signal, 'Image generation cancelled by user.');
+        const storedImageAsset = await (0, r2Storage_service_1.storeGeneratedImageInR2)({
+            userId: req.user.id,
+            productName: generationInput.productName,
+            imageUrl: result.imageUrl,
+            signal: cancellation.signal,
+        });
         const conversation = existingConversation ??
             (await (0, generateWorkspace_1.createGenerateConversation)(client, req.user.id, {
                 title: deriveConversationTitle([
@@ -409,14 +532,22 @@ const generateWorkspaceImage = async (req, res) => {
                 type: 'image',
                 lastMessagePreview: userPromptSummary,
             }));
+        (0, requestCancellation_1.throwIfRequestCancelled)(cancellation.signal, 'Image generation cancelled by user.');
         const image = await (0, images_1.saveGeneratedImage)(client, req.user.id, {
             contentId: generationInput.contentId ?? null,
             conversationId: conversation.id,
             sourceImageUrl: generationInput.sourceImageUrl ?? null,
-            generatedImageUrl: result.imageUrl,
+            generatedImageUrl: storedImageAsset?.publicUrl ?? result.imageUrl,
             backgroundStyle: generationInput.backgroundStyle ?? null,
             prompt: result.promptUsed,
+            storageProvider: storedImageAsset?.provider ?? null,
+            storageBucket: storedImageAsset?.bucket ?? null,
+            storageObjectKey: storedImageAsset?.objectKey ?? null,
+            storagePublicUrl: storedImageAsset?.publicUrl ?? null,
+            storageContentType: storedImageAsset?.contentType ?? null,
+            storageSizeBytes: storedImageAsset?.sizeBytes ?? null,
         });
+        (0, requestCancellation_1.throwIfRequestCancelled)(cancellation.signal, 'Image generation cancelled by user.');
         const userMessage = await (0, generateWorkspace_1.createGenerateMessage)(client, req.user.id, {
             conversationId: conversation.id,
             role: 'user',
@@ -439,6 +570,7 @@ const generateWorkspaceImage = async (req, res) => {
             },
             generationId: image.id,
         });
+        (0, requestCancellation_1.throwIfRequestCancelled)(cancellation.signal, 'Image generation cancelled by user.');
         await (0, generateWorkspace_1.createGeneratedAssets)(client, req.user.id, {
             conversationId: conversation.id,
             messageId: assistantMessage.id,
@@ -467,6 +599,7 @@ const generateWorkspaceImage = async (req, res) => {
             type: resolveConversationType(conversation.type, 'image'),
             isArchived: false,
         });
+        (0, requestCancellation_1.throwIfRequestCancelled)(cancellation.signal, 'Image generation cancelled by user.');
         await (0, images_1.trackImageGenerationUsage)(client, req.user.id, {
             imageId: image.id,
             conversationId: conversation.id,
@@ -482,27 +615,50 @@ const generateWorkspaceImage = async (req, res) => {
             speedTier: runtimePolicy.speedTier,
             throttleDelayMs: runtimePolicy.throttleDelayMs,
             dailyUsageCountBeforeRequest: runtimePolicy.usageCount,
-        });
+        }, `image-generation:${image.id}`);
+        await (0, runtimeCache_service_1.invalidateAnalyticsRuntimeCache)(req.user.id);
         res.setHeader('X-PrixmoAI-Queue-Tier', runtimePolicy.queueTier);
         res.setHeader('X-PrixmoAI-Speed-Tier', runtimePolicy.speedTier);
         res.setHeader('X-PrixmoAI-Throttle-Delay-Ms', String(runtimePolicy.throttleDelayMs));
         const thread = await (0, generateWorkspace_1.getGenerateConversationThread)(client, req.user.id, conversation.id);
+        console.info('[workspace-image] Generate image request succeeded', {
+            userId: req.user.id,
+            conversationId: conversation.id,
+            imageId: image.id,
+            provider: result.provider,
+        });
         return res.status(200).json({
             status: 'success',
             message: `Image generated successfully using ${result.provider}`,
             data: thread,
             meta: {
+                jobId,
                 runtime: runtimePolicy,
             },
         });
     }
     catch (error) {
+        if ((0, requestCancellation_1.isRequestCancelledError)(error)) {
+            await (0, imageRuntimePolicy_service_1.releaseImageRateLimitReservation)(req.user?.id ?? '', req.imageRateLimitReservation);
+            req.imageRateLimitReservation = undefined;
+            console.info('[workspace-image] Image generation request cancelled', {
+                userId: req.user?.id ?? 'unknown-user',
+                conversationId: req.body.conversationId ?? null,
+            });
+            return;
+        }
+        logWorkspaceImageFailure(req.user?.id ?? 'unknown-user', error);
         return res.status(502).json({
             status: 'error',
-            message: error instanceof Error
+            message: error instanceof imageGen_1.ImageGenerationProvidersExhaustedError
                 ? error.message
-                : 'Failed to generate image',
+                : error instanceof Error
+                    ? error.message
+                    : 'Failed to generate image',
         });
+    }
+    finally {
+        cancellation.cleanup();
     }
 };
 exports.generateWorkspaceImage = generateWorkspaceImage;

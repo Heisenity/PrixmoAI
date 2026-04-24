@@ -83,6 +83,9 @@ export const DEFAULT_GROQ_MODEL =
 export const GEMINI_GENERATION_TIMEOUT_MS = Number(
   process.env.GEMINI_GENERATION_TIMEOUT_MS || 25_000
 );
+export const GEMINI_FALLBACK_GRACE_MS = Number(
+  process.env.GEMINI_FALLBACK_GRACE_MS || 9_000
+);
 export const GROQ_GENERATION_TIMEOUT_MS = Number(
   process.env.GROQ_GENERATION_TIMEOUT_MS || 18_000
 );
@@ -96,12 +99,12 @@ export const GROQ_MAX_GENERATION_TIMEOUT_MS = Number(
   process.env.GROQ_MAX_GENERATION_TIMEOUT_MS || 90_000
 );
 export const GROQ_TRANSCRIPTION_MODEL =
-  process.env.GROQ_TRANSCRIPTION_MODEL || 'whisper-large-v3-turbo';
+  process.env.GROQ_TRANSCRIPTION_MODEL || 'whisper-large-v3';
 export const GROQ_TRANSCRIPTION_TIMEOUT_MS = Number(
-  process.env.GROQ_TRANSCRIPTION_TIMEOUT_MS || 60_000
+  process.env.GROQ_TRANSCRIPTION_TIMEOUT_MS || 5 * 60_000
 );
 export const TRANSCRIPTION_MAX_AUDIO_BYTES = Number(
-  process.env.TRANSCRIPTION_MAX_AUDIO_BYTES || 10 * 1024 * 1024
+  process.env.TRANSCRIPTION_MAX_AUDIO_BYTES || 50 * 1024 * 1024
 );
 export const META_GRAPH_VERSION = process.env.META_GRAPH_VERSION || 'v23.0';
 export const META_FACEBOOK_APP_ID =

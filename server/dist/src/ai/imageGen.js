@@ -3,18 +3,96 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.generateProductImage = void 0;
+exports.generateProductImage = exports.ImageGenerationProvidersExhaustedError = void 0;
 const dotenv_1 = __importDefault(require("dotenv"));
+const requestCancellation_1 = require("../lib/requestCancellation");
+const providerCircuit_service_1 = require("../services/providerCircuit.service");
 dotenv_1.default.config();
+class ImageGenerationProvidersExhaustedError extends Error {
+    constructor(failures) {
+        super(resolveUserFacingFailureMessage(failures));
+        this.name = 'ImageGenerationProvidersExhaustedError';
+        this.failures = failures;
+    }
+}
+exports.ImageGenerationProvidersExhaustedError = ImageGenerationProvidersExhaustedError;
+const KNOWN_BFL_FLUX_ENDPOINT = 'https://api.bfl.ai/v1/flux-pro-1.1';
+const DEFAULT_HF_FLUX_MODEL = 'black-forest-labs/FLUX.1-dev';
+const HF_INFERENCE_BASE_URL = 'https://api-inference.huggingface.co/models';
+const HF_ROUTER_INFERENCE_BASE_URL = 'https://router.huggingface.co/hf-inference/models';
 const PIXAZO_GENERATE_ENDPOINT = 'https://gateway.pixazo.ai/flux-1-schnell/v1/getDataBatch';
 const PIXAZO_STATUS_ENDPOINT = 'https://gateway.pixazo.ai/flux-1-schnell/v1/checkStatus';
 const AIMLAPI_GENERATE_ENDPOINT = 'https://api.aimlapi.com/v1/images/generations';
-const DEFAULT_AIMLAPI_MODEL = process.env.AIMLAPI_IMAGE_MODEL || 'alibaba/wan-2-6-image';
-const PIXAZO_TIMEOUT_MS = 75000;
-const AIMLAPI_TIMEOUT_MS = 75000;
+const DEFAULT_CLOUDFLARE_WORKER_IMAGE_URL = 'https://prixmoai.computerbro1234.workers.dev';
+const CLOUDFLARE_WORKER_TIMEOUT_MS = Number(process.env.CLOUDFLARE_WORKER_GENERATION_TIMEOUT_MS || 45000);
+const FLUX_TIMEOUT_MS = Number(process.env.FLUX_GENERATION_TIMEOUT_MS || 45000);
+const PIXAZO_TIMEOUT_MS = Number(process.env.PIXAZO_GENERATION_TIMEOUT_MS || 75000);
+const AIMLAPI_TIMEOUT_MS = Number(process.env.AIMLAPI_GENERATION_TIMEOUT_MS || 45000);
 const IMAGE_VALIDATION_TIMEOUT_MS = 15000;
-const PIXAZO_POLL_INTERVAL_MS = 3000;
-const PIXAZO_MAX_POLLS = 20;
+const FLUX_POLL_INTERVAL_MS = Number(process.env.FLUX_POLL_INTERVAL_MS || 3000);
+const FLUX_MAX_POLLS = Number(process.env.FLUX_MAX_POLLS || 6);
+const PIXAZO_POLL_INTERVAL_MS = Number(process.env.PIXAZO_POLL_INTERVAL_MS || 3000);
+const PIXAZO_MAX_POLLS = Number(process.env.PIXAZO_MAX_POLLS || 20);
+const AIMLAPI_MAX_PROMPT_LENGTH = Number(process.env.AIMLAPI_MAX_PROMPT_LENGTH || 1900);
+const DEFAULT_AIMLAPI_MODEL = process.env.AIMLAPI_IMAGE_MODEL || 'alibaba/wan-2-6-image';
+let huggingFaceInferenceModulePromise = null;
+const getOptionalEnv = (key) => {
+    const value = process.env[key];
+    return typeof value === 'string' && value.trim() ? value.trim() : null;
+};
+const getCloudflareWorkerConfig = () => {
+    const endpoint = getOptionalEnv('CLOUDFLARE_WORKER_IMAGE_URL') ||
+        DEFAULT_CLOUDFLARE_WORKER_IMAGE_URL;
+    const apiKey = getOptionalEnv('CLOUDFLARE_WORKER_API_KEY');
+    if (!apiKey) {
+        throw new Error('CLOUDFLARE_WORKER_API_KEY is not configured');
+    }
+    return {
+        endpoint,
+        apiKey,
+    };
+};
+const loadHuggingFaceInferenceModule = () => {
+    if (!huggingFaceInferenceModulePromise) {
+        huggingFaceInferenceModulePromise = import('@huggingface/inference');
+    }
+    return huggingFaceInferenceModulePromise;
+};
+const resolveUserFacingFailureMessage = (failures) => {
+    if (!failures.length) {
+        return "We couldn't generate your image right now. Please try again.";
+    }
+    const codes = new Set(failures.map((failure) => failure.code));
+    if (codes.has('source_image_unsupported')) {
+        return 'This request uses a reference image, and the available providers could not complete image-to-image generation right now. Try again in a moment, or remove the reference image to generate from text only.';
+    }
+    if (codes.has('prompt_too_long')) {
+        return 'Your image brief is too long for the current providers. Shorten the product description or prompt and try again.';
+    }
+    if (codes.size === 1 && codes.has('timeout')) {
+        return 'Image generation is taking longer than expected right now. Please try again in a moment.';
+    }
+    if (codes.has('rate_limited')) {
+        return 'The image providers are busy right now. Please wait a moment and try again.';
+    }
+    if (codes.has('insufficient_credits')) {
+        return 'One of the image providers has run out of credits. Please top up that provider account or try again with another available provider.';
+    }
+    if (codes.has('configuration')) {
+        return 'One of the image providers is temporarily misconfigured. Please try again in a moment.';
+    }
+    if (codes.has('invalid_response')) {
+        return 'The image provider returned an invalid result. Please try again.';
+    }
+    if (codes.has('provider_unavailable')) {
+        return 'The image providers are temporarily unavailable. Please try again in a moment.';
+    }
+    if (codes.has('request_rejected')) {
+        return 'This image request could not be processed in its current form. Please adjust the prompt and try again.';
+    }
+    return failures[0]?.userMessage ||
+        "We couldn't generate your image right now. Please try again.";
+};
 const buildBrandDirection = (brandProfile) => {
     if (!brandProfile) {
         return [];
@@ -57,8 +135,34 @@ const buildImagePrompt = (brandProfile, input) => {
     ];
     return parts.filter(Boolean).join(' ');
 };
-const sleep = (ms) => new Promise((resolve) => {
-    setTimeout(resolve, ms);
+const truncatePrompt = (prompt, maxLength) => {
+    const normalized = prompt.replace(/\s+/g, ' ').trim();
+    if (normalized.length <= maxLength) {
+        return normalized;
+    }
+    const truncated = normalized.slice(0, Math.max(0, maxLength - 1));
+    const lastWhitespaceIndex = truncated.lastIndexOf(' ');
+    if (lastWhitespaceIndex > Math.floor(maxLength * 0.7)) {
+        return `${truncated.slice(0, lastWhitespaceIndex).trimEnd()}…`;
+    }
+    return `${truncated.trimEnd()}…`;
+};
+const sleep = (ms, signal) => new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+        reject(new requestCancellation_1.RequestCancelledError('Image generation cancelled by user.'));
+        return;
+    }
+    const timeout = setTimeout(() => {
+        signal?.removeEventListener('abort', handleAbort);
+        resolve();
+    }, ms);
+    const handleAbort = () => {
+        clearTimeout(timeout);
+        reject(new requestCancellation_1.RequestCancelledError('Image generation cancelled by user.'));
+    };
+    signal?.addEventListener('abort', handleAbort, {
+        once: true,
+    });
 });
 const normalizeDimension = (value, fallback) => {
     const safeValue = Number.isFinite(value) && value ? Math.trunc(value) : fallback;
@@ -66,12 +170,53 @@ const normalizeDimension = (value, fallback) => {
     const snapped = Math.round(bounded / 32) * 32;
     return Math.min(1024, Math.max(256, snapped));
 };
-const createTimeoutSignal = (timeoutMs) => {
+const withTimeout = async (timeoutMs, operation, requestSignal) => {
     const controller = new AbortController();
-    setTimeout(() => controller.abort(), timeoutMs);
-    return controller.signal;
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    const handleRequestAbort = () => {
+        controller.abort();
+    };
+    requestSignal?.addEventListener('abort', handleRequestAbort, {
+        once: true,
+    });
+    try {
+        (0, requestCancellation_1.throwIfRequestCancelled)(requestSignal, 'Image generation cancelled by user.');
+        return await operation(controller.signal);
+    }
+    catch (error) {
+        if ((0, requestCancellation_1.isAbortError)(error)) {
+            if (requestSignal?.aborted) {
+                throw new requestCancellation_1.RequestCancelledError('Image generation cancelled by user.');
+            }
+            throw new Error('Request timed out');
+        }
+        throw error;
+    }
+    finally {
+        clearTimeout(timeout);
+        requestSignal?.removeEventListener('abort', handleRequestAbort);
+    }
+};
+const createDeadline = (timeoutMs) => Date.now() + timeoutMs;
+const getRemainingMs = (deadlineAt) => Math.max(0, deadlineAt - Date.now());
+const runWithDeadline = async (deadlineAt, operation, requestSignal) => {
+    const remainingMs = getRemainingMs(deadlineAt);
+    if (remainingMs <= 0) {
+        throw new Error('Request timed out');
+    }
+    return withTimeout(remainingMs, operation, requestSignal);
+};
+const sleepWithinDeadline = async (deadlineAt, delayMs, requestSignal) => {
+    const remainingMs = getRemainingMs(deadlineAt);
+    if (remainingMs <= 0) {
+        throw new Error('Request timed out');
+    }
+    (0, requestCancellation_1.throwIfRequestCancelled)(requestSignal, 'Image generation cancelled by user.');
+    await sleep(Math.min(delayMs, remainingMs), requestSignal);
+    (0, requestCancellation_1.throwIfRequestCancelled)(requestSignal, 'Image generation cancelled by user.');
 };
 const isRecord = (value) => !!value && typeof value === 'object' && !Array.isArray(value);
+const BASE64_IMAGE_PATTERN = /^[A-Za-z0-9+/=\s]+$/;
 const toErrorMessage = (value, fallback) => {
     if (typeof value === 'string' && value.trim()) {
         return value;
@@ -93,7 +238,108 @@ const toErrorMessage = (value, fallback) => {
             return toErrorMessage(value.error, fallback);
         }
     }
+    if (value instanceof Error && value.message.trim()) {
+        return value.message;
+    }
     return fallback;
+};
+const classifyProviderFailure = (provider, error) => {
+    const technicalMessage = toErrorMessage(error, `${provider} image generation failed`);
+    const normalizedMessage = technicalMessage.toLowerCase();
+    if (/source-image guided generation does not support|image-to-image generation right now|remove the reference image to generate from text only/i.test(technicalMessage)) {
+        return {
+            provider,
+            code: 'source_image_unsupported',
+            message: technicalMessage,
+            userMessage: 'This request uses a reference image, and that flow is not available with the current provider right now. Try again in a moment, or remove the reference image to generate from text only.',
+        };
+    }
+    if (/run out of credits|insufficent_credits|insufficient credits|top up your balance|update your payment method/i.test(normalizedMessage)) {
+        return {
+            provider,
+            code: 'insufficient_credits',
+            message: technicalMessage,
+            userMessage: 'This image provider has run out of credits. Please top up that provider account or try again with another available provider.',
+        };
+    }
+    if (/at most 2000 character|too_big|prompt is too long|string must contain at most/i.test(normalizedMessage)) {
+        return {
+            provider,
+            code: 'prompt_too_long',
+            message: technicalMessage,
+            userMessage: 'Your image brief is too long for the current providers. Shorten the product description or prompt and try again.',
+        };
+    }
+    if (/request timed out|timed out before returning an image|timeout/i.test(normalizedMessage)) {
+        return {
+            provider,
+            code: 'timeout',
+            message: technicalMessage,
+            userMessage: 'Image generation is taking longer than expected right now. Please try again in a moment.',
+        };
+    }
+    if (/429|too many requests|rate limit|quota/i.test(normalizedMessage)) {
+        return {
+            provider,
+            code: 'rate_limited',
+            message: technicalMessage,
+            userMessage: 'The image providers are busy right now. Please wait a moment and try again.',
+        };
+    }
+    if (/503|502|500|internal server error|service unavailable|bad gateway|overloaded|temporarily unavailable/i.test(normalizedMessage)
+        || /temporarily skipped after repeated failures/i.test(normalizedMessage)) {
+        return {
+            provider,
+            code: 'provider_unavailable',
+            message: technicalMessage,
+            userMessage: 'The image providers are temporarily unavailable. Please try again in a moment.',
+        };
+    }
+    if (/did not return an image url|non-image response|invalid image url|invalid image|invalid result|unexpected format/i.test(normalizedMessage)) {
+        return {
+            provider,
+            code: 'invalid_response',
+            message: technicalMessage,
+            userMessage: 'The image provider returned an invalid result. Please try again.',
+        };
+    }
+    if (/cannot post \/models\//i.test(normalizedMessage)) {
+        return {
+            provider,
+            code: 'configuration',
+            message: technicalMessage,
+            userMessage: 'Flux is pointing to the wrong endpoint. Leave FLUX_API_ENDPOINT empty when using a Hugging Face token, then restart the server.',
+        };
+    }
+    if (/not configured|forbidden|unauthorized|401|403/i.test(normalizedMessage)) {
+        return {
+            provider,
+            code: 'configuration',
+            message: technicalMessage,
+            userMessage: 'One of the image providers is temporarily misconfigured. Please try again in a moment.',
+        };
+    }
+    if (/400|bad request|invalid payload|unprocessable/i.test(normalizedMessage)) {
+        return {
+            provider,
+            code: 'request_rejected',
+            message: technicalMessage,
+            userMessage: 'This image request could not be processed in its current form. Please adjust the prompt and try again.',
+        };
+    }
+    return {
+        provider,
+        code: 'unknown',
+        message: technicalMessage,
+        userMessage: "We couldn't generate your image right now. Please try again.",
+    };
+};
+const toDataImageUrl = (value, mimeType = 'image/png') => {
+    const normalized = value.trim();
+    if (!normalized || !BASE64_IMAGE_PATTERN.test(normalized)) {
+        return null;
+    }
+    return `data:${mimeType};base64,${normalized.replace(/\s+/g, '')}`;
 };
 const extractImageUrl = (value) => {
     if (typeof value === 'string') {
@@ -117,10 +363,27 @@ const extractImageUrl = (value) => {
     if (!isRecord(value)) {
         return null;
     }
+    const base64Candidates = [
+        value.b64_json,
+        value.base64,
+        value.image_base64,
+        value.imageBase64,
+    ];
+    for (const candidate of base64Candidates) {
+        if (typeof candidate === 'string') {
+            const dataUrl = toDataImageUrl(candidate);
+            if (dataUrl) {
+                return dataUrl;
+            }
+        }
+    }
     const preferredKeys = [
         'url',
         'image_url',
         'imageUrl',
+        'sample',
+        'sample_url',
+        'sampleUrl',
         'output',
         'response_url',
         'responseUrl',
@@ -141,6 +404,59 @@ const extractImageUrl = (value) => {
     }
     return null;
 };
+const extractStatusUrl = (value) => {
+    if (!isRecord(value)) {
+        return null;
+    }
+    const candidates = [
+        value.polling_url,
+        value.pollingUrl,
+        value.status_url,
+        value.statusUrl,
+        value.result_url,
+        value.resultUrl,
+    ];
+    for (const candidate of candidates) {
+        if (typeof candidate === 'string' && /^https?:\/\//.test(candidate.trim())) {
+            return candidate.trim();
+        }
+    }
+    return null;
+};
+const extractRequestId = (value) => {
+    if (!isRecord(value)) {
+        return null;
+    }
+    const candidates = [
+        value.id,
+        value.request_id,
+        value.requestId,
+        value.job_id,
+        value.jobId,
+        value.task_id,
+        value.taskId,
+    ];
+    for (const candidate of candidates) {
+        if (typeof candidate === 'string' && candidate.trim()) {
+            return candidate.trim();
+        }
+    }
+    return null;
+};
+const parseResponsePayload = async (response) => {
+    const contentType = response.headers.get('content-type') || '';
+    if (contentType.startsWith('image/')) {
+        const imageBuffer = Buffer.from(await response.arrayBuffer()).toString('base64');
+        return {
+            image_url: `data:${contentType};base64,${imageBuffer}`,
+        };
+    }
+    if (contentType.includes('application/json')) {
+        return response.json().catch(() => null);
+    }
+    const text = await response.text().catch(() => '');
+    return text.trim() ? { message: text } : null;
+};
 const validateRemoteImageUrl = async (url) => {
     if (url.startsWith('data:image/')) {
         return url;
@@ -155,24 +471,22 @@ const validateRemoteImageUrl = async (url) => {
     if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
         throw new Error('Provider returned an unsupported image URL');
     }
-    const requestOptions = {
-        redirect: 'follow',
-        signal: createTimeoutSignal(IMAGE_VALIDATION_TIMEOUT_MS),
-    };
-    const headResponse = await fetch(url, {
-        ...requestOptions,
+    const headResponse = await withTimeout(IMAGE_VALIDATION_TIMEOUT_MS, (signal) => fetch(url, {
         method: 'HEAD',
-    }).catch(() => null);
+        redirect: 'follow',
+        signal,
+    }).catch(() => null));
     const headContentType = headResponse?.headers.get('content-type') || '';
     if (headResponse?.ok &&
         (headContentType.startsWith('image/') ||
             headContentType === 'application/octet-stream')) {
         return url;
     }
-    const getResponse = await fetch(url, {
-        ...requestOptions,
+    const getResponse = await withTimeout(IMAGE_VALIDATION_TIMEOUT_MS, (signal) => fetch(url, {
         method: 'GET',
-    });
+        redirect: 'follow',
+        signal,
+    }));
     const getContentType = getResponse.headers.get('content-type') || '';
     if (!getResponse.ok ||
         (!getContentType.startsWith('image/') &&
@@ -181,78 +495,420 @@ const validateRemoteImageUrl = async (url) => {
     }
     return url;
 };
+const validateRemoteImageUrlWithSignal = async (url, signal) => {
+    if (url.startsWith('data:image/')) {
+        (0, requestCancellation_1.throwIfRequestCancelled)(signal, 'Image generation cancelled by user.');
+        return url;
+    }
+    let parsedUrl;
+    try {
+        parsedUrl = new URL(url);
+    }
+    catch {
+        throw new Error('Provider returned an invalid image URL');
+    }
+    if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
+        throw new Error('Provider returned an unsupported image URL');
+    }
+    (0, requestCancellation_1.throwIfRequestCancelled)(signal, 'Image generation cancelled by user.');
+    const headResponse = await withTimeout(IMAGE_VALIDATION_TIMEOUT_MS, (validationSignal) => fetch(url, {
+        method: 'HEAD',
+        redirect: 'follow',
+        signal: validationSignal,
+    }).catch(() => null), signal);
+    const headContentType = headResponse?.headers.get('content-type') || '';
+    if (headResponse?.ok &&
+        (headContentType.startsWith('image/') ||
+            headContentType === 'application/octet-stream')) {
+        return url;
+    }
+    const getResponse = await withTimeout(IMAGE_VALIDATION_TIMEOUT_MS, (validationSignal) => fetch(url, {
+        method: 'GET',
+        redirect: 'follow',
+        signal: validationSignal,
+    }), signal);
+    const getContentType = getResponse.headers.get('content-type') || '';
+    if (!getResponse.ok ||
+        (!getContentType.startsWith('image/') &&
+            getContentType !== 'application/octet-stream')) {
+        throw new Error(`Provider returned a non-image response (${getResponse.status} ${getContentType || 'unknown'})`);
+    }
+    return url;
+};
+const toModelPath = (model) => model
+    .split('/')
+    .map((segment) => encodeURIComponent(segment))
+    .join('/');
+const buildDefaultHuggingFaceEndpoints = (model) => {
+    const modelPath = toModelPath(model);
+    return [
+        `${HF_ROUTER_INFERENCE_BASE_URL}/${modelPath}`,
+        `${HF_INFERENCE_BASE_URL}/${modelPath}`,
+    ];
+};
+const normalizeHuggingFaceEndpoint = (configuredEndpoint, model) => {
+    const modelPath = toModelPath(model);
+    if (!configuredEndpoint) {
+        return `${HF_ROUTER_INFERENCE_BASE_URL}/${modelPath}`;
+    }
+    try {
+        const parsedUrl = new URL(configuredEndpoint);
+        const normalizedPath = parsedUrl.pathname.replace(/\/+$/, '');
+        if (parsedUrl.hostname === 'huggingface.co' ||
+            parsedUrl.hostname.endsWith('.huggingface.co')) {
+            parsedUrl.protocol = 'https:';
+            parsedUrl.host = 'router.huggingface.co';
+        }
+        if (!normalizedPath || normalizedPath === '/') {
+            parsedUrl.pathname = `/hf-inference/models/${modelPath}`;
+            parsedUrl.search = '';
+            return parsedUrl.toString();
+        }
+        if (normalizedPath === '/models') {
+            parsedUrl.pathname = `/hf-inference/models/${modelPath}`;
+            parsedUrl.search = '';
+            return parsedUrl.toString();
+        }
+        if (normalizedPath.startsWith('/hf-inference/models/')) {
+            parsedUrl.pathname = normalizedPath;
+            return parsedUrl.toString();
+        }
+        if (normalizedPath.startsWith('/models/')) {
+            parsedUrl.pathname = `/hf-inference${normalizedPath}`;
+            return parsedUrl.toString();
+        }
+        parsedUrl.pathname = `/hf-inference/models/${modelPath}`;
+        parsedUrl.search = '';
+        return parsedUrl.toString();
+    }
+    catch {
+        return `${HF_ROUTER_INFERENCE_BASE_URL}/${modelPath}`;
+    }
+};
+const resolveFluxConfig = () => {
+    const apiKey = getOptionalEnv('HUGGINGFACE_API_KEY');
+    if (!apiKey) {
+        throw new Error('HUGGINGFACE_API_KEY is not configured');
+    }
+    const configuredEndpoint = getOptionalEnv('FLUX_API_ENDPOINT');
+    const configuredStatusEndpoint = getOptionalEnv('FLUX_STATUS_ENDPOINT');
+    const model = getOptionalEnv('FLUX_MODEL_ID') ||
+        getOptionalEnv('FLUX_IMAGE_MODEL') ||
+        DEFAULT_HF_FLUX_MODEL;
+    const isHuggingFaceToken = apiKey.startsWith('hf_');
+    const shouldUseHuggingFaceDefault = isHuggingFaceToken &&
+        (!configuredEndpoint || configuredEndpoint === KNOWN_BFL_FLUX_ENDPOINT);
+    const isExplicitHuggingFaceEndpoint = Boolean(configuredEndpoint && configuredEndpoint.includes('huggingface.co'));
+    const normalizedHuggingFaceEndpoint = normalizeHuggingFaceEndpoint(configuredEndpoint, model);
+    const endpointCandidates = shouldUseHuggingFaceDefault || isExplicitHuggingFaceEndpoint
+        ? Array.from(new Set([
+            normalizedHuggingFaceEndpoint,
+            ...buildDefaultHuggingFaceEndpoints(model),
+        ]))
+        : [configuredEndpoint || KNOWN_BFL_FLUX_ENDPOINT];
+    const endpoint = shouldUseHuggingFaceDefault || isExplicitHuggingFaceEndpoint
+        ? normalizedHuggingFaceEndpoint
+        : configuredEndpoint || KNOWN_BFL_FLUX_ENDPOINT;
+    const mode = shouldUseHuggingFaceDefault
+        ? 'huggingface'
+        : endpoint.includes('huggingface.co')
+            ? 'huggingface'
+            : endpoint.includes('bfl.ai')
+                ? 'bfl'
+                : 'generic';
+    return {
+        apiKey,
+        endpoint,
+        endpointCandidates,
+        mode,
+        model,
+        statusEndpoint: configuredStatusEndpoint,
+    };
+};
+const getFluxHeaders = (config) => {
+    if (config.mode === 'bfl') {
+        return {
+            'Content-Type': 'application/json',
+            Accept: 'application/json',
+            Authorization: `Bearer ${config.apiKey}`,
+            'x-key': config.apiKey,
+        };
+    }
+    return {
+        'Content-Type': 'application/json',
+        Accept: 'image/png, application/json',
+        Authorization: `Bearer ${config.apiKey}`,
+    };
+};
 const getPixazoHeaders = () => {
-    const apiKey = process.env.PIXAZO_API_KEY;
+    const apiKey = getOptionalEnv('PIXAZO_API_KEY');
     if (!apiKey) {
         throw new Error('PIXAZO_API_KEY is not configured');
     }
-    const headers = {
+    return {
         'Content-Type': 'application/json',
         'Cache-Control': 'no-cache',
         'Ocp-Apim-Subscription-Key': apiKey,
     };
-    if (process.env.PIXAZO_SECRET_KEY) {
-        headers['X-Secret-Key'] = process.env.PIXAZO_SECRET_KEY;
-    }
-    return headers;
 };
-const generateWithPixazo = async (prompt, input) => {
+const getAimlApiKey = () => getOptionalEnv('AIMLAPI_KEY');
+const pollFluxStatusUrl = async (config, statusUrl, deadlineAt) => {
+    for (let attempt = 0; attempt < FLUX_MAX_POLLS; attempt += 1) {
+        await sleepWithinDeadline(deadlineAt, FLUX_POLL_INTERVAL_MS);
+        const payload = await runWithDeadline(deadlineAt, async (signal) => {
+            const response = await fetch(statusUrl, {
+                method: 'GET',
+                headers: getFluxHeaders(config),
+                signal,
+            });
+            const nextPayload = await parseResponsePayload(response);
+            if (!response.ok) {
+                throw new Error(toErrorMessage(nextPayload, 'Flux status polling failed'));
+            }
+            return nextPayload;
+        });
+        const imageUrl = extractImageUrl(payload);
+        if (imageUrl) {
+            return validateRemoteImageUrl(imageUrl);
+        }
+        const statusValue = isRecord(payload) && typeof payload.status === 'string'
+            ? payload.status.toLowerCase()
+            : '';
+        if (statusValue &&
+            ['failed', 'error', 'cancelled', 'rejected'].includes(statusValue)) {
+            throw new Error(toErrorMessage(payload, 'Flux image generation failed'));
+        }
+    }
+    throw new Error('Flux image generation timed out before returning an image');
+};
+const pollFluxRequest = async (config, requestId, deadlineAt) => {
+    if (!config.statusEndpoint) {
+        throw new Error('Flux did not return an image URL');
+    }
+    const statusEndpoint = config.statusEndpoint;
+    const usesPathPlaceholder = statusEndpoint.includes('{id}');
+    for (let attempt = 0; attempt < FLUX_MAX_POLLS; attempt += 1) {
+        await sleepWithinDeadline(deadlineAt, FLUX_POLL_INTERVAL_MS);
+        const payload = await runWithDeadline(deadlineAt, async (signal) => {
+            const response = await fetch(usesPathPlaceholder
+                ? statusEndpoint.replace('{id}', encodeURIComponent(requestId))
+                : statusEndpoint, {
+                method: usesPathPlaceholder ? 'GET' : 'POST',
+                headers: getFluxHeaders(config),
+                body: usesPathPlaceholder
+                    ? undefined
+                    : JSON.stringify({
+                        id: requestId,
+                        request_id: requestId,
+                    }),
+                signal,
+            });
+            const nextPayload = await parseResponsePayload(response);
+            if (!response.ok) {
+                throw new Error(toErrorMessage(nextPayload, 'Flux status polling failed'));
+            }
+            return nextPayload;
+        });
+        const imageUrl = extractImageUrl(payload);
+        if (imageUrl) {
+            return validateRemoteImageUrl(imageUrl);
+        }
+        const statusValue = isRecord(payload) && typeof payload.status === 'string'
+            ? payload.status.toLowerCase()
+            : '';
+        if (statusValue &&
+            ['failed', 'error', 'cancelled', 'rejected'].includes(statusValue)) {
+            throw new Error(toErrorMessage(payload, 'Flux image generation failed'));
+        }
+    }
+    throw new Error('Flux image generation timed out before returning an image');
+};
+const generateWithCloudflareWorker = async (prompt, input) => {
+    if (input.sourceImageUrl) {
+        throw new Error('Cloudflare Worker image generation does not support source-image guided generation in this pipeline');
+    }
+    const { endpoint, apiKey } = getCloudflareWorkerConfig();
+    const workerPrompt = truncatePrompt(prompt, 2400);
+    const payload = await withTimeout(CLOUDFLARE_WORKER_TIMEOUT_MS, async (signal) => {
+        const response = await fetch(endpoint, {
+            method: 'POST',
+            headers: {
+                Authorization: `Bearer ${apiKey}`,
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                prompt: workerPrompt,
+            }),
+            signal,
+        });
+        const nextPayload = await parseResponsePayload(response);
+        if (!response.ok) {
+            throw new Error(toErrorMessage(nextPayload, 'Cloudflare Worker image generation failed'));
+        }
+        return nextPayload;
+    });
+    const imageUrl = extractImageUrl(payload);
+    if (!imageUrl) {
+        throw new Error('Cloudflare Worker did not return an image');
+    }
+    return validateRemoteImageUrl(imageUrl);
+};
+const generateWithHuggingFaceFlux = async (config, prompt, input, deadlineAt) => {
+    if (input.sourceImageUrl) {
+        throw new Error('Flux Hugging Face inference does not support source-image guided generation in this pipeline');
+    }
+    const huggingFaceModule = await loadHuggingFaceInferenceModule();
+    const client = new huggingFaceModule.InferenceClient(config.apiKey);
+    const width = normalizeDimension(input.width, 768);
+    const height = normalizeDimension(input.height, 768);
+    const negativePrompt = input.negativePrompt?.trim();
+    console.info('[image-generation] flux huggingface client', {
+        model: config.model,
+    });
+    const imageUrl = await runWithDeadline(deadlineAt, (signal) => client.textToImage({
+        model: config.model,
+        inputs: prompt,
+        parameters: {
+            num_inference_steps: 5,
+            width,
+            height,
+            ...(negativePrompt ? { negative_prompt: negativePrompt } : {}),
+        },
+    }, {
+        signal,
+        outputType: 'dataUrl',
+    }));
+    return validateRemoteImageUrl(imageUrl);
+};
+const generateWithFlux = async (prompt, input) => {
+    const config = resolveFluxConfig();
+    const deadlineAt = createDeadline(FLUX_TIMEOUT_MS);
+    const fluxPrompt = truncatePrompt(prompt, 2400);
+    const width = normalizeDimension(input.width, 768);
+    const height = normalizeDimension(input.height, 768);
+    if (config.mode === 'huggingface') {
+        return generateWithHuggingFaceFlux(config, fluxPrompt, input, deadlineAt);
+    }
+    const requestBody = JSON.stringify({
+        prompt: fluxPrompt,
+        width,
+        height,
+        ...(getOptionalEnv('FLUX_IMAGE_MODEL')
+            ? { model: config.model }
+            : {}),
+        ...(input.sourceImageUrl
+            ? {
+                source_image_url: input.sourceImageUrl,
+            }
+            : {}),
+    });
+    let payload = null;
+    let lastError = null;
+    console.info('[image-generation] flux endpoint candidates', {
+        endpoints: config.endpointCandidates,
+    });
+    for (const endpoint of config.endpointCandidates) {
+        try {
+            payload = await runWithDeadline(deadlineAt, async (signal) => {
+                const response = await fetch(endpoint, {
+                    method: 'POST',
+                    headers: getFluxHeaders(config),
+                    body: requestBody,
+                    signal,
+                });
+                const nextPayload = await parseResponsePayload(response);
+                if (!response.ok) {
+                    throw new Error(toErrorMessage(nextPayload, 'Flux image generation failed'));
+                }
+                return nextPayload;
+            });
+            break;
+        }
+        catch (error) {
+            console.warn('[image-generation] flux endpoint failed', {
+                endpoint,
+                error: toErrorMessage(error, 'Flux image generation failed'),
+            });
+            lastError =
+                error instanceof Error ? error : new Error('Flux image generation failed');
+        }
+    }
+    if (!payload) {
+        throw lastError || new Error('Flux image generation failed');
+    }
+    const imageUrl = extractImageUrl(payload);
+    if (imageUrl) {
+        return validateRemoteImageUrl(imageUrl);
+    }
+    const statusUrl = extractStatusUrl(payload);
+    if (statusUrl) {
+        return pollFluxStatusUrl(config, statusUrl, deadlineAt);
+    }
+    const requestId = extractRequestId(payload);
+    if (requestId) {
+        return pollFluxRequest(config, requestId, deadlineAt);
+    }
+    throw new Error(toErrorMessage(payload, 'Flux did not return an image URL'));
+};
+const generateWithPixazo = async (prompt, input, signal) => {
+    const deadlineAt = createDeadline(PIXAZO_TIMEOUT_MS);
+    const pixazoPrompt = truncatePrompt(prompt, 2400);
     const width = normalizeDimension(input.width, 768);
     const height = normalizeDimension(input.height, 768);
     const seed = Date.now();
     const headers = getPixazoHeaders();
-    const initialResponse = await fetch(PIXAZO_GENERATE_ENDPOINT, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-            prompt,
-            num_steps: 4,
-            width,
-            height,
-            seed,
-            ...(input.sourceImageUrl
-                ? { image_urls: [input.sourceImageUrl] }
-                : {}),
-        }),
-        signal: createTimeoutSignal(PIXAZO_TIMEOUT_MS),
-    });
-    const initialPayload = (await initialResponse.json().catch(() => null));
-    if (!initialResponse.ok) {
-        throw new Error(toErrorMessage(initialPayload, 'Pixazo text-to-image request failed'));
-    }
+    (0, requestCancellation_1.throwIfRequestCancelled)(signal, 'Image generation cancelled by user.');
+    const initialPayload = await runWithDeadline(deadlineAt, async (providerSignal) => {
+        const response = await fetch(PIXAZO_GENERATE_ENDPOINT, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+                prompt: pixazoPrompt,
+                num_steps: 4,
+                width,
+                height,
+                seed,
+                ...(input.sourceImageUrl ? { image_urls: [input.sourceImageUrl] } : {}),
+            }),
+            signal: providerSignal,
+        });
+        const nextPayload = await parseResponsePayload(response);
+        if (!response.ok) {
+            throw new Error(toErrorMessage(nextPayload, 'Pixazo text-to-image request failed'));
+        }
+        return nextPayload;
+    }, signal);
     const immediateUrl = extractImageUrl(initialPayload);
     if (immediateUrl) {
-        return validateRemoteImageUrl(immediateUrl);
+        return validateRemoteImageUrlWithSignal(immediateUrl, signal);
     }
-    const requestIdCandidate = initialPayload?.requestId ||
-        initialPayload?.request_id ||
-        initialPayload?.id ||
-        initialPayload?.jobId ||
-        initialPayload?.job_id;
-    const requestId = typeof requestIdCandidate === 'string' ? requestIdCandidate : null;
+    const requestId = extractRequestId(initialPayload);
     if (!requestId) {
         throw new Error('Pixazo did not return a request ID for polling');
     }
     for (let attempt = 0; attempt < PIXAZO_MAX_POLLS; attempt += 1) {
-        await sleep(PIXAZO_POLL_INTERVAL_MS);
-        const statusResponse = await fetch(PIXAZO_STATUS_ENDPOINT, {
-            method: 'POST',
-            headers,
-            body: JSON.stringify({
-                requestId,
-                request_id: requestId,
-            }),
-            signal: createTimeoutSignal(PIXAZO_TIMEOUT_MS),
-        });
-        const statusPayload = (await statusResponse.json().catch(() => null));
-        if (!statusResponse.ok) {
-            throw new Error(toErrorMessage(statusPayload, 'Pixazo status polling failed'));
-        }
+        await sleepWithinDeadline(deadlineAt, PIXAZO_POLL_INTERVAL_MS, signal);
+        const statusPayload = await runWithDeadline(deadlineAt, async (providerSignal) => {
+            const response = await fetch(PIXAZO_STATUS_ENDPOINT, {
+                method: 'POST',
+                headers,
+                body: JSON.stringify({
+                    requestId,
+                    request_id: requestId,
+                }),
+                signal: providerSignal,
+            });
+            const nextPayload = await parseResponsePayload(response);
+            if (!response.ok) {
+                throw new Error(toErrorMessage(nextPayload, 'Pixazo status polling failed'));
+            }
+            return nextPayload;
+        }, signal);
         const imageUrl = extractImageUrl(statusPayload);
         if (imageUrl) {
-            return validateRemoteImageUrl(imageUrl);
+            return validateRemoteImageUrlWithSignal(imageUrl, signal);
         }
-        const statusValue = typeof statusPayload?.status === 'string'
+        const statusValue = isRecord(statusPayload) && typeof statusPayload.status === 'string'
             ? statusPayload.status.toLowerCase()
             : '';
         if (statusValue &&
@@ -263,67 +919,105 @@ const generateWithPixazo = async (prompt, input) => {
     throw new Error('Pixazo image generation timed out before returning an image');
 };
 const generateWithAimlApi = async (prompt, input) => {
-    const apiKey = process.env.AIMLAPI_KEY;
+    const apiKey = getAimlApiKey();
     if (!apiKey) {
         throw new Error('AIMLAPI_KEY is not configured');
     }
+    const deadlineAt = createDeadline(AIMLAPI_TIMEOUT_MS);
+    const aimlPrompt = truncatePrompt(prompt, 1900);
     const width = normalizeDimension(input.width, 768);
     const height = normalizeDimension(input.height, 768);
-    const response = await fetch(AIMLAPI_GENERATE_ENDPOINT, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify({
-            model: DEFAULT_AIMLAPI_MODEL,
-            prompt,
-            response_format: 'url',
-            n: 1,
-            image_size: {
-                width,
-                height,
+    const payload = await runWithDeadline(deadlineAt, async (signal) => {
+        const response = await fetch(AIMLAPI_GENERATE_ENDPOINT, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${apiKey}`,
             },
-            ...(input.sourceImageUrl
-                ? { image_urls: [input.sourceImageUrl] }
-                : {}),
-        }),
-        signal: createTimeoutSignal(AIMLAPI_TIMEOUT_MS),
+            body: JSON.stringify({
+                model: DEFAULT_AIMLAPI_MODEL,
+                prompt: aimlPrompt,
+                response_format: 'url',
+                n: 1,
+                image_size: {
+                    width,
+                    height,
+                },
+                ...(input.sourceImageUrl ? { image_urls: [input.sourceImageUrl] } : {}),
+            }),
+            signal,
+        });
+        const nextPayload = await parseResponsePayload(response);
+        if (!response.ok) {
+            throw new Error(toErrorMessage(nextPayload, 'AIML image generation request failed'));
+        }
+        return nextPayload;
     });
-    const payload = (await response.json().catch(() => null));
-    if (!response.ok) {
-        throw new Error(toErrorMessage(payload, 'AIMLAPI image generation request failed'));
-    }
     const imageUrl = extractImageUrl(payload);
     if (!imageUrl) {
-        throw new Error('AIMLAPI did not return an image URL');
+        throw new Error('AIML did not return an image URL');
     }
     return validateRemoteImageUrl(imageUrl);
 };
-const generateProductImage = async (brandProfile, input) => {
-    const promptUsed = buildImagePrompt(brandProfile, input);
-    try {
-        const imageUrl = await generateWithPixazo(promptUsed, input);
+const providers = [
+    {
+        provider: 'pixazo',
+        generate: generateWithPixazo,
+    },
+];
+const tryProvider = async (provider, prompt, input, signal, onProviderChange) => {
+    if (await (0, providerCircuit_service_1.isProviderCircuitOpen)('image', provider.provider)) {
+        const failure = classifyProviderFailure(provider.provider, `${provider.provider} temporarily skipped after repeated failures`);
         return {
-            imageUrl,
-            provider: 'pixazo',
-            promptUsed,
+            success: false,
+            provider: provider.provider,
+            failure,
         };
     }
-    catch (pixazoError) {
-        const pixazoMessage = toErrorMessage(pixazoError, 'Pixazo image generation failed');
-        try {
-            const imageUrl = await generateWithAimlApi(promptUsed, input);
+    try {
+        await onProviderChange?.(provider.provider);
+        (0, requestCancellation_1.throwIfRequestCancelled)(signal, 'Image generation cancelled by user.');
+        const imageUrl = await provider.generate(prompt, input, signal);
+        await (0, providerCircuit_service_1.recordProviderCircuitSuccess)('image', provider.provider);
+        return {
+            success: true,
+            provider: provider.provider,
+            imageUrl,
+        };
+    }
+    catch (error) {
+        if (error instanceof requestCancellation_1.RequestCancelledError) {
+            throw error;
+        }
+        const failure = classifyProviderFailure(provider.provider, error);
+        await (0, providerCircuit_service_1.recordProviderCircuitFailure)('image', provider.provider);
+        console.warn(`[image-generation] ${provider.provider} provider failed`, {
+            code: failure.code,
+            error: failure.message,
+        });
+        return {
+            success: false,
+            provider: provider.provider,
+            failure,
+        };
+    }
+};
+const generateProductImage = async (brandProfile, input, options = {}) => {
+    const promptUsed = buildImagePrompt(brandProfile, input);
+    const failures = [];
+    const signal = options.signal;
+    for (const provider of providers) {
+        (0, requestCancellation_1.throwIfRequestCancelled)(signal, 'Image generation cancelled by user.');
+        const result = await tryProvider(provider, promptUsed, input, signal, options.onProviderChange);
+        if (result.success) {
             return {
-                imageUrl,
-                provider: 'aimlapi',
+                imageUrl: result.imageUrl,
+                provider: result.provider,
                 promptUsed,
             };
         }
-        catch (aimlError) {
-            const aimlMessage = toErrorMessage(aimlError, 'AIMLAPI image generation failed');
-            throw new Error(`Pixazo failed: ${pixazoMessage}. AIMLAPI fallback failed: ${aimlMessage}`);
-        }
+        failures.push(result.failure);
     }
+    throw new ImageGenerationProvidersExhaustedError(failures);
 };
 exports.generateProductImage = generateProductImage;

@@ -14,8 +14,14 @@ import {
   removeBrowserCache,
   writeBrowserCache,
 } from '../lib/browserCache';
+import { normalizeUsername } from '../lib/username';
 import { isSupabaseConfigured, supabase } from '../lib/supabase';
-import type { AuthMeResponse, BrandProfile, SaveProfileInput } from '../types';
+import type {
+  AuthMeResponse,
+  BrandProfile,
+  ProfileSaveContext,
+  SaveProfileInput,
+} from '../types';
 
 type SignUpInput = {
   email: string;
@@ -46,7 +52,10 @@ type AuthContextValue = {
   signInWithOAuth: (provider: 'google' | 'github' | 'facebook') => Promise<void>;
   signOut: () => Promise<void>;
   refreshProfile: () => Promise<void>;
-  saveProfile: (input: SaveProfileInput) => Promise<BrandProfile>;
+  saveProfile: (
+    input: SaveProfileInput,
+    options?: { saveContext?: ProfileSaveContext }
+  ) => Promise<BrandProfile>;
 };
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -125,6 +134,15 @@ const getAuthProfileDefaults = (currentUser: User | null) => {
       'picture_url',
       'profile_image_url',
     ]),
+    username: normalizeUsername(
+      readMetadataString(metadata, [
+        'preferred_username',
+        'user_name',
+        'nickname',
+      ]) ||
+        currentUser?.email?.split('@')[0] ||
+        ''
+    ),
   };
 };
 
@@ -161,14 +179,18 @@ const useAuthBootstrap = () => {
 
   const persistProfile = async (
     accessToken: string,
-    input: SaveProfileInput
+    input: SaveProfileInput,
+    options: { saveContext?: ProfileSaveContext } = {}
   ) => {
     const response = await apiRequest<{ profile: BrandProfile }>(
       '/api/auth/profile',
       {
         method: 'POST',
         token: accessToken,
-        body: input,
+        body: {
+          ...input,
+          ...(options.saveContext ? { saveContext: options.saveContext } : {}),
+        },
       }
     );
 
@@ -212,16 +234,35 @@ const useAuthBootstrap = () => {
         nextProfile?.brandName &&
         nextProfile?.fullName &&
         nextProfile?.phoneNumber &&
+        (nextProfile.username || authDefaults.username) &&
         nextProfile.avatarUrl !== authDefaults.avatarUrl;
 
       if (shouldSyncSocialAvatar) {
+        const resolvedUsername = nextProfile.username || authDefaults.username || '';
         const syncedProfile = await persistProfile(accessToken, {
           brandName: nextProfile.brandName!,
           fullName: nextProfile.fullName,
           ...(nextProfile.phoneNumber ? { phoneNumber: nextProfile.phoneNumber } : {}),
-          ...(nextProfile.username ? { username: nextProfile.username } : {}),
+          username: resolvedUsername,
           ...(authDefaults.avatarUrl ? { avatarUrl: authDefaults.avatarUrl } : {}),
+          ...(nextProfile.country ? { country: nextProfile.country } : {}),
+          ...(nextProfile.language ? { language: nextProfile.language } : {}),
+          ...(nextProfile.websiteUrl ? { websiteUrl: nextProfile.websiteUrl } : {}),
+          ...(nextProfile.logoUrl ? { logoUrl: nextProfile.logoUrl } : {}),
+          ...(nextProfile.primaryColor
+            ? { primaryColor: nextProfile.primaryColor }
+            : {}),
+          ...(nextProfile.secondaryColor
+            ? { secondaryColor: nextProfile.secondaryColor }
+            : {}),
+          ...(nextProfile.accentColor ? { accentColor: nextProfile.accentColor } : {}),
           ...(nextProfile.industry ? { industry: nextProfile.industry } : {}),
+          ...(nextProfile.primaryIndustry
+            ? { primaryIndustry: nextProfile.primaryIndustry }
+            : {}),
+          ...(nextProfile.secondaryIndustries.length
+            ? { secondaryIndustries: nextProfile.secondaryIndustries }
+            : {}),
           ...(nextProfile.targetAudience
             ? { targetAudience: nextProfile.targetAudience }
             : {}),
@@ -568,12 +609,15 @@ const useAuthBootstrap = () => {
     await hydrateProfile(session?.access_token ?? null);
   };
 
-  const saveProfile = async (input: SaveProfileInput) => {
+  const saveProfile = async (
+    input: SaveProfileInput,
+    options: { saveContext?: ProfileSaveContext } = {}
+  ) => {
     if (!session?.access_token) {
       throw new Error('Please sign in again to continue.');
     }
 
-    return persistProfile(session.access_token, input);
+    return persistProfile(session.access_token, input, options);
   };
 
   return {

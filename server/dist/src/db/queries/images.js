@@ -14,6 +14,12 @@ const toGeneratedImage = (row) => ({
     generatedImageUrl: row.generated_image_url,
     backgroundStyle: row.background_style,
     prompt: row.prompt,
+    storageProvider: row.storage_provider,
+    storageBucket: row.storage_bucket,
+    storageObjectKey: row.storage_object_key,
+    storagePublicUrl: row.storage_public_url,
+    storageContentType: row.storage_content_type,
+    storageSizeBytes: typeof row.storage_size_bytes === 'number' ? row.storage_size_bytes : null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
 });
@@ -28,6 +34,12 @@ const saveGeneratedImage = async (client, userId, input) => {
         generated_image_url: input.generatedImageUrl,
         background_style: input.backgroundStyle ?? null,
         prompt: input.prompt ?? null,
+        storage_provider: input.storageProvider ?? null,
+        storage_bucket: input.storageBucket ?? null,
+        storage_object_key: input.storageObjectKey ?? null,
+        storage_public_url: input.storagePublicUrl ?? null,
+        storage_content_type: input.storageContentType ?? null,
+        storage_size_bytes: input.storageSizeBytes ?? null,
     })
         .select('*')
         .single();
@@ -93,5 +105,5 @@ const getImageMonthlyUsageCount = async (client, userId) => (0, subscriptions_1.
 exports.getImageMonthlyUsageCount = getImageMonthlyUsageCount;
 const getImageDailyUsageCount = async (client, userId) => (0, subscriptions_1.getDailyUsageCount)(client, userId, constants_1.FEATURE_KEYS.imageGeneration);
 exports.getImageDailyUsageCount = getImageDailyUsageCount;
-const trackImageGenerationUsage = async (client, userId, metadata = {}) => (0, subscriptions_1.recordUsageEvent)(client, userId, constants_1.FEATURE_KEYS.imageGeneration, metadata);
+const trackImageGenerationUsage = async (client, userId, metadata = {}, idempotencyKey) => (0, subscriptions_1.recordUsageEvent)(client, userId, constants_1.FEATURE_KEYS.imageGeneration, metadata, idempotencyKey);
 exports.trackImageGenerationUsage = trackImageGenerationUsage;

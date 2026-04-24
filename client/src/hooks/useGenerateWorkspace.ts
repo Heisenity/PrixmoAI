@@ -22,6 +22,13 @@ import type {
   UploadedSourceImage,
 } from '../types';
 
+type CopyGenerationPhase =
+  | 'idle'
+  | 'preparing'
+  | 'writing'
+  | 'stitching'
+  | 'syncing';
+
 const readFileAsDataUrl = (file: File): Promise<string> =>
   new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -83,6 +90,8 @@ export const useGenerateWorkspace = () => {
   const [isLoadingThread, setIsLoadingThread] = useState(false);
   const [isGeneratingCopy, setIsGeneratingCopy] = useState(false);
   const [isGeneratingImage, setIsGeneratingImage] = useState(false);
+  const [copyGenerationPhase, setCopyGenerationPhase] =
+    useState<CopyGenerationPhase>('idle');
   const [isUploadingSource, setIsUploadingSource] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -203,6 +212,7 @@ export const useGenerateWorkspace = () => {
       copyGenerationControllerRef.current = null;
       imageGenerationControllerRef.current?.abort();
       imageGenerationControllerRef.current = null;
+      setCopyGenerationPhase('idle');
       setConversations([]);
       setActiveThread(null);
       setActiveConversationId(null);
@@ -387,8 +397,10 @@ export const useGenerateWorkspace = () => {
     copyGenerationControllerRef.current = controller;
     setError(null);
     setIsGeneratingCopy(true);
+    setCopyGenerationPhase('preparing');
 
     try {
+      setCopyGenerationPhase('writing');
       const nextThread = await apiRequest<GenerateConversationThread>(
         '/api/generate/copy',
         {
@@ -402,6 +414,7 @@ export const useGenerateWorkspace = () => {
         }
       );
 
+      setCopyGenerationPhase('stitching');
       setActiveConversationId(nextThread.conversation.id);
       setActiveThread(nextThread);
       writeGenerateWorkspaceCache(user?.id ?? lastUserIdRef.current, {
@@ -412,6 +425,7 @@ export const useGenerateWorkspace = () => {
           [nextThread.conversation.id]: nextThread,
         },
       });
+      setCopyGenerationPhase('syncing');
       await refreshConversations(nextThread.conversation.id);
 
       return nextThread;
@@ -441,6 +455,7 @@ export const useGenerateWorkspace = () => {
       if (copyGenerationControllerRef.current === controller) {
         copyGenerationControllerRef.current = null;
         setIsGeneratingCopy(false);
+        setCopyGenerationPhase('idle');
       }
     }
   };
@@ -517,6 +532,7 @@ export const useGenerateWorkspace = () => {
     copyGenerationControllerRef.current?.abort();
     copyGenerationControllerRef.current = null;
     setIsGeneratingCopy(false);
+    setCopyGenerationPhase('idle');
     setError(null);
   };
 
@@ -574,6 +590,7 @@ export const useGenerateWorkspace = () => {
     isLoadingThread,
     isGeneratingCopy,
     isGeneratingImage,
+    copyGenerationPhase,
     isUploadingSource,
     error,
     setError,

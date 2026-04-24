@@ -8,6 +8,11 @@ import {
   listWorkspaceConversations,
   updateWorkspaceConversation,
 } from '../controllers/generateWorkspace.controller';
+import {
+  deleteDescriptionDraft,
+  listDescriptionDrafts,
+  upsertDescriptionDraft,
+} from '../controllers/descriptionDraft.controller';
 import { transcribeGenerateAudio } from '../controllers/transcription.controller';
 import { authMiddleware } from '../middleware/auth.middleware';
 import {
@@ -22,7 +27,12 @@ import {
   generateConversationImageSchema,
   updateGenerateConversationSchema,
 } from '../schemas/generateWorkspace.schema';
-import { transcribeAudioSchema } from '../schemas/transcription.schema';
+import {
+  deleteDescriptionDraftSchema,
+  listDescriptionDraftsSchema,
+  upsertDescriptionDraftSchema,
+} from '../schemas/descriptionDraft.schema';
+import { transcribeAudioSchemaRefined } from '../schemas/transcription.schema';
 
 const router = Router();
 
@@ -41,6 +51,25 @@ router.patch(
   updateWorkspaceConversation
 );
 router.delete('/conversations/:id', authMiddleware, deleteWorkspaceConversation);
+
+router.get(
+  '/drafts/description',
+  authMiddleware,
+  validate(listDescriptionDraftsSchema),
+  listDescriptionDrafts
+);
+router.put(
+  '/drafts/description',
+  authMiddleware,
+  validate(upsertDescriptionDraftSchema),
+  upsertDescriptionDraft
+);
+router.delete(
+  '/drafts/description',
+  authMiddleware,
+  validate(deleteDescriptionDraftSchema),
+  deleteDescriptionDraft
+);
 
 router.post(
   '/copy',
@@ -62,7 +91,7 @@ router.post(
 router.post(
   '/transcribe',
   authMiddleware,
-  validate(transcribeAudioSchema),
+  validate(transcribeAudioSchemaRefined),
   transcribeGenerateAudio
 );
 

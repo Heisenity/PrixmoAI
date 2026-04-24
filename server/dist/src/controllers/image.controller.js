@@ -1,12 +1,16 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.uploadSourceImage = exports.getWatermarkedImage = exports.getImageHistory = exports.generateImage = void 0;
+exports.resolveSourceImageUrl = exports.importSourceImageUrl = exports.uploadSourceImage = exports.getWatermarkedImage = exports.getImageHistory = exports.generateImage = void 0;
 const imageGen_1 = require("../ai/imageGen");
 const brandProfiles_1 = require("../db/queries/brandProfiles");
 const images_1 = require("../db/queries/images");
 const supabase_1 = require("../db/supabase");
 const imageRuntimePolicy_service_1 = require("../services/imageRuntimePolicy.service");
 const storage_service_1 = require("../services/storage.service");
+const requestCancellation_1 = require("../lib/requestCancellation");
+const r2Storage_service_1 = require("../services/r2Storage.service");
+const imageGenerationQueue_service_1 = require("../services/imageGenerationQueue.service");
+const runtimeCache_service_1 = require("../services/runtimeCache.service");
 const parsePositiveInt = (value, fallback) => {
     if (typeof value !== 'string') {
         return fallback;
@@ -82,6 +86,19 @@ const buildWatermarkedSvg = (embeddedImageUrl) => `<?xml version="1.0" encoding=
     </text>
   </g>
 </svg>`;
+const logImageGenerationFailure = (scope, userId, error) => {
+    if (error instanceof imageGen_1.ImageGenerationProvidersExhaustedError) {
+        console.error(`[${scope}] All image generation providers failed`, {
+            userId,
+            failures: error.failures,
+        });
+        return;
+    }
+    console.error(`[${scope}] Image generation failed`, {
+        userId,
+        error: error instanceof Error ? error.message : error,
+    });
+};
 const generateImage = async (req, res) => {
     if (!req.user?.id) {
         return res.status(401).json({
@@ -89,7 +106,13 @@ const generateImage = async (req, res) => {
             message: 'Unauthorized',
         });
     }
+    const cancellation = (0, requestCancellation_1.createRequestCancellation)(req, res);
     try {
+        console.info('[image] Generate image request started', {
+            userId: req.user.id,
+            productName: req.body.productName,
+            contentId: req.body.contentId ?? null,
+        });
         const client = (0, supabase_1.requireUserClient)(req.accessToken);
         const brandProfile = await (0, brandProfiles_1.getBrandProfileByUserId)(client, req.user.id);
         const generationInput = {
@@ -97,14 +120,35 @@ const generateImage = async (req, res) => {
             ...resolveBrandPreference(brandProfile, req.body.useBrandName),
         };
         const runtimePolicy = req.imageRuntimePolicy ?? (0, imageRuntimePolicy_service_1.resolveImageRuntimePolicy)('free', 0);
-        const result = await (0, imageRuntimePolicy_service_1.enqueueImageGeneration)(runtimePolicy, () => (0, imageGen_1.generateProductImage)(brandProfile, generationInput));
+        const { jobId, result } = await (0, imageGenerationQueue_service_1.enqueueImageGenerationJob)({
+            runtimePolicy,
+            data: {
+                userId: req.user.id,
+                brandProfile,
+                input: generationInput,
+            },
+        }, cancellation.signal);
+        (0, requestCancellation_1.throwIfRequestCancelled)(cancellation.signal, 'Image generation cancelled by user.');
+        const storedImageAsset = await (0, r2Storage_service_1.storeGeneratedImageInR2)({
+            userId: req.user.id,
+            productName: generationInput.productName,
+            imageUrl: result.imageUrl,
+            signal: cancellation.signal,
+        });
         const image = await (0, images_1.saveGeneratedImage)(client, req.user.id, {
             contentId: generationInput.contentId ?? null,
             sourceImageUrl: generationInput.sourceImageUrl ?? null,
-            generatedImageUrl: result.imageUrl,
+            generatedImageUrl: storedImageAsset?.publicUrl ?? result.imageUrl,
             backgroundStyle: generationInput.backgroundStyle ?? null,
             prompt: result.promptUsed,
+            storageProvider: storedImageAsset?.provider ?? null,
+            storageBucket: storedImageAsset?.bucket ?? null,
+            storageObjectKey: storedImageAsset?.objectKey ?? null,
+            storagePublicUrl: storedImageAsset?.publicUrl ?? null,
+            storageContentType: storedImageAsset?.contentType ?? null,
+            storageSizeBytes: storedImageAsset?.sizeBytes ?? null,
         });
+        (0, requestCancellation_1.throwIfRequestCancelled)(cancellation.signal, 'Image generation cancelled by user.');
         await (0, images_1.trackImageGenerationUsage)(client, req.user.id, {
             imageId: image.id,
             provider: result.provider,
@@ -119,10 +163,17 @@ const generateImage = async (req, res) => {
             speedTier: runtimePolicy.speedTier,
             throttleDelayMs: runtimePolicy.throttleDelayMs,
             dailyUsageCountBeforeRequest: runtimePolicy.usageCount,
-        });
+        }, `image-generation:${image.id}`);
+        await (0, runtimeCache_service_1.invalidateAnalyticsRuntimeCache)(req.user.id);
         res.setHeader('X-PrixmoAI-Queue-Tier', runtimePolicy.queueTier);
         res.setHeader('X-PrixmoAI-Speed-Tier', runtimePolicy.speedTier);
         res.setHeader('X-PrixmoAI-Throttle-Delay-Ms', String(runtimePolicy.throttleDelayMs));
+        console.info('[image] Generate image request succeeded', {
+            userId: req.user.id,
+            imageId: image.id,
+            provider: result.provider,
+            contentId: generationInput.contentId ?? null,
+        });
         return res.status(200).json({
             status: 'success',
             message: `Image generated successfully using ${result.provider}`,
@@ -131,16 +182,33 @@ const generateImage = async (req, res) => {
                 provider: result.provider,
             },
             meta: {
+                jobId,
                 runtime: runtimePolicy,
             },
         });
     }
     catch (error) {
-        const message = error instanceof Error ? error.message : 'Failed to generate image';
+        if ((0, requestCancellation_1.isRequestCancelledError)(error)) {
+            await (0, imageRuntimePolicy_service_1.releaseImageRateLimitReservation)(req.user?.id ?? '', req.imageRateLimitReservation);
+            req.imageRateLimitReservation = undefined;
+            console.info('[image] Image generation request cancelled', {
+                userId: req.user?.id ?? 'unknown-user',
+            });
+            return;
+        }
+        logImageGenerationFailure('image', req.user?.id ?? 'unknown-user', error);
+        const message = error instanceof imageGen_1.ImageGenerationProvidersExhaustedError
+            ? error.message
+            : error instanceof Error
+                ? error.message
+                : 'Failed to generate image';
         return res.status(502).json({
             status: 'error',
             message,
         });
+    }
+    finally {
+        cancellation.cleanup();
     }
 };
 exports.generateImage = generateImage;
@@ -225,19 +293,79 @@ const uploadSourceImage = async (req, res) => {
         const uploadedSourceImage = await (0, storage_service_1.uploadSourceImage)(req.user.id, req.body);
         return res.status(200).json({
             status: 'success',
-            message: 'Source image uploaded successfully',
+            message: 'Source media uploaded successfully',
             data: {
                 sourceImageUrl: uploadedSourceImage.publicUrl,
                 bucket: uploadedSourceImage.bucket,
                 path: uploadedSourceImage.path,
+                mediaType: uploadedSourceImage.mediaType,
+                contentType: uploadedSourceImage.contentType,
             },
         });
     }
     catch (error) {
         return res.status(502).json({
             status: 'error',
-            message: error instanceof Error ? error.message : 'Failed to upload source image',
+            message: error instanceof Error ? error.message : 'Failed to upload source media',
         });
     }
 };
 exports.uploadSourceImage = uploadSourceImage;
+const importSourceImageUrl = async (req, res) => {
+    if (!req.user?.id) {
+        return res.status(401).json({
+            status: 'fail',
+            message: 'Unauthorized',
+        });
+    }
+    try {
+        const uploadedSourceImage = await (0, storage_service_1.importExternalSourceImage)(req.user.id, req.body.url);
+        return res.status(200).json({
+            status: 'success',
+            message: 'Source media imported successfully',
+            data: {
+                sourceImageUrl: uploadedSourceImage.publicUrl,
+                bucket: uploadedSourceImage.bucket,
+                path: uploadedSourceImage.path,
+                mediaType: uploadedSourceImage.mediaType,
+                contentType: uploadedSourceImage.contentType,
+            },
+        });
+    }
+    catch (error) {
+        const message = error instanceof Error ? error.message : 'Failed to import source media';
+        return res.status(message === 'Invalid media URL' || message === 'No preview available for this link'
+            ? 400
+            : 502).json({
+            status: 'error',
+            message,
+        });
+    }
+};
+exports.importSourceImageUrl = importSourceImageUrl;
+const resolveSourceImageUrl = async (req, res) => {
+    if (!req.user?.id) {
+        return res.status(401).json({
+            status: 'fail',
+            message: 'Unauthorized',
+        });
+    }
+    try {
+        const resolvedSourceImage = await (0, storage_service_1.resolveExternalSourceImage)(req.body.url);
+        return res.status(200).json({
+            status: 'success',
+            message: 'Source media resolved successfully',
+            data: resolvedSourceImage,
+        });
+    }
+    catch (error) {
+        const message = error instanceof Error ? error.message : 'Failed to resolve source media';
+        return res.status(message === 'Invalid media URL' || message === 'No preview available for this link'
+            ? 400
+            : 502).json({
+            status: 'error',
+            message,
+        });
+    }
+};
+exports.resolveSourceImageUrl = resolveSourceImageUrl;

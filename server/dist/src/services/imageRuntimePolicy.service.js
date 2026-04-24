@@ -1,56 +1,78 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.checkImageRateLimit = exports.resolveImageRuntimePolicy = exports.enqueueImageGeneration = void 0;
+exports.releaseImageRateLimitReservation = exports.checkImageRateLimit = exports.resolveImageRuntimePolicy = void 0;
+const crypto_1 = require("crypto");
 const constants_1 = require("../config/constants");
-const queueBuckets = {
-    priority: [],
-    normal: [],
-    slow: [],
-};
-let activeImageJobs = 0;
-const wait = (delayMs) => new Promise((resolve) => {
-    setTimeout(resolve, delayMs);
-});
-const getNextJob = () => queueBuckets.priority.shift() ??
-    queueBuckets.normal.shift() ??
-    queueBuckets.slow.shift() ??
-    null;
-const pumpQueue = () => {
-    while (activeImageJobs < constants_1.IMAGE_QUEUE_CONCURRENCY) {
-        const nextJob = getNextJob();
-        if (!nextJob) {
-            return;
-        }
-        activeImageJobs += 1;
-        void (async () => {
-            try {
-                if (nextJob.throttleDelayMs > 0) {
-                    await wait(nextJob.throttleDelayMs);
-                }
-                const result = await nextJob.run();
-                nextJob.resolve(result);
-            }
-            catch (error) {
-                nextJob.reject(error);
-            }
-            finally {
-                activeImageJobs = Math.max(0, activeImageJobs - 1);
-                pumpQueue();
-            }
-        })();
-    }
-};
-const enqueueImageGeneration = (policy, run) => new Promise((resolve, reject) => {
-    queueBuckets[policy.queueTier].push({
-        queueTier: policy.queueTier,
-        throttleDelayMs: policy.throttleDelayMs,
-        run,
-        resolve,
-        reject,
-    });
-    pumpQueue();
-});
-exports.enqueueImageGeneration = enqueueImageGeneration;
+const redis_1 = require("../lib/redis");
+const ONE_MINUTE_MS = 60000;
+const RATE_LIMIT_SCRIPT = `
+local key = KEYS[1]
+local now = tonumber(ARGV[1])
+local minuteWindow = tonumber(ARGV[2])
+local maxWindow = tonumber(ARGV[3])
+local requestsPerMinute = tonumber(ARGV[4])
+local burstWindow = tonumber(ARGV[5])
+local burstLimit = tonumber(ARGV[6])
+local throttleAfterBurst = tonumber(ARGV[7])
+local reservationId = ARGV[8]
+
+redis.call('ZREMRANGEBYSCORE', key, '-inf', now - maxWindow)
+
+local minuteStart = now - minuteWindow + 1
+local minuteCount = redis.call('ZCOUNT', key, minuteStart, '+inf')
+
+if requestsPerMinute >= 0 and minuteCount >= requestsPerMinute then
+  local oldest = redis.call('ZRANGEBYSCORE', key, minuteStart, '+inf', 'WITHSCORES', 'LIMIT', 0, 1)
+  local retryAfter = 1
+
+  if oldest[2] ~= nil then
+    retryAfter = math.max(1, math.ceil(((tonumber(oldest[2]) + minuteWindow) - now) / 1000))
+  end
+
+  local burstCount = -1
+
+  if burstWindow >= 0 then
+    burstCount = redis.call('ZCOUNT', key, now - burstWindow + 1, '+inf')
+  end
+
+  return {0, 0, 0, burstCount, retryAfter}
+end
+
+redis.call('ZADD', key, now, reservationId)
+redis.call('PEXPIRE', key, maxWindow)
+
+local burstCount = -1
+local throttleDelay = 0
+
+if burstWindow >= 0 then
+  burstCount = redis.call('ZCOUNT', key, now - burstWindow + 1, '+inf')
+end
+
+if burstLimit >= 0 and burstCount > burstLimit then
+  throttleDelay = throttleAfterBurst
+end
+
+local remaining = -1
+
+if requestsPerMinute >= 0 then
+  remaining = math.max(0, requestsPerMinute - minuteCount - 1)
+end
+
+return {1, remaining, throttleDelay, burstCount, 0}
+`;
+const RELEASE_RATE_LIMIT_SCRIPT = `
+local key = KEYS[1]
+local reservationId = ARGV[1]
+
+redis.call('ZREM', key, reservationId)
+
+if redis.call('ZCARD', key) == 0 then
+  redis.call('DEL', key)
+end
+
+return 1
+`;
+const getRateLimitKey = (userId) => (0, redis_1.buildRedisKey)('rate-limit', 'image', userId);
 const resolveImageRuntimePolicy = (plan, usageCount) => {
     const basePolicy = constants_1.IMAGE_RUNTIME_POLICIES[plan];
     if (plan === 'free') {
@@ -85,51 +107,41 @@ const resolveImageRuntimePolicy = (plan, usageCount) => {
     };
 };
 exports.resolveImageRuntimePolicy = resolveImageRuntimePolicy;
-const requestWindows = new Map();
-const ONE_MINUTE_MS = 60000;
-const checkImageRateLimit = (userId, policy) => {
+const checkImageRateLimit = async (userId, policy) => {
     const now = Date.now();
-    const windowStart = now - ONE_MINUTE_MS;
-    const key = `image:${userId}`;
-    const maxWindowMs = Math.max(ONE_MINUTE_MS, policy.burstWindowMs ?? 0);
-    const activeRequests = requestWindows.get(key)?.filter((timestamp) => timestamp > now - maxWindowMs) ?? [];
-    const activeMinuteRequests = activeRequests.filter((timestamp) => timestamp > windowStart);
-    if (policy.requestsPerMinute !== null &&
-        activeMinuteRequests.length >= policy.requestsPerMinute) {
-        const oldestRequest = activeMinuteRequests[0];
-        const retryAfterSeconds = Math.max(1, Math.ceil((oldestRequest + ONE_MINUTE_MS - now) / 1000));
-        requestWindows.set(key, activeRequests);
+    const reservationId = `${now}:${(0, crypto_1.randomUUID)()}`;
+    const requestsPerMinute = policy.requestsPerMinute ?? -1;
+    const burstLimit = policy.burstLimit ?? -1;
+    const burstWindowMs = policy.burstWindowMs ?? -1;
+    const maxWindowMs = Math.max(ONE_MINUTE_MS, burstWindowMs > 0 ? burstWindowMs : 0);
+    const rawResult = (await (0, redis_1.getRedisClient)().eval(RATE_LIMIT_SCRIPT, 1, getRateLimitKey(userId), String(now), String(ONE_MINUTE_MS), String(maxWindowMs), String(requestsPerMinute), String(burstWindowMs), String(burstLimit), String(policy.throttleDelayMsAfterBurst), reservationId));
+    const allowed = Number(rawResult[0]) === 1;
+    const remaining = Number(rawResult[1]);
+    const throttleDelayMs = Number(rawResult[2]);
+    const burstRequestCount = Number(rawResult[3]);
+    const retryAfterSeconds = Number(rawResult[4]);
+    if (!allowed) {
         return {
             allowed: false,
             retryAfterSeconds,
             remaining: 0,
             throttleDelayMs: 0,
-            burstRequestCount: policy.burstLimit === null ? null : activeRequests.length,
-        };
-    }
-    activeRequests.push(now);
-    requestWindows.set(key, activeRequests);
-    const burstRequestCount = policy.burstWindowMs === null
-        ? null
-        : activeRequests.filter((timestamp) => timestamp > now - policy.burstWindowMs).length;
-    const throttleDelayMs = policy.burstLimit !== null &&
-        burstRequestCount !== null &&
-        burstRequestCount > policy.burstLimit
-        ? policy.throttleDelayMsAfterBurst
-        : 0;
-    if (policy.requestsPerMinute === null) {
-        return {
-            allowed: true,
-            remaining: null,
-            throttleDelayMs,
-            burstRequestCount,
+            burstRequestCount: burstRequestCount >= 0 ? burstRequestCount : null,
         };
     }
     return {
         allowed: true,
-        remaining: Math.max(0, policy.requestsPerMinute - activeMinuteRequests.length - 1),
+        remaining: remaining >= 0 ? remaining : null,
         throttleDelayMs,
-        burstRequestCount,
+        burstRequestCount: burstRequestCount >= 0 ? burstRequestCount : null,
+        reservationId,
     };
 };
 exports.checkImageRateLimit = checkImageRateLimit;
+const releaseImageRateLimitReservation = async (userId, reservationId) => {
+    if (!reservationId) {
+        return;
+    }
+    await (0, redis_1.getRedisClient)().eval(RELEASE_RATE_LIMIT_SCRIPT, 1, getRateLimitKey(userId), reservationId);
+};
+exports.releaseImageRateLimitReservation = releaseImageRateLimitReservation;

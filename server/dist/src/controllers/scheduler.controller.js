@@ -1,8 +1,10 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.deletePostSchedule = exports.updatePostScheduleStatus = exports.updatePostSchedule = exports.listScheduledPosts = exports.createPostSchedule = exports.removeConnectedSocialAccount = exports.updateConnectedSocialAccount = exports.listConnectedSocialAccounts = exports.finalizePendingMetaFacebookPages = exports.listPendingMetaFacebookPages = exports.handleMetaOAuthCallback = exports.startMetaOAuth = exports.createConnectedSocialAccount = void 0;
+exports.deletePostSchedule = exports.cancelPostSchedule = exports.updatePostScheduleStatus = exports.updatePostSchedule = exports.listScheduledPosts = exports.createPostSchedule = exports.cancelScheduleItemRecord = exports.updateScheduleItemRecord = exports.listScheduleItems = exports.submitScheduleBatch = exports.addScheduleBatchItems = exports.listScheduleBatches = exports.deleteScheduleBatchDraft = exports.getScheduleBatch = exports.createScheduleBatchDraft = exports.createSchedulerMediaAsset = exports.removeConnectedSocialAccount = exports.updateConnectedSocialAccount = exports.listConnectedSocialAccounts = exports.finalizePendingMetaFacebookPages = exports.listPendingMetaFacebookPages = exports.handleMetaOAuthCallback = exports.startMetaOAuth = exports.createConnectedSocialAccount = void 0;
+const crypto_1 = require("crypto");
 const content_1 = require("../db/queries/content");
 const images_1 = require("../db/queries/images");
+const scheduleBatches_1 = require("../db/queries/scheduleBatches");
 const scheduledPosts_1 = require("../db/queries/scheduledPosts");
 const oauthConnectionSessions_1 = require("../db/queries/oauthConnectionSessions");
 const socialAccounts_1 = require("../db/queries/socialAccounts");
@@ -10,6 +12,8 @@ const subscriptions_1 = require("../db/queries/subscriptions");
 const supabase_1 = require("../db/supabase");
 const constants_1 = require("../config/constants");
 const meta_service_1 = require("../services/meta.service");
+const schedulerPublisher_service_1 = require("../services/schedulerPublisher.service");
+const storage_service_1 = require("../services/storage.service");
 const parsePositiveInt = (value, fallback) => {
     if (typeof value !== 'string') {
         return fallback;
@@ -34,10 +38,33 @@ const RESERVED_PROFILE_SEGMENTS = new Set([
     'share',
     'hashtag',
 ]);
+const SCHEDULE_MIN_BUFFER_MS = 5000;
+const SCHEDULE_TIME_VALIDATION_MESSAGE = 'Scheduled time must be in the future';
+const INSTAGRAM_FEED_MIN_RATIO = 0.8;
+const INSTAGRAM_FEED_MAX_RATIO = 1.91;
+const INSTAGRAM_REELS_TARGET_RATIO = 9 / 16;
+const INSTAGRAM_REELS_TOLERANCE = 0.08;
 const META_OAUTH_POPUP_MESSAGE_TYPE = 'prixmoai:meta-oauth';
+const SCHEDULER_ACTIONABLE_STATUSES = new Set(['pending', 'scheduled']);
 const coerceProfileValue = (value) => {
     const normalized = value?.trim();
     return normalized ? normalized : null;
+};
+const ensureScheduledPostCanBeEdited = (post) => {
+    if (!SCHEDULER_ACTIONABLE_STATUSES.has(post.status)) {
+        throw new Error('Only pending or scheduled posts can be edited.');
+    }
+    if (!post.canEdit) {
+        throw new Error(post.actionBlockedReason || scheduledPosts_1.SCHEDULED_POST_ACTION_BLOCKED_REASON);
+    }
+};
+const ensureScheduledPostCanBeCancelled = (post) => {
+    if (!SCHEDULER_ACTIONABLE_STATUSES.has(post.status)) {
+        throw new Error('Only pending or scheduled posts can be cancelled.');
+    }
+    if (!post.canCancel) {
+        throw new Error(post.actionBlockedReason || scheduledPosts_1.SCHEDULED_POST_ACTION_BLOCKED_REASON);
+    }
 };
 const toRecord = (value) => value && typeof value === 'object' && !Array.isArray(value)
     ? value
@@ -116,6 +143,7 @@ const buildFacebookSocialAccountFromMetaPage = (page, userToken, tokenExpiresAt,
         tokenExpiresAt,
         metadata: {
             connectionSource: 'meta_oauth',
+            oauthApp: 'facebook',
             metaUserId: metaUser?.id ?? null,
             metaUserName: metaUser?.name ?? null,
             metaPageId: page.id,
@@ -243,15 +271,52 @@ const resolveSocialAccountInput = (input) => {
         },
     };
 };
-const ensureMetaScheduledPostCanPublish = (platform, socialAccount, mediaUrl) => {
+const ensureMetaScheduledPostCanPublish = (platform, socialAccount, mediaUrl, mediaType) => {
     if (!socialAccount || socialAccount.oauthProvider !== 'meta') {
         return;
     }
     if (socialAccount.verificationStatus !== 'verified') {
         throw new Error('Reconnect this Meta account before queueing live publishing.');
     }
-    if (platform === 'instagram' && !mediaUrl) {
-        throw new Error('Instagram scheduled posts need an image before PrixmoAI can publish them.');
+    if (platform === 'instagram' && (!mediaUrl || !mediaType)) {
+        throw new Error('Instagram scheduled posts need media before PrixmoAI can publish them.');
+    }
+};
+const ensureScheduledPostHasMedia = (mediaUrl, mediaType) => {
+    if (!mediaUrl || !mediaType) {
+        throw new Error('Add image or video media before scheduling this post.');
+    }
+};
+const readRecord = (value) => value && typeof value === 'object' && !Array.isArray(value)
+    ? value
+    : {};
+const readInstagramPreparationWarning = (mediaAsset) => {
+    const metadata = readRecord(mediaAsset.metadata);
+    const instagramPreparation = readRecord(metadata.instagramPreparation);
+    const warning = instagramPreparation.warning;
+    return typeof warning === 'string' && warning.trim() ? warning : null;
+};
+const isInstagramVideoAspectRatioSupported = (ratio) => (ratio >= INSTAGRAM_FEED_MIN_RATIO && ratio <= INSTAGRAM_FEED_MAX_RATIO) ||
+    Math.abs(ratio - INSTAGRAM_REELS_TARGET_RATIO) <= INSTAGRAM_REELS_TOLERANCE;
+const ensureInstagramMediaAssetReady = (mediaAsset) => {
+    if (!mediaAsset.width || !mediaAsset.height) {
+        return;
+    }
+    const ratio = mediaAsset.width / mediaAsset.height;
+    if (mediaAsset.mediaType === 'image') {
+        if (ratio >= INSTAGRAM_FEED_MIN_RATIO && ratio <= INSTAGRAM_FEED_MAX_RATIO) {
+            return;
+        }
+        const metadata = readRecord(mediaAsset.metadata);
+        const instagramPreparation = readRecord(metadata.instagramPreparation);
+        if (instagramPreparation.status === 'adjusted') {
+            return;
+        }
+        throw new Error('This image aspect ratio is not supported by Instagram yet. PrixmoAI needs to auto-adjust it before scheduling.');
+    }
+    if (mediaAsset.mediaType === 'video' && !isInstagramVideoAspectRatioSupported(ratio)) {
+        throw new Error(readInstagramPreparationWarning(mediaAsset) ||
+            'This Instagram video needs a supported aspect ratio before it can be scheduled.');
     }
 };
 const ensureFutureDate = (isoDate, fieldName = 'scheduledFor') => {
@@ -259,11 +324,78 @@ const ensureFutureDate = (isoDate, fieldName = 'scheduledFor') => {
     if (Number.isNaN(parsed.getTime())) {
         throw new Error(`Invalid ${fieldName} value`);
     }
-    if (parsed.getTime() <= Date.now()) {
-        throw new Error(`${fieldName} must be a future date`);
+    if (parsed.getTime() <= Date.now() + SCHEDULE_MIN_BUFFER_MS) {
+        throw new Error(SCHEDULE_TIME_VALIDATION_MESSAGE);
     }
 };
-const buildMetaOAuthPopupHtml = (payload, fallbackRedirectUrl) => {
+const serializeForInlineScript = (value) => JSON.stringify(value)
+    .replace(/</g, '\\u003c')
+    .replace(/>/g, '\\u003e')
+    .replace(/&/g, '\\u0026')
+    .replace(/\u2028/g, '\\u2028')
+    .replace(/\u2029/g, '\\u2029');
+const isManagedSchedulerMediaUrl = (value) => value.includes(`/storage/v1/object/public/${constants_1.SUPABASE_SOURCE_IMAGE_BUCKET}/`);
+const inferManagedMediaTypeFromUrl = (value) => {
+    const normalized = value.toLowerCase();
+    if (normalized.includes('.mp4') ||
+        normalized.includes('.mov') ||
+        normalized.includes('video/')) {
+        return 'video';
+    }
+    if (normalized.includes('.jpg') ||
+        normalized.includes('.jpeg') ||
+        normalized.includes('.png') ||
+        normalized.includes('.webp') ||
+        normalized.includes('image/')) {
+        return 'image';
+    }
+    return null;
+};
+const resolveSchedulerMediaUrl = async (userId, mediaUrl, mediaType) => {
+    const normalized = coerceProfileValue(mediaUrl);
+    if (!normalized) {
+        return {
+            mediaUrl: null,
+            mediaType: null,
+        };
+    }
+    if (isManagedSchedulerMediaUrl(normalized)) {
+        return {
+            mediaUrl: normalized,
+            mediaType: mediaType ?? inferManagedMediaTypeFromUrl(normalized),
+        };
+    }
+    const imported = await (0, storage_service_1.importExternalSourceImage)(userId, normalized);
+    return {
+        mediaUrl: imported.publicUrl,
+        mediaType: imported.mediaType,
+    };
+};
+const buildMetaOAuthPopupCsp = (nonce) => [
+    "default-src 'none'",
+    `script-src 'nonce-${nonce}'`,
+    `style-src 'nonce-${nonce}'`,
+    "img-src 'none'",
+    "font-src 'none'",
+    "connect-src 'none'",
+    "object-src 'none'",
+    "base-uri 'none'",
+    "form-action 'none'",
+    "frame-ancestors 'none'",
+].join('; ');
+const applyMetaOAuthPopupHeaders = (res, nonce) => {
+    // This callback page needs an inline script to post the OAuth result back to
+    // the opener, and it must not opt into COOP isolation or the popup/opener
+    // bridge breaks across the ngrok-to-localhost origin boundary.
+    res.set({
+        'Cache-Control': 'no-store, max-age=0',
+        'Content-Security-Policy': buildMetaOAuthPopupCsp(nonce),
+        'Cross-Origin-Embedder-Policy': 'unsafe-none',
+        'Cross-Origin-Opener-Policy': 'unsafe-none',
+        Pragma: 'no-cache',
+    });
+};
+const buildMetaOAuthPopupHtml = (payload, fallbackRedirectUrl, nonce) => {
     const targetOrigin = new URL(constants_1.CLIENT_APP_URL).origin;
     return `<!doctype html>
 <html lang="en">
@@ -271,7 +403,7 @@ const buildMetaOAuthPopupHtml = (payload, fallbackRedirectUrl) => {
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>PrixmoAI Connection</title>
-    <style>
+    <style nonce="${nonce}">
       body {
         margin: 0;
         min-height: 100vh;
@@ -309,15 +441,15 @@ const buildMetaOAuthPopupHtml = (payload, fallbackRedirectUrl) => {
       <h1>Returning to PrixmoAI…</h1>
       <p>You can close this window if it does not close automatically.</p>
     </div>
-    <script>
+    <script nonce="${nonce}">
       (function () {
-        var payload = ${JSON.stringify({
+        var payload = ${serializeForInlineScript({
         type: META_OAUTH_POPUP_MESSAGE_TYPE,
         result: payload,
         ...payload,
     })};
-        var fallbackRedirectUrl = ${JSON.stringify(fallbackRedirectUrl)};
-        var targetOrigin = ${JSON.stringify(targetOrigin)};
+        var fallbackRedirectUrl = ${serializeForInlineScript(fallbackRedirectUrl)};
+        var targetOrigin = ${serializeForInlineScript(targetOrigin)};
 
         if (window.opener && typeof window.opener.postMessage === 'function') {
           window.opener.postMessage(payload, targetOrigin);
@@ -349,10 +481,12 @@ const respondWithMetaOAuthResult = (res, responseMode, payload) => {
             ? (0, meta_service_1.getMetaOAuthFacebookPageSelectionRedirectUrl)(payload.selectionId, payload.message)
             : (0, meta_service_1.getMetaOAuthSuccessRedirectUrl)(payload.message);
     if (responseMode === 'popup') {
+        const nonce = (0, crypto_1.randomBytes)(16).toString('base64');
+        applyMetaOAuthPopupHeaders(res, nonce);
         return res
             .status(200)
             .type('html')
-            .send(buildMetaOAuthPopupHtml(payload, fallbackRedirectUrl));
+            .send(buildMetaOAuthPopupHtml(payload, fallbackRedirectUrl, nonce));
     }
     return res.redirect(302, fallbackRedirectUrl);
 };
@@ -373,6 +507,12 @@ const resolveScheduledPostDefaults = async (client, userId, input) => {
     if (input.generatedImageId && !image) {
         throw new Error('Generated image item not found');
     }
+    const resolvedMedia = input.mediaUrl === undefined
+        ? {
+            mediaUrl: image?.generatedImageUrl ?? null,
+            mediaType: (image?.generatedImageUrl ? 'image' : null),
+        }
+        : await resolveSchedulerMediaUrl(userId, input.mediaUrl, input.mediaType);
     return {
         socialAccount,
         content,
@@ -381,10 +521,59 @@ const resolveScheduledPostDefaults = async (client, userId, input) => {
         caption: input.caption === undefined
             ? content?.captions?.[0]?.mainCopy ?? null
             : input.caption,
-        mediaUrl: input.mediaUrl === undefined
-            ? image?.generatedImageUrl ?? null
-            : input.mediaUrl,
+        mediaUrl: resolvedMedia.mediaUrl,
+        mediaType: resolvedMedia.mediaType,
     };
+};
+const deriveScheduleBatchStatus = (statuses, currentStatus) => {
+    if (!statuses.length) {
+        return currentStatus ?? 'draft';
+    }
+    const nonCancelled = statuses.filter((status) => status !== 'cancelled');
+    if (!nonCancelled.length) {
+        return 'failed';
+    }
+    if (nonCancelled.every((status) => status === 'published')) {
+        return 'completed';
+    }
+    if (nonCancelled.every((status) => status === 'failed')) {
+        return 'failed';
+    }
+    if (nonCancelled.some((status) => status === 'published') &&
+        nonCancelled.some((status) => status !== 'published')) {
+        return 'partial';
+    }
+    if (nonCancelled.some((status) => ['scheduled', 'pending', 'publishing'].includes(status))) {
+        if (currentStatus === 'draft' &&
+            nonCancelled.every((status) => status === 'pending')) {
+            return 'draft';
+        }
+        return 'queued';
+    }
+    return currentStatus ?? 'draft';
+};
+const syncBatchStatusFromItems = async (client, userId, batchId) => {
+    const detail = await (0, scheduleBatches_1.getScheduleBatchDetail)(client, userId, batchId);
+    if (!detail) {
+        return null;
+    }
+    const nextStatus = deriveScheduleBatchStatus(detail.items.map((item) => item.status), detail.batch.status);
+    if (nextStatus !== detail.batch.status) {
+        return await (0, scheduleBatches_1.updateScheduleBatch)(client, userId, batchId, {
+            status: nextStatus,
+        });
+    }
+    return detail.batch;
+};
+const assertNoDuplicateScheduledItems = (items) => {
+    const seen = new Set();
+    for (const item of items) {
+        const key = `${item.mediaAssetId}:${item.socialAccountId}:${item.scheduledAt}`;
+        if (seen.has(key)) {
+            throw new Error('Duplicate schedule conflict detected. Remove the identical platform and time slot before submitting.');
+        }
+        seen.add(key);
+    }
 };
 const createConnectedSocialAccount = async (req, res) => {
     if (!req.user?.id) {
@@ -497,7 +686,9 @@ const startMetaOAuth = async (req, res) => {
             data: {
                 authUrl,
                 // The popup posts back from the server callback origin, not the app origin.
-                popupOrigin: new URL(constants_1.META_REDIRECT_URI).origin,
+                popupOrigin: new URL(req.body.platform === 'instagram'
+                    ? constants_1.META_INSTAGRAM_REDIRECT_URI
+                    : constants_1.META_FACEBOOK_REDIRECT_URI).origin,
             },
         });
     }
@@ -568,7 +759,7 @@ const handleMetaOAuthCallback = async (req, res) => {
             if (!connectablePages.length) {
                 return respondWithMetaOAuthResult(res, claim.responseMode, {
                     status: 'error',
-                    message: 'Meta did not return any Facebook Pages for this login. Make sure you manage at least one Page.',
+                    message: (0, meta_service_1.buildFacebookNoPagesMessage)(exchange.debug),
                 });
             }
             if (connectablePages.length === 1) {
@@ -856,6 +1047,494 @@ const removeConnectedSocialAccount = async (req, res) => {
     }
 };
 exports.removeConnectedSocialAccount = removeConnectedSocialAccount;
+const createSchedulerMediaAsset = async (req, res) => {
+    if (!req.user?.id) {
+        return res.status(401).json({
+            status: 'fail',
+            message: 'Unauthorized',
+        });
+    }
+    try {
+        const client = (0, supabase_1.requireUserClient)(req.accessToken);
+        if (req.body.contentId) {
+            const content = await (0, content_1.getGeneratedContentById)(client, req.user.id, req.body.contentId);
+            if (!content) {
+                return res.status(404).json({
+                    status: 'fail',
+                    message: 'Generated content item not found',
+                });
+            }
+        }
+        if (req.body.generatedImageId) {
+            const image = await (0, images_1.getGeneratedImageById)(client, req.user.id, req.body.generatedImageId);
+            if (!image) {
+                return res.status(404).json({
+                    status: 'fail',
+                    message: 'Generated image item not found',
+                });
+            }
+        }
+        const asset = await (0, scheduleBatches_1.createMediaAsset)(client, req.user.id, req.body);
+        return res.status(201).json({
+            status: 'success',
+            message: 'Media asset created successfully',
+            data: asset,
+        });
+    }
+    catch (error) {
+        return res.status(500).json({
+            status: 'error',
+            message: error instanceof Error ? error.message : 'Failed to create media asset',
+        });
+    }
+};
+exports.createSchedulerMediaAsset = createSchedulerMediaAsset;
+const createScheduleBatchDraft = async (req, res) => {
+    if (!req.user?.id) {
+        return res.status(401).json({
+            status: 'fail',
+            message: 'Unauthorized',
+        });
+    }
+    try {
+        const client = (0, supabase_1.requireUserClient)(req.accessToken);
+        const batch = await (0, scheduleBatches_1.createScheduleBatch)(client, req.user.id, {
+            batchName: req.body.batchName ?? null,
+            status: req.body.status ?? 'draft',
+        });
+        return res.status(201).json({
+            status: 'success',
+            message: 'Schedule batch created successfully',
+            data: batch,
+        });
+    }
+    catch (error) {
+        return res.status(500).json({
+            status: 'error',
+            message: error instanceof Error ? error.message : 'Failed to create schedule batch',
+        });
+    }
+};
+exports.createScheduleBatchDraft = createScheduleBatchDraft;
+const getScheduleBatch = async (req, res) => {
+    if (!req.user?.id) {
+        return res.status(401).json({
+            status: 'fail',
+            message: 'Unauthorized',
+        });
+    }
+    try {
+        const client = (0, supabase_1.requireUserClient)(req.accessToken);
+        const detail = await (0, scheduleBatches_1.getScheduleBatchDetail)(client, req.user.id, req.params.id);
+        if (!detail) {
+            return res.status(404).json({
+                status: 'fail',
+                message: 'Schedule batch not found',
+            });
+        }
+        return res.status(200).json({
+            status: 'success',
+            data: detail,
+        });
+    }
+    catch (error) {
+        return res.status(500).json({
+            status: 'error',
+            message: error instanceof Error ? error.message : 'Failed to fetch schedule batch',
+        });
+    }
+};
+exports.getScheduleBatch = getScheduleBatch;
+const deleteScheduleBatchDraft = async (req, res) => {
+    if (!req.user?.id) {
+        return res.status(401).json({
+            status: 'fail',
+            message: 'Unauthorized',
+        });
+    }
+    try {
+        const client = (0, supabase_1.requireUserClient)(req.accessToken);
+        const batch = await (0, scheduleBatches_1.getScheduleBatchById)(client, req.user.id, req.params.id);
+        if (!batch) {
+            return res.status(404).json({
+                status: 'fail',
+                message: 'Schedule batch not found',
+            });
+        }
+        await (0, scheduleBatches_1.deleteScheduleBatch)(client, req.user.id, req.params.id);
+        return res.status(200).json({
+            status: 'success',
+            message: 'Draft deleted successfully',
+        });
+    }
+    catch (error) {
+        return res.status(500).json({
+            status: 'error',
+            message: error instanceof Error ? error.message : 'Failed to delete schedule batch',
+        });
+    }
+};
+exports.deleteScheduleBatchDraft = deleteScheduleBatchDraft;
+const listScheduleBatches = async (req, res) => {
+    if (!req.user?.id) {
+        return res.status(401).json({
+            status: 'fail',
+            message: 'Unauthorized',
+        });
+    }
+    try {
+        const client = (0, supabase_1.requireUserClient)(req.accessToken);
+        const result = await (0, scheduleBatches_1.getScheduleBatchesByUser)(client, req.user.id, {
+            page: parsePositiveInt(req.query.page, 1),
+            limit: parsePositiveInt(req.query.limit, 24),
+            status: req.query.status ?? null,
+        });
+        return res.status(200).json({
+            status: 'success',
+            data: result,
+        });
+    }
+    catch (error) {
+        return res.status(500).json({
+            status: 'error',
+            message: error instanceof Error ? error.message : 'Failed to fetch schedule batches',
+        });
+    }
+};
+exports.listScheduleBatches = listScheduleBatches;
+const addScheduleBatchItems = async (req, res) => {
+    if (!req.user?.id) {
+        return res.status(401).json({
+            status: 'fail',
+            message: 'Unauthorized',
+        });
+    }
+    try {
+        assertNoDuplicateScheduledItems(req.body.items);
+        const client = (0, supabase_1.requireUserClient)(req.accessToken);
+        const batch = await (0, scheduleBatches_1.getScheduleBatchById)(client, req.user.id, req.params.id);
+        if (!batch) {
+            return res.status(404).json({
+                status: 'fail',
+                message: 'Schedule batch not found',
+            });
+        }
+        const existingItems = await (0, scheduleBatches_1.getScheduledItemsByBatch)(client, req.user.id, req.params.id);
+        assertNoDuplicateScheduledItems([
+            ...existingItems.map((item) => ({
+                mediaAssetId: item.mediaAssetId,
+                socialAccountId: item.socialAccountId,
+                scheduledAt: item.scheduledAt,
+            })),
+            ...req.body.items.map((item) => ({
+                mediaAssetId: item.mediaAssetId,
+                socialAccountId: item.socialAccountId,
+                scheduledAt: item.scheduledAt,
+            })),
+        ]);
+        const createdItems = [];
+        for (const item of req.body.items) {
+            ensureFutureDate(item.scheduledAt, 'scheduledAt');
+            const [mediaAsset, socialAccount] = await Promise.all([
+                (0, scheduleBatches_1.getMediaAssetById)(client, req.user.id, item.mediaAssetId),
+                (0, socialAccounts_1.getSocialAccountById)(client, req.user.id, item.socialAccountId),
+            ]);
+            if (!mediaAsset) {
+                throw new Error('Media asset not found');
+            }
+            if (!socialAccount) {
+                throw new Error('Social account not found');
+            }
+            if (socialAccount.platform === 'instagram') {
+                ensureInstagramMediaAssetReady(mediaAsset);
+            }
+            createdItems.push(await (0, scheduleBatches_1.createScheduledItem)(client, req.user.id, req.params.id, {
+                mediaAssetId: item.mediaAssetId,
+                socialAccountId: item.socialAccountId,
+                platform: item.platform,
+                accountId: item.accountId,
+                caption: item.caption ?? null,
+                scheduledAt: item.scheduledAt,
+                status: item.status ?? 'pending',
+            }));
+        }
+        await syncBatchStatusFromItems(client, req.user.id, req.params.id);
+        return res.status(201).json({
+            status: 'success',
+            message: 'Scheduled items added successfully',
+            data: createdItems,
+        });
+    }
+    catch (error) {
+        const message = error instanceof Error ? error.message : 'Failed to add scheduled items';
+        return res.status(message.includes('not found') ||
+            message === SCHEDULE_TIME_VALIDATION_MESSAGE ||
+            message.includes('Duplicate schedule conflict') ||
+            message.includes('supported')
+            ? 400
+            : 500).json({
+            status: message.includes('not found') ||
+                message === SCHEDULE_TIME_VALIDATION_MESSAGE ||
+                message.includes('Duplicate schedule conflict') ||
+                message.includes('supported')
+                ? 'fail'
+                : 'error',
+            message,
+        });
+    }
+};
+exports.addScheduleBatchItems = addScheduleBatchItems;
+const submitScheduleBatch = async (req, res) => {
+    if (!req.user?.id) {
+        return res.status(401).json({
+            status: 'fail',
+            message: 'Unauthorized',
+        });
+    }
+    try {
+        const client = (0, supabase_1.requireUserClient)(req.accessToken);
+        const detail = await (0, scheduleBatches_1.getScheduleBatchDetail)(client, req.user.id, req.params.id);
+        if (!detail) {
+            return res.status(404).json({
+                status: 'fail',
+                message: 'Schedule batch not found',
+            });
+        }
+        if (!detail.items.length) {
+            return res.status(400).json({
+                status: 'fail',
+                message: 'Add at least one scheduled item before submitting the batch.',
+            });
+        }
+        const mirroredItems = [];
+        for (const item of detail.items) {
+            if (item.status === 'cancelled' || item.scheduledPostId) {
+                continue;
+            }
+            ensureFutureDate(item.scheduledAt, 'scheduledAt');
+            const socialAccount = item.socialAccount ??
+                (await (0, socialAccounts_1.getSocialAccountById)(client, req.user.id, item.socialAccountId));
+            const mediaAsset = item.mediaAsset ??
+                (await (0, scheduleBatches_1.getMediaAssetById)(client, req.user.id, item.mediaAssetId));
+            if (!socialAccount || !mediaAsset) {
+                throw new Error('Scheduled item is missing its linked media or social account.');
+            }
+            if (socialAccount.platform === 'instagram') {
+                ensureInstagramMediaAssetReady(mediaAsset);
+            }
+            ensureMetaScheduledPostCanPublish(item.platform, socialAccount, mediaAsset.storageUrl, mediaAsset.mediaType);
+            ensureScheduledPostHasMedia(mediaAsset.storageUrl, mediaAsset.mediaType);
+            const scheduledPost = await (0, scheduledPosts_1.createScheduledPost)(client, req.user.id, {
+                socialAccountId: item.socialAccountId,
+                contentId: mediaAsset.contentId,
+                generatedImageId: mediaAsset.generatedImageId,
+                platform: item.platform,
+                caption: item.caption,
+                mediaUrl: mediaAsset.storageUrl,
+                mediaType: mediaAsset.mediaType,
+                scheduledFor: item.scheduledAt,
+                status: 'scheduled',
+            });
+            await (0, schedulerPublisher_service_1.scheduleScheduledPostPublish)({
+                id: scheduledPost.id,
+                userId: scheduledPost.userId,
+                scheduledFor: scheduledPost.scheduledFor,
+                status: scheduledPost.status,
+            });
+            const updatedItem = await (0, scheduleBatches_1.updateScheduledItem)(client, req.user.id, item.id, {
+                scheduledPostId: scheduledPost.id,
+                status: 'scheduled',
+                lastError: null,
+            });
+            await (0, scheduleBatches_1.appendScheduledItemLog)(client, {
+                scheduledItemId: updatedItem.id,
+                eventType: 'submitted',
+                message: 'Scheduled item mirrored into the publishing queue.',
+                payloadJson: {
+                    scheduledPostId: scheduledPost.id,
+                },
+            });
+            mirroredItems.push(updatedItem);
+        }
+        const batch = await (0, scheduleBatches_1.updateScheduleBatch)(client, req.user.id, req.params.id, {
+            status: 'queued',
+        });
+        return res.status(200).json({
+            status: 'success',
+            message: 'Schedule batch submitted successfully',
+            data: {
+                batch,
+                items: mirroredItems,
+            },
+        });
+    }
+    catch (error) {
+        const message = error instanceof Error ? error.message : 'Failed to submit schedule batch';
+        return res.status(message === SCHEDULE_TIME_VALIDATION_MESSAGE ||
+            message.includes('missing') ||
+            message.includes('supported')
+            ? 400
+            : 500).json({
+            status: message === SCHEDULE_TIME_VALIDATION_MESSAGE ||
+                message.includes('missing') ||
+                message.includes('supported')
+                ? 'fail'
+                : 'error',
+            message,
+        });
+    }
+};
+exports.submitScheduleBatch = submitScheduleBatch;
+const listScheduleItems = async (req, res) => {
+    if (!req.user?.id) {
+        return res.status(401).json({
+            status: 'fail',
+            message: 'Unauthorized',
+        });
+    }
+    try {
+        const client = (0, supabase_1.requireUserClient)(req.accessToken);
+        const items = await (0, scheduleBatches_1.getScheduledItemsByUser)(client, req.user.id, {
+            page: parsePositiveInt(req.query.page, 1),
+            limit: parsePositiveInt(req.query.limit, 50),
+            status: req.query.status ?? null,
+        });
+        return res.status(200).json({
+            status: 'success',
+            data: items,
+        });
+    }
+    catch (error) {
+        return res.status(500).json({
+            status: 'error',
+            message: error instanceof Error ? error.message : 'Failed to fetch scheduled items',
+        });
+    }
+};
+exports.listScheduleItems = listScheduleItems;
+const updateScheduleItemRecord = async (req, res) => {
+    if (!req.user?.id) {
+        return res.status(401).json({
+            status: 'fail',
+            message: 'Unauthorized',
+        });
+    }
+    try {
+        const client = (0, supabase_1.requireUserClient)(req.accessToken);
+        const existingItem = await (0, scheduleBatches_1.getScheduledItemById)(client, req.user.id, req.params.id);
+        if (!existingItem) {
+            return res.status(404).json({
+                status: 'fail',
+                message: 'Scheduled item not found',
+            });
+        }
+        if (req.body.scheduledAt) {
+            ensureFutureDate(req.body.scheduledAt, 'scheduledAt');
+        }
+        const updatedItem = await (0, scheduleBatches_1.updateScheduledItem)(client, req.user.id, req.params.id, {
+            mediaAssetId: req.body.mediaAssetId,
+            socialAccountId: req.body.socialAccountId,
+            platform: req.body.platform,
+            accountId: req.body.accountId,
+            caption: req.body.caption,
+            scheduledAt: req.body.scheduledAt,
+            status: req.body.status,
+        });
+        if (existingItem.scheduledPostId) {
+            const mediaAsset = await (0, scheduleBatches_1.getMediaAssetById)(client, req.user.id, updatedItem.mediaAssetId);
+            if (!mediaAsset) {
+                throw new Error('Media asset not found');
+            }
+            const updatedPost = await (0, scheduledPosts_1.updateScheduledPost)(client, req.user.id, existingItem.scheduledPostId, {
+                socialAccountId: updatedItem.socialAccountId,
+                contentId: mediaAsset.contentId,
+                generatedImageId: mediaAsset.generatedImageId,
+                platform: updatedItem.platform,
+                caption: updatedItem.caption,
+                mediaUrl: mediaAsset.storageUrl,
+                mediaType: mediaAsset.mediaType,
+                scheduledFor: updatedItem.scheduledAt,
+                status: updatedItem.status === 'cancelled'
+                    ? 'cancelled'
+                    : updatedItem.status === 'published' || updatedItem.status === 'failed'
+                        ? updatedItem.status
+                        : 'scheduled',
+            });
+            if (updatedPost.status === 'cancelled') {
+                await (0, schedulerPublisher_service_1.unscheduleScheduledPostPublish)(updatedPost.id);
+            }
+            else {
+                await (0, schedulerPublisher_service_1.scheduleScheduledPostPublish)({
+                    id: updatedPost.id,
+                    userId: updatedPost.userId,
+                    scheduledFor: updatedPost.scheduledFor,
+                    status: updatedPost.status,
+                });
+            }
+        }
+        await syncBatchStatusFromItems(client, req.user.id, updatedItem.batchId);
+        return res.status(200).json({
+            status: 'success',
+            message: 'Scheduled item updated successfully',
+            data: updatedItem,
+        });
+    }
+    catch (error) {
+        const message = error instanceof Error ? error.message : 'Failed to update scheduled item';
+        return res.status(message === SCHEDULE_TIME_VALIDATION_MESSAGE ? 400 : 500).json({
+            status: message === SCHEDULE_TIME_VALIDATION_MESSAGE ? 'fail' : 'error',
+            message,
+        });
+    }
+};
+exports.updateScheduleItemRecord = updateScheduleItemRecord;
+const cancelScheduleItemRecord = async (req, res) => {
+    if (!req.user?.id) {
+        return res.status(401).json({
+            status: 'fail',
+            message: 'Unauthorized',
+        });
+    }
+    try {
+        const client = (0, supabase_1.requireUserClient)(req.accessToken);
+        const existingItem = await (0, scheduleBatches_1.getScheduledItemById)(client, req.user.id, req.params.id);
+        if (!existingItem) {
+            return res.status(404).json({
+                status: 'fail',
+                message: 'Scheduled item not found',
+            });
+        }
+        if (existingItem.scheduledPostId) {
+            const scheduledPost = await (0, scheduledPosts_1.getScheduledPostById)(client, req.user.id, existingItem.scheduledPostId);
+            if (scheduledPost && ['pending', 'scheduled'].includes(scheduledPost.status)) {
+                const updatedPost = await (0, scheduledPosts_1.updateScheduledPostStatus)(client, req.user.id, scheduledPost.id, 'cancelled', null);
+                await (0, schedulerPublisher_service_1.unscheduleScheduledPostPublish)(updatedPost.id);
+            }
+        }
+        const updatedItem = await (0, scheduleBatches_1.updateScheduledItem)(client, req.user.id, req.params.id, {
+            status: 'cancelled',
+            lastError: null,
+        });
+        await (0, scheduleBatches_1.appendScheduledItemLog)(client, {
+            scheduledItemId: updatedItem.id,
+            eventType: 'cancelled',
+            message: 'Scheduled item cancelled.',
+        });
+        await syncBatchStatusFromItems(client, req.user.id, updatedItem.batchId);
+        return res.status(200).json({
+            status: 'success',
+            message: 'Scheduled item cancelled successfully',
+            data: updatedItem,
+        });
+    }
+    catch (error) {
+        return res.status(500).json({
+            status: 'error',
+            message: error instanceof Error ? error.message : 'Failed to cancel scheduled item',
+        });
+    }
+};
+exports.cancelScheduleItemRecord = cancelScheduleItemRecord;
 const createPostSchedule = async (req, res) => {
     if (!req.user?.id) {
         return res.status(401).json({
@@ -873,8 +1552,10 @@ const createPostSchedule = async (req, res) => {
             platform: req.body.platform ?? null,
             caption: req.body.caption ?? null,
             mediaUrl: req.body.mediaUrl ?? null,
+            mediaType: req.body.mediaType ?? null,
         });
-        ensureMetaScheduledPostCanPublish(resolved.platform, resolved.socialAccount, resolved.mediaUrl);
+        ensureMetaScheduledPostCanPublish(resolved.platform, resolved.socialAccount, resolved.mediaUrl, resolved.mediaType);
+        ensureScheduledPostHasMedia(resolved.mediaUrl, resolved.mediaType);
         const scheduledPost = await (0, scheduledPosts_1.createScheduledPost)(client, req.user.id, {
             socialAccountId: req.body.socialAccountId,
             contentId: req.body.contentId ?? null,
@@ -882,8 +1563,15 @@ const createPostSchedule = async (req, res) => {
             platform: resolved.platform,
             caption: resolved.caption,
             mediaUrl: resolved.mediaUrl,
+            mediaType: resolved.mediaType,
             scheduledFor: req.body.scheduledFor,
             status: req.body.status ?? 'scheduled',
+        });
+        await (0, schedulerPublisher_service_1.scheduleScheduledPostPublish)({
+            id: scheduledPost.id,
+            userId: scheduledPost.userId,
+            scheduledFor: scheduledPost.scheduledFor,
+            status: scheduledPost.status,
         });
         return res.status(201).json({
             status: 'success',
@@ -893,12 +1581,20 @@ const createPostSchedule = async (req, res) => {
     }
     catch (error) {
         const message = error instanceof Error ? error.message : 'Failed to create scheduled post';
-        return res.status(message.includes('not found') || message.includes('must be a future')
+        const isValidationFailure = message.includes('not found') ||
+            message === SCHEDULE_TIME_VALIDATION_MESSAGE ||
+            message === 'Invalid media URL' ||
+            message === 'No preview available for this link' ||
+            message === 'Add image or video media before scheduling this post.' ||
+            message.includes('supported') ||
+            message.includes('must be 50MB') ||
+            message.includes('must be 6MB');
+        return res.status(isValidationFailure
             ? 400
-            : 500).json({
-            status: message.includes('not found') || message.includes('must be a future')
-                ? 'fail'
-                : 'error',
+            : message.includes('download media')
+                ? 502
+                : 500).json({
+            status: isValidationFailure ? 'fail' : 'error',
             message,
         });
     }
@@ -951,6 +1647,7 @@ const updatePostSchedule = async (req, res) => {
         if (req.body.scheduledFor) {
             ensureFutureDate(req.body.scheduledFor);
         }
+        ensureScheduledPostCanBeEdited(existingPost);
         const resolved = await resolveScheduledPostDefaults(client, req.user.id, {
             socialAccountId: req.body.socialAccountId ?? existingPost.socialAccountId,
             contentId: req.body.contentId === undefined ? existingPost.contentId : req.body.contentId,
@@ -960,8 +1657,9 @@ const updatePostSchedule = async (req, res) => {
             platform: req.body.platform === undefined ? existingPost.platform : req.body.platform,
             caption: req.body.caption === undefined ? existingPost.caption : req.body.caption,
             mediaUrl: req.body.mediaUrl === undefined ? existingPost.mediaUrl : req.body.mediaUrl,
+            mediaType: req.body.mediaType === undefined ? existingPost.mediaType : req.body.mediaType,
         });
-        ensureMetaScheduledPostCanPublish(resolved.platform, resolved.socialAccount, resolved.mediaUrl);
+        ensureMetaScheduledPostCanPublish(resolved.platform, resolved.socialAccount, resolved.mediaUrl, resolved.mediaType);
         const updatedPost = await (0, scheduledPosts_1.updateScheduledPost)(client, req.user.id, req.params.id, {
             socialAccountId: req.body.socialAccountId ?? existingPost.socialAccountId,
             contentId: req.body.contentId === undefined ? existingPost.contentId : req.body.contentId,
@@ -971,9 +1669,29 @@ const updatePostSchedule = async (req, res) => {
             platform: resolved.platform,
             caption: resolved.caption,
             mediaUrl: resolved.mediaUrl,
+            mediaType: resolved.mediaType,
             scheduledFor: req.body.scheduledFor ?? existingPost.scheduledFor,
             status: req.body.status ?? existingPost.status,
         });
+        if (updatedPost.status === 'cancelled') {
+            await (0, schedulerPublisher_service_1.unscheduleScheduledPostPublish)(updatedPost.id);
+        }
+        else {
+            await (0, schedulerPublisher_service_1.scheduleScheduledPostPublish)({
+                id: updatedPost.id,
+                userId: updatedPost.userId,
+                scheduledFor: updatedPost.scheduledFor,
+                status: updatedPost.status,
+            });
+        }
+        await (0, scheduleBatches_1.syncScheduledItemStatusByScheduledPostId)(client, updatedPost.id, {
+            status: updatedPost.status === 'published' || updatedPost.status === 'failed'
+                ? updatedPost.status
+                : updatedPost.status === 'cancelled'
+                    ? 'cancelled'
+                    : 'scheduled',
+            lastError: updatedPost.lastError,
+        }).catch(() => null);
         return res.status(200).json({
             status: 'success',
             message: 'Scheduled post updated successfully',
@@ -982,12 +1700,23 @@ const updatePostSchedule = async (req, res) => {
     }
     catch (error) {
         const message = error instanceof Error ? error.message : 'Failed to update scheduled post';
-        return res.status(message.includes('not found') || message.includes('must be a future')
+        const isValidationFailure = message.includes('not found') ||
+            message === SCHEDULE_TIME_VALIDATION_MESSAGE ||
+            message.includes('can be edited') ||
+            message === 'Invalid media URL' ||
+            message === 'No preview available for this link' ||
+            message.includes('supported') ||
+            message.includes('must be 50MB') ||
+            message.includes('must be 6MB');
+        const isBufferFailure = message === scheduledPosts_1.SCHEDULED_POST_ACTION_BLOCKED_REASON;
+        return res.status(isValidationFailure
             ? 400
-            : 500).json({
-            status: message.includes('not found') || message.includes('must be a future')
-                ? 'fail'
-                : 'error',
+            : isBufferFailure
+                ? 409
+                : message.includes('download media')
+                    ? 502
+                    : 500).json({
+            status: isValidationFailure || isBufferFailure ? 'fail' : 'error',
             message,
         });
     }
@@ -1009,10 +1738,37 @@ const updatePostScheduleStatus = async (req, res) => {
                 message: 'Scheduled post not found',
             });
         }
+        if (req.body.status === 'cancelled') {
+            ensureScheduledPostCanBeCancelled(existingPost);
+        }
         const publishedAt = req.body.status === 'published'
             ? req.body.publishedAt ?? new Date().toISOString()
             : req.body.publishedAt ?? null;
         const updatedPost = await (0, scheduledPosts_1.updateScheduledPostStatus)(client, req.user.id, req.params.id, req.body.status, publishedAt);
+        if (updatedPost.status === 'cancelled' ||
+            updatedPost.status === 'published' ||
+            updatedPost.status === 'failed') {
+            await (0, schedulerPublisher_service_1.unscheduleScheduledPostPublish)(updatedPost.id);
+        }
+        else {
+            await (0, schedulerPublisher_service_1.scheduleScheduledPostPublish)({
+                id: updatedPost.id,
+                userId: updatedPost.userId,
+                scheduledFor: updatedPost.scheduledFor,
+                status: updatedPost.status,
+            });
+        }
+        const syncedItems = await (0, scheduleBatches_1.syncScheduledItemStatusByScheduledPostId)(client, updatedPost.id, {
+            status: req.body.status === 'scheduled' || req.body.status === 'pending'
+                ? 'scheduled'
+                : req.body.status === 'cancelled'
+                    ? 'cancelled'
+                    : req.body.status,
+            lastError: updatedPost.lastError,
+        }).catch(() => []);
+        if (syncedItems.length) {
+            await Promise.all(syncedItems.map((item) => syncBatchStatusFromItems(client, req.user.id, item.batchId).catch(() => null)));
+        }
         return res.status(200).json({
             status: 'success',
             message: 'Scheduled post status updated successfully',
@@ -1020,15 +1776,67 @@ const updatePostScheduleStatus = async (req, res) => {
         });
     }
     catch (error) {
-        return res.status(500).json({
-            status: 'error',
-            message: error instanceof Error
-                ? error.message
-                : 'Failed to update scheduled post status',
+        const message = error instanceof Error
+            ? error.message
+            : 'Failed to update scheduled post status';
+        const isActionFailure = message === scheduledPosts_1.SCHEDULED_POST_ACTION_BLOCKED_REASON ||
+            message.includes('can be cancelled');
+        return res.status(isActionFailure ? 409 : 500).json({
+            status: isActionFailure ? 'fail' : 'error',
+            message,
         });
     }
 };
 exports.updatePostScheduleStatus = updatePostScheduleStatus;
+const cancelPostSchedule = async (req, res) => {
+    if (!req.user?.id) {
+        return res.status(401).json({
+            status: 'fail',
+            message: 'Unauthorized',
+        });
+    }
+    try {
+        const client = (0, supabase_1.requireUserClient)(req.accessToken);
+        const existingPost = await (0, scheduledPosts_1.getScheduledPostById)(client, req.user.id, req.params.id);
+        if (!existingPost) {
+            return res.status(404).json({
+                status: 'fail',
+                message: 'Scheduled post not found',
+            });
+        }
+        ensureScheduledPostCanBeCancelled(existingPost);
+        const updatedPost = await (0, scheduledPosts_1.updateScheduledPostStatus)(client, req.user.id, req.params.id, 'cancelled', null);
+        await (0, schedulerPublisher_service_1.unscheduleScheduledPostPublish)(updatedPost.id);
+        const syncedItems = await (0, scheduleBatches_1.syncScheduledItemStatusByScheduledPostId)(client, updatedPost.id, {
+            status: 'cancelled',
+            lastError: null,
+        }).catch(() => []);
+        if (syncedItems.length) {
+            await Promise.all(syncedItems.map((item) => syncBatchStatusFromItems(client, req.user.id, item.batchId).catch(() => null)));
+        }
+        return res.status(200).json({
+            status: 'success',
+            message: 'Scheduled post cancelled successfully',
+            data: updatedPost,
+        });
+    }
+    catch (error) {
+        const message = error instanceof Error
+            ? error.message
+            : 'Failed to cancel scheduled post';
+        return res.status(message === scheduledPosts_1.SCHEDULED_POST_ACTION_BLOCKED_REASON ||
+            message.includes('can be cancelled')
+            ? 409
+            : 500).json({
+            status: message === scheduledPosts_1.SCHEDULED_POST_ACTION_BLOCKED_REASON ||
+                message.includes('can be cancelled')
+                ? 'fail'
+                : 'error',
+            message,
+        });
+    }
+};
+exports.cancelPostSchedule = cancelPostSchedule;
 const deletePostSchedule = async (req, res) => {
     if (!req.user?.id) {
         return res.status(401).json({
@@ -1046,6 +1854,7 @@ const deletePostSchedule = async (req, res) => {
             });
         }
         await (0, scheduledPosts_1.deleteScheduledPost)(client, req.user.id, req.params.id);
+        await (0, schedulerPublisher_service_1.unscheduleScheduledPostPublish)(req.params.id);
         return res.status(200).json({
             status: 'success',
             message: 'Scheduled post deleted successfully',

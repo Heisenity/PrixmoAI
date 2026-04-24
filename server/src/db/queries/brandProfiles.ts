@@ -1,5 +1,6 @@
 import type { BrandProfile, BrandProfileInput } from '../../types';
 import type { AppSupabaseClient } from '../supabase';
+import { normalizeUsername } from '../../lib/username';
 
 type BrandProfileRow = {
   id: string;
@@ -9,7 +10,16 @@ type BrandProfileRow = {
   phone_number: string | null;
   username: string | null;
   avatar_url: string | null;
+  country: string | null;
+  language: string | null;
+  website_url: string | null;
+  logo_url: string | null;
+  primary_color: string | null;
+  secondary_color: string | null;
+  accent_color: string | null;
   industry: string | null;
+  primary_industry: string | null;
+  secondary_industries: string[] | null;
   target_audience: string | null;
   brand_voice: string | null;
   description: string | null;
@@ -30,7 +40,16 @@ const toBrandProfile = (row: BrandProfileRow): BrandProfile => ({
   phoneNumber: row.phone_number,
   username: row.username,
   avatarUrl: row.avatar_url,
+  country: row.country,
+  language: row.language,
+  websiteUrl: row.website_url,
+  logoUrl: row.logo_url,
+  primaryColor: row.primary_color,
+  secondaryColor: row.secondary_color,
+  accentColor: row.accent_color,
   industry: row.industry,
+  primaryIndustry: row.primary_industry,
+  secondaryIndustries: row.secondary_industries ?? [],
   targetAudience: row.target_audience,
   brandVoice: row.brand_voice,
   description: row.description,
@@ -44,9 +63,18 @@ const toBrandProfilePayload = (userId: string, input: BrandProfileInput) =>
     brand_name: input.brandName,
     full_name: input.fullName,
     phone_number: input.phoneNumber ?? null,
-    username: input.username ?? null,
+    username: input.username ? normalizeUsername(input.username) : null,
     avatar_url: input.avatarUrl ?? null,
+    country: input.country ?? null,
+    language: input.language ?? null,
+    website_url: input.websiteUrl ?? null,
+    logo_url: input.logoUrl ?? null,
+    primary_color: input.primaryColor ?? null,
+    secondary_color: input.secondaryColor ?? null,
+    accent_color: input.accentColor ?? null,
     industry: input.industry ?? null,
+    primary_industry: input.primaryIndustry ?? null,
+    secondary_industries: input.secondaryIndustries ?? [],
     target_audience: input.targetAudience ?? null,
     brand_voice: input.brandVoice ?? null,
     description: input.description ?? null,
@@ -57,9 +85,21 @@ const toBrandProfileUpdatePayload = (input: Partial<BrandProfileInput>) =>
     brand_name: input.brandName,
     full_name: input.fullName,
     phone_number: input.phoneNumber,
-    username: input.username,
+    username:
+      input.username === undefined
+        ? undefined
+        : normalizeUsername(input.username ?? '') || null,
     avatar_url: input.avatarUrl,
+    country: input.country,
+    language: input.language,
+    website_url: input.websiteUrl,
+    logo_url: input.logoUrl,
+    primary_color: input.primaryColor,
+    secondary_color: input.secondaryColor,
+    accent_color: input.accentColor,
     industry: input.industry,
+    primary_industry: input.primaryIndustry,
+    secondary_industries: input.secondaryIndustries,
     target_audience: input.targetAudience,
     brand_voice: input.brandVoice,
     description: input.description,
@@ -147,4 +187,63 @@ export const updateBrandProfile = async (
   }
 
   return toBrandProfile(data as BrandProfileRow);
+};
+
+export const getBrandProfileOwnerByUsername = async (
+  client: AppSupabaseClient,
+  username: string
+): Promise<{ userId: string; username: string } | null> => {
+  const normalizedUsername = normalizeUsername(username);
+
+  if (!normalizedUsername) {
+    return null;
+  }
+
+  const { data, error } = await client
+    .from('brand_profiles')
+    .select('user_id, username')
+    .eq('username', normalizedUsername)
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(error.message || 'Failed to check username availability');
+  }
+
+  if (!data?.username) {
+    return null;
+  }
+
+  return {
+    userId: data.user_id as string,
+    username: data.username as string,
+  };
+};
+
+export const listTakenUsernames = async (
+  client: AppSupabaseClient,
+  usernames: string[]
+): Promise<Set<string>> => {
+  const normalizedUsernames = Array.from(
+    new Set(usernames.map((entry) => normalizeUsername(entry)).filter(Boolean))
+  );
+
+  if (!normalizedUsernames.length) {
+    return new Set();
+  }
+
+  const { data, error } = await client
+    .from('brand_profiles')
+    .select('username')
+    .in('username', normalizedUsernames);
+
+  if (error) {
+    throw new Error(error.message || 'Failed to load existing usernames');
+  }
+
+  return new Set(
+    ((data ?? []) as Array<{ username: string | null }>)
+      .map((entry) => entry.username)
+      .filter((entry): entry is string => Boolean(entry))
+  );
 };

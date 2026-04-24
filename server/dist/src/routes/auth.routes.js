@@ -7,5 +7,8 @@ const validate_middleware_1 = require("../middleware/validate.middleware");
 const user_schema_1 = require("../schemas/user.schema");
 const router = (0, express_1.Router)();
 router.post('/profile', auth_middleware_1.authMiddleware, (0, validate_middleware_1.validate)(user_schema_1.authProfileSchema), auth_controller_1.saveProfile);
+router.post('/username-availability', auth_middleware_1.authMiddleware, (0, validate_middleware_1.validate)(user_schema_1.usernameAvailabilitySchema), auth_controller_1.checkUsernameAvailability);
+router.post('/industry-suggestion', auth_middleware_1.authMiddleware, (0, validate_middleware_1.validate)(user_schema_1.industrySuggestionSchema), auth_controller_1.suggestIndustry);
+router.post('/brand-description-suggestion', auth_middleware_1.authMiddleware, (0, validate_middleware_1.validate)(user_schema_1.brandDescriptionSuggestionSchema), auth_controller_1.suggestBrandDescription);
 router.get('/me', auth_middleware_1.authMiddleware, auth_controller_1.getMe);
 exports.default = router;

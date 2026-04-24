@@ -8,6 +8,8 @@ const validate_middleware_1 = require("../middleware/validate.middleware");
 const analytics_schema_1 = require("../schemas/analytics.schema");
 const router = (0, express_1.Router)();
 router.post('/record', auth_middleware_1.authMiddleware, (0, validate_middleware_1.validate)(analytics_schema_1.recordAnalyticsSchema), analytics_controller_1.recordAnalytics);
+router.post('/sync', auth_middleware_1.authMiddleware, analytics_controller_1.syncAnalytics);
+router.get('/dashboard', auth_middleware_1.authMiddleware, analytics_controller_1.getDashboard);
 router.get('/overview', auth_middleware_1.authMiddleware, analytics_controller_1.getOverview);
 router.get('/summary', auth_middleware_1.authMiddleware, analytics_controller_1.getSummary);
 router.get('/weekly-comparison', auth_middleware_1.authMiddleware, analytics_controller_1.getWeeklyComparison);

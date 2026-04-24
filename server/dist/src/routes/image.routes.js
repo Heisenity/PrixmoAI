@@ -8,6 +8,8 @@ const validate_middleware_1 = require("../middleware/validate.middleware");
 const image_schema_1 = require("../schemas/image.schema");
 const router = (0, express_1.Router)();
 router.post('/upload-source', auth_middleware_1.authMiddleware, (0, validate_middleware_1.validate)(image_schema_1.uploadSourceImageSchema), image_controller_1.uploadSourceImage);
+router.post('/resolve-source-url', auth_middleware_1.authMiddleware, (0, validate_middleware_1.validate)(image_schema_1.resolveSourceImageUrlSchema), image_controller_1.resolveSourceImageUrl);
+router.post('/import-source-url', auth_middleware_1.authMiddleware, (0, validate_middleware_1.validate)(image_schema_1.importSourceImageUrlSchema), image_controller_1.importSourceImageUrl);
 router.post('/generate', auth_middleware_1.authMiddleware, (0, validate_middleware_1.validate)(image_schema_1.generateImageSchema), planLimit_middleware_1.imagePlanLimitMiddleware, planLimit_middleware_1.imageRuntimePolicyMiddleware, image_controller_1.generateImage);
 router.get('/history', auth_middleware_1.authMiddleware, image_controller_1.getImageHistory);
 router.get('/:id/watermarked', auth_middleware_1.authMiddleware, image_controller_1.getWatermarkedImage);

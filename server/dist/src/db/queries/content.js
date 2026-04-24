@@ -11,6 +11,40 @@ const toStringArray = (value) => Array.isArray(value)
         .map((entry) => entry.trim())
         .filter(Boolean)
     : [];
+const isRecord = (value) => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+const extractTextValue = (value, depth = 0) => {
+    if (depth > 4) {
+        return '';
+    }
+    if (typeof value === 'string') {
+        return value.trim();
+    }
+    if (typeof value === 'number' || typeof value === 'boolean') {
+        return String(value).trim();
+    }
+    if (Array.isArray(value)) {
+        return value
+            .map((entry) => extractTextValue(entry, depth + 1))
+            .filter(Boolean)
+            .join(' ')
+            .trim();
+    }
+    if (!isRecord(value)) {
+        return '';
+    }
+    const preferredKeys = ['text', 'value', 'content', 'copy', 'message', 'script'];
+    for (const key of preferredKeys) {
+        const normalized = extractTextValue(value[key], depth + 1);
+        if (normalized) {
+            return normalized;
+        }
+    }
+    return Object.values(value)
+        .map((entry) => extractTextValue(entry, depth + 1))
+        .filter(Boolean)
+        .join(' ')
+        .trim();
+};
 const toCaptionVariants = (value) => {
     if (!Array.isArray(value)) {
         return [];
@@ -52,7 +86,7 @@ const toCaptionVariants = (value) => {
         .filter((entry) => Boolean(entry));
 };
 const toReelScript = (value) => {
-    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    if (!isRecord(value)) {
         return {
             hook: '',
             body: '',
@@ -61,9 +95,9 @@ const toReelScript = (value) => {
     }
     const record = value;
     return {
-        hook: typeof record.hook === 'string' ? record.hook : '',
-        body: typeof record.body === 'string' ? record.body : '',
-        cta: typeof record.cta === 'string' ? record.cta : '',
+        hook: extractTextValue(record.hook),
+        body: extractTextValue(record.body),
+        cta: extractTextValue(record.cta),
     };
 };
 const toGeneratedContent = (row) => ({
@@ -71,6 +105,12 @@ const toGeneratedContent = (row) => ({
     userId: row.user_id,
     brandProfileId: row.brand_profile_id,
     conversationId: row.conversation_id,
+    storageProvider: row.storage_provider,
+    storageBucket: row.storage_bucket,
+    storageObjectKey: row.storage_object_key,
+    storagePublicUrl: row.storage_public_url,
+    storageContentType: row.storage_content_type,
+    storageSizeBytes: typeof row.storage_size_bytes === 'number' ? row.storage_size_bytes : null,
     productName: row.product_name,
     productDescription: row.product_description,
     productImageUrl: row.product_image_url,
@@ -105,6 +145,12 @@ const saveGeneratedContent = async (client, userId, input) => {
         captions: input.captions,
         hashtags: input.hashtags,
         reel_script: input.reelScript,
+        storage_provider: input.storageProvider ?? null,
+        storage_bucket: input.storageBucket ?? null,
+        storage_object_key: input.storageObjectKey ?? null,
+        storage_public_url: input.storagePublicUrl ?? null,
+        storage_content_type: input.storageContentType ?? null,
+        storage_size_bytes: input.storageSizeBytes ?? null,
     })
         .select('*')
         .single();
@@ -169,7 +215,7 @@ const getContentDailyUsageCount = async (client, userId) => (0, subscriptions_1.
 exports.getContentDailyUsageCount = getContentDailyUsageCount;
 const getReelScriptDailyUsageCount = async (client, userId) => (0, subscriptions_1.getDailyUsageCount)(client, userId, constants_1.FEATURE_KEYS.reelScriptGeneration);
 exports.getReelScriptDailyUsageCount = getReelScriptDailyUsageCount;
-const trackContentGenerationUsage = async (client, userId, metadata = {}) => (0, subscriptions_1.recordUsageEvent)(client, userId, constants_1.FEATURE_KEYS.contentGeneration, metadata);
+const trackContentGenerationUsage = async (client, userId, metadata = {}, idempotencyKey) => (0, subscriptions_1.recordUsageEvent)(client, userId, constants_1.FEATURE_KEYS.contentGeneration, metadata, idempotencyKey);
 exports.trackContentGenerationUsage = trackContentGenerationUsage;
-const trackReelScriptGenerationUsage = async (client, userId, metadata = {}) => (0, subscriptions_1.recordUsageEvent)(client, userId, constants_1.FEATURE_KEYS.reelScriptGeneration, metadata);
+const trackReelScriptGenerationUsage = async (client, userId, metadata = {}, idempotencyKey) => (0, subscriptions_1.recordUsageEvent)(client, userId, constants_1.FEATURE_KEYS.reelScriptGeneration, metadata, idempotencyKey);
 exports.trackReelScriptGenerationUsage = trackReelScriptGenerationUsage;

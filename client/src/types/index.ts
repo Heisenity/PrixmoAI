@@ -48,6 +48,7 @@ export type ScheduledItemStatus =
   | 'cancelled';
 export type SchedulerMediaType = 'image' | 'video';
 export type WeeklyDirection = 'up' | 'down' | 'flat';
+export type ProfileSaveContext = 'onboarding' | 'settings' | 'system';
 
 export interface ApiErrorDetail {
   field?: string;
@@ -77,7 +78,16 @@ export interface BrandProfile {
   phoneNumber: string | null;
   username: string | null;
   avatarUrl: string | null;
+  country: string | null;
+  language: string | null;
+  websiteUrl: string | null;
+  logoUrl: string | null;
+  primaryColor: string | null;
+  secondaryColor: string | null;
+  accentColor: string | null;
   industry: string | null;
+  primaryIndustry: string | null;
+  secondaryIndustries: string[];
   targetAudience: string | null;
   brandVoice: string | null;
   description: string | null;
@@ -99,10 +109,36 @@ export interface SaveProfileInput {
   phoneNumber?: string;
   username?: string;
   avatarUrl?: string;
+  country?: string;
+  language?: string;
+  websiteUrl?: string;
+  logoUrl?: string;
+  primaryColor?: string;
+  secondaryColor?: string;
+  accentColor?: string;
   industry?: string;
+  primaryIndustry?: string;
+  secondaryIndustries?: string[];
   targetAudience?: string;
   brandVoice?: string;
   description?: string;
+  saveContext?: ProfileSaveContext;
+}
+
+export interface IndustrySuggestionResult {
+  primaryIndustry: string;
+  secondaryIndustries: string[];
+  reasoning: string;
+  signals: string[];
+  source: 'ai' | 'fallback';
+}
+
+export interface UsernameAvailabilityResult {
+  normalizedUsername: string;
+  isAvailable: boolean;
+  message: string;
+  suggestions: string[];
+  provider: 'groq' | 'gemini' | 'fallback' | null;
 }
 
 export interface ReelScript {

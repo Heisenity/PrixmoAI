@@ -2,27 +2,10 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.getDailyUsageCount = exports.getMonthlyUsageCount = exports.recordUsageEvent = exports.getFeatureLimit = exports.getFeatureMonthlyLimit = exports.getCurrentSubscriptionByUserId = exports.upsertSubscription = exports.getPlanFeatureLimit = exports.getPlanMonthlyLimit = void 0;
 const constants_1 = require("../../config/constants");
+const timezone_1 = require("../../lib/timezone");
 const toRecord = (value) => value && typeof value === 'object' && !Array.isArray(value)
     ? value
     : {};
-const getMonthWindow = () => {
-    const now = new Date();
-    const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
-    const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
-    return {
-        start: start.toISOString(),
-        end: end.toISOString(),
-    };
-};
-const getDayWindow = () => {
-    const now = new Date();
-    const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-    const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1));
-    return {
-        start: start.toISOString(),
-        end: end.toISOString(),
-    };
-};
 const toSubscription = (row) => ({
     id: row.id,
     userId: row.user_id,
@@ -89,16 +72,31 @@ const getFeatureMonthlyLimit = async (client, userId, featureKey = constants_1.F
 };
 exports.getFeatureMonthlyLimit = getFeatureMonthlyLimit;
 exports.getFeatureLimit = exports.getFeatureMonthlyLimit;
-const recordUsageEvent = async (client, userId, featureKey, metadata = {}) => {
-    const { data, error } = await client
-        .from('usage_tracking')
-        .insert({
+const recordUsageEvent = async (client, userId, featureKey, metadata = {}, idempotencyKey) => {
+    const payload = {
         user_id: userId,
         feature_key: featureKey,
         metadata,
-    })
+        idempotency_key: idempotencyKey ?? null,
+    };
+    const { data, error } = await client
+        .from('usage_tracking')
+        .insert(payload)
         .select('*')
         .single();
+    if (error && idempotencyKey && error.code === '23505') {
+        const { data: existing, error: existingError } = await client
+            .from('usage_tracking')
+            .select('*')
+            .eq('user_id', userId)
+            .eq('feature_key', featureKey)
+            .eq('idempotency_key', idempotencyKey)
+            .maybeSingle();
+        if (existingError || !existing) {
+            throw new Error(existingError?.message || 'Failed to load recorded usage');
+        }
+        return toUsageTrackingEvent(existing);
+    }
     if (error || !data) {
         throw new Error(error?.message || 'Failed to record usage');
     }
@@ -106,7 +104,7 @@ const recordUsageEvent = async (client, userId, featureKey, metadata = {}) => {
 };
 exports.recordUsageEvent = recordUsageEvent;
 const getUsageCountForWindow = async (client, userId, featureKey, window) => {
-    const { start, end } = window === 'day' ? getDayWindow() : getMonthWindow();
+    const { start, end } = window === 'day' ? (0, timezone_1.getIstDayWindow)() : (0, timezone_1.getIstMonthWindow)();
     const { count, error } = await client
         .from('usage_tracking')
         .select('*', { count: 'exact', head: true })

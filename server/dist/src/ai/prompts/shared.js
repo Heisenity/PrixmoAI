@@ -6,22 +6,22 @@ const formatBrandContext = (brandProfile) => {
     if (!brandProfile) {
         return [
             'Workspace profile context: none available.',
-            'Do not invent a brand name. If no stored brand/business name is being used for this generation, keep the copy generic to the business and product.',
+            'Do not invent a brand name or use the workspace owner name as the brand.',
+            'Keep the output generic to the business and product when no brand name is supplied.',
+            'Infer the domain and style only from the provided generation context.',
             'Never use the workspace owner personal name as the brand name.',
-            'Create content that is modern, clear, reusable, professional it seems like it has been written by a professional, contnet and scriptwritter and appropriate for the inferred business domain.',
-            'Do not assume ecommerce, fashion, or any other niche without support from the user inpue, and do not use any niche-specific language unless the input supports it also use user input data for inferring the business domain and content style and curate the output accordingly.',
         ].join(' ');
     }
     return [
         'Workspace profile context (style guidance only):',
-        `- Stored brand/business name in brand memory: ${brandProfile.brandName ?? 'not provided'}`,
+        `- Stored brand/business name: ${brandProfile.brandName ?? 'not provided'}`,
         `- Workspace owner name: ${brandProfile.fullName}`,
         `- Username: ${brandProfile.username ?? 'not provided'}`,
         `- Industry: ${brandProfile.industry ?? 'not provided'}`,
-        `- Target audience: ${brandProfile.targetAudience ?? 'not provided'}`,
+        `- Audience: ${brandProfile.targetAudience ?? 'not provided'}`,
         `- Brand voice: ${brandProfile.brandVoice ?? 'not provided'}`,
         `- Description: ${brandProfile.description ?? 'not provided'}`,
-        '- Use the stored brand/business name only when the generation context below says to use it.',
+        '- Use the stored brand/business name only if the generation context below says to use it.',
         '- Never use the workspace owner personal name as the brand/business name.',
     ].join('\n');
 };
@@ -39,8 +39,7 @@ const formatProductContext = (productInput) => [
     `- Audience: ${productInput.audience ?? 'not provided'}`,
     `- Keywords: ${formatList(productInput.keywords)}`,
     '- Use the brand/business name only if this generation context includes one.',
-    '- If no brand/business name is being used for this generation, do not invent one and do not use the workspace owner personal name as the brand name.',
-    '- Important: infer the business domain from the product description, keywords, platform, audience, and brand profile.',
+    '- Infer the business domain from the product description, keywords, platform, audience, and brand profile.',
     '- Do not assume fashion, ecommerce, or any other industry unless it is explicitly supported by the input.',
 ].join('\n');
 exports.formatProductContext = formatProductContext;

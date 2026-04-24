@@ -1,14 +1,85 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.startSchedulerPublisherWorker = void 0;
+exports.startSchedulerPublisherWorker = exports.scheduleScheduledPostPublish = exports.unscheduleScheduledPostPublish = void 0;
+const bullmq_1 = require("bullmq");
 const constants_1 = require("../config/constants");
 const scheduledPosts_1 = require("../db/queries/scheduledPosts");
+const scheduleBatches_1 = require("../db/queries/scheduleBatches");
 const socialAccounts_1 = require("../db/queries/socialAccounts");
 const supabase_1 = require("../db/supabase");
+const analyticsSync_service_1 = require("./analyticsSync.service");
 const meta_service_1 = require("./meta.service");
-const processingPostIds = new Set();
-let pollHandle = null;
-let isTickRunning = false;
+const redis_1 = require("../lib/redis");
+const queueNames_1 = require("../queues/queueNames");
+const workerOptions_1 = require("../queues/workerOptions");
+const FAILED_JOB_RETENTION_SECONDS = 60 * 60;
+const JOB_TIME_TOLERANCE_MS = 1000;
+let schedulerPublishQueue = null;
+let schedulerPublishWorker = null;
+const getScheduledPublishJobId = (postId) => `scheduled-post-${postId}`;
+const getSchedulerPublishQueue = () => {
+    if (!schedulerPublishQueue) {
+        schedulerPublishQueue = new bullmq_1.Queue(queueNames_1.QUEUE_NAMES.schedulerPublish, (0, redis_1.getBullMqConfig)('prixmoai:queue:scheduler-publish'));
+    }
+    return schedulerPublishQueue;
+};
+const getPublishJobTargetTimestamp = (scheduledFor, delayMs) => {
+    const scheduledAtMs = new Date(scheduledFor).getTime();
+    if (Number.isFinite(scheduledAtMs)) {
+        return scheduledAtMs;
+    }
+    return Date.now() + delayMs;
+};
+const getPublishJobOptions = (postId, scheduledFor) => {
+    const scheduledAtMs = new Date(scheduledFor).getTime();
+    const delayMs = Number.isFinite(scheduledAtMs)
+        ? Math.max(0, scheduledAtMs - Date.now())
+        : 0;
+    return {
+        jobId: getScheduledPublishJobId(postId),
+        delay: delayMs,
+        attempts: 3,
+        backoff: {
+            type: 'exponential',
+            delay: 5000,
+        },
+        removeOnComplete: true,
+        removeOnFail: {
+            age: FAILED_JOB_RETENTION_SECONDS,
+            count: 100,
+        },
+    };
+};
+const removeExistingScheduledPublishJob = async (postId) => {
+    const job = await getSchedulerPublishQueue().getJob(getScheduledPublishJobId(postId));
+    if (!job) {
+        return;
+    }
+    const state = await job.getState();
+    if (state === 'waiting' ||
+        state === 'delayed' ||
+        state === 'prioritized') {
+        await job.remove();
+    }
+};
+const hasMatchingScheduledPublishJob = async (postId, scheduledFor) => {
+    const job = await getSchedulerPublishQueue().getJob(getScheduledPublishJobId(postId));
+    if (!job) {
+        return false;
+    }
+    const state = await job.getState();
+    if (state !== 'waiting' &&
+        state !== 'delayed' &&
+        state !== 'prioritized') {
+        return false;
+    }
+    const expected = new Date(scheduledFor).getTime();
+    if (!Number.isFinite(expected)) {
+        return true;
+    }
+    const actual = getPublishJobTargetTimestamp(job.data.scheduledFor, typeof job.opts.delay === 'number' ? job.opts.delay : 0);
+    return Math.abs(actual - expected) <= JOB_TIME_TOLERANCE_MS;
+};
 const markPostFailure = async (postId, userId, message) => {
     const client = (0, supabase_1.requireSupabaseAdmin)();
     await (0, scheduledPosts_1.updateScheduledPost)(client, userId, postId, {
@@ -17,6 +88,15 @@ const markPostFailure = async (postId, userId, message) => {
         lastError: message,
         publishedAt: null,
     });
+    const syncedItems = await (0, scheduleBatches_1.syncScheduledItemStatusByScheduledPostId)(client, postId, {
+        status: 'failed',
+        lastError: message,
+    }).catch(() => []);
+    await Promise.all(syncedItems.map((item) => (0, scheduleBatches_1.appendScheduledItemLog)(client, {
+        scheduledItemId: item.id,
+        eventType: 'publish_failed',
+        message,
+    }).catch(() => null)));
 };
 const processScheduledPost = async (postId, userId) => {
     const client = (0, supabase_1.requireSupabaseAdmin)();
@@ -25,6 +105,11 @@ const processScheduledPost = async (postId, userId) => {
         return;
     }
     try {
+        await (0, scheduleBatches_1.syncScheduledItemStatusByScheduledPostId)(client, post.id, {
+            status: 'publishing',
+            attemptCount: post.publishAttemptedAt ? 1 : 1,
+            lastError: null,
+        }).catch(() => []);
         const socialAccount = await (0, socialAccounts_1.getSocialAccountById)(client, post.userId, post.socialAccountId);
         if (!socialAccount) {
             await markPostFailure(post.id, post.userId, 'The connected account could not be found.');
@@ -42,6 +127,34 @@ const processScheduledPost = async (postId, userId) => {
             publishedAt: published.publishedAt,
             lastError: null,
         });
+        const syncedItems = await (0, scheduleBatches_1.syncScheduledItemStatusByScheduledPostId)(client, post.id, {
+            status: 'published',
+            attemptCount: 1,
+            lastError: null,
+        }).catch(() => []);
+        await Promise.all(syncedItems.map((item) => (0, scheduleBatches_1.appendScheduledItemLog)(client, {
+            scheduledItemId: item.id,
+            eventType: 'published',
+            message: 'Scheduled item published successfully.',
+            payloadJson: {
+                externalPostId: published.externalPostId,
+                publishedAt: published.publishedAt,
+            },
+        }).catch(() => null)));
+        try {
+            await (0, analyticsSync_service_1.enqueueAnalyticsSyncJob)({
+                userId: post.userId,
+                postIds: [post.id],
+                socialAccountIds: [socialAccount.id],
+                lookbackDays: 7,
+            });
+        }
+        catch (error) {
+            const message = error instanceof Error
+                ? error.message
+                : 'Immediate analytics sync failed after publishing.';
+            console.error(`[scheduler-publisher] ${message}`);
+        }
     }
     catch (error) {
         const message = error instanceof Error
@@ -50,48 +163,74 @@ const processScheduledPost = async (postId, userId) => {
         await markPostFailure(postId, userId, message);
     }
 };
-const tickSchedulerPublisher = async () => {
-    if (isTickRunning || !supabase_1.isSupabaseAdminConfigured) {
+const hydrateScheduledPublishJobs = async () => {
+    const client = (0, supabase_1.requireSupabaseAdmin)();
+    const { data, error } = await client
+        .from('scheduled_posts')
+        .select('id, user_id, scheduled_for, status')
+        .in('status', ['pending', 'scheduled'])
+        .order('scheduled_for', { ascending: true });
+    if (error) {
+        console.error(`[scheduler-publisher] ${error.message || 'Failed to hydrate scheduled publish jobs.'}`);
         return;
     }
-    isTickRunning = true;
-    try {
-        const client = (0, supabase_1.requireSupabaseAdmin)();
-        const duePosts = await (0, scheduledPosts_1.getDueScheduledPosts)(client, constants_1.SCHEDULER_PUBLISHER_BATCH_SIZE);
-        for (const post of duePosts) {
-            if (processingPostIds.has(post.id)) {
-                continue;
-            }
-            processingPostIds.add(post.id);
-            void processScheduledPost(post.id, post.userId).finally(() => {
-                processingPostIds.delete(post.id);
-            });
-        }
-    }
-    catch (error) {
-        const message = error instanceof Error ? error.message : 'Scheduler publisher tick failed.';
-        console.error(`[scheduler-publisher] ${message}`);
-    }
-    finally {
-        isTickRunning = false;
-    }
+    const scheduledPosts = (data ?? []);
+    await Promise.all(scheduledPosts.map((post) => (0, exports.scheduleScheduledPostPublish)({
+        id: post.id,
+        userId: post.user_id,
+        scheduledFor: post.scheduled_for,
+        status: post.status,
+    }, { preserveExistingSchedule: true }).catch((queueError) => {
+        console.error(`[scheduler-publisher] ${queueError instanceof Error
+            ? queueError.message
+            : `Failed to hydrate scheduled publish job for ${post.id}.`}`);
+    })));
 };
-const startSchedulerPublisherWorker = () => {
-    if (pollHandle) {
+const unscheduleScheduledPostPublish = async (postId) => {
+    if (!redis_1.isRedisConfigured) {
         return;
     }
-    if (!supabase_1.isSupabaseAdminConfigured) {
-        console.warn('[scheduler-publisher] Worker is disabled because SUPABASE_SERVICE_ROLE_KEY is missing.');
+    await removeExistingScheduledPublishJob(postId);
+};
+exports.unscheduleScheduledPostPublish = unscheduleScheduledPostPublish;
+const scheduleScheduledPostPublish = async (post, options = {}) => {
+    if (!redis_1.isRedisConfigured) {
         return;
     }
-    if (!constants_1.isMetaOAuthConfigured) {
-        console.warn('[scheduler-publisher] Worker is waiting for Meta OAuth credentials before it can publish posts.');
+    if (!['pending', 'scheduled'].includes(post.status)) {
+        await (0, exports.unscheduleScheduledPostPublish)(post.id);
         return;
     }
-    pollHandle = setInterval(() => {
-        void tickSchedulerPublisher();
-    }, constants_1.SCHEDULER_PUBLISHER_POLL_MS);
-    void tickSchedulerPublisher();
-    console.log(`[scheduler-publisher] Worker started. Polling every ${constants_1.SCHEDULER_PUBLISHER_POLL_MS}ms.`);
+    if (options.preserveExistingSchedule &&
+        (await hasMatchingScheduledPublishJob(post.id, post.scheduledFor))) {
+        return;
+    }
+    await removeExistingScheduledPublishJob(post.id);
+    await getSchedulerPublishQueue().add('publish', {
+        postId: post.id,
+        userId: post.userId,
+        scheduledFor: post.scheduledFor,
+    }, getPublishJobOptions(post.id, post.scheduledFor));
+    (0, exports.startSchedulerPublisherWorker)({ hydrate: false });
+};
+exports.scheduleScheduledPostPublish = scheduleScheduledPostPublish;
+const startSchedulerPublisherWorker = (options = {}) => {
+    if (schedulerPublishWorker ||
+        !supabase_1.isSupabaseAdminConfigured ||
+        !constants_1.isMetaOAuthConfigured ||
+        !redis_1.isRedisConfigured) {
+        return;
+    }
+    schedulerPublishWorker = new bullmq_1.Worker(queueNames_1.QUEUE_NAMES.schedulerPublish, async (job) => {
+        await processScheduledPost(job.data.postId, job.data.userId);
+    }, {
+        ...(0, redis_1.getBullMqConfig)('prixmoai:worker:scheduler-publish'),
+        ...(0, workerOptions_1.getLowCommandWorkerOptions)(),
+        concurrency: constants_1.SCHEDULER_PUBLISH_JOB_CONCURRENCY,
+    });
+    if (options.hydrate !== false) {
+        void hydrateScheduledPublishJobs();
+    }
+    console.log('[scheduler-publisher] Worker started. Waiting for delayed publish jobs.');
 };
 exports.startSchedulerPublisherWorker = startSchedulerPublisherWorker;

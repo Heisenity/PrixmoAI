@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.uploadSourceImageSchema = exports.generateImageSchema = void 0;
+exports.resolveSourceImageUrlSchema = exports.importSourceImageUrlSchema = exports.uploadSourceImageSchema = exports.generateImageSchema = void 0;
 const zod_1 = require("zod");
 const optionalTrimmedString = (message) => zod_1.z.preprocess((value) => typeof value === 'string' && value.trim() === '' ? undefined : value, message
     ? zod_1.z.string().trim().min(1, message).optional()
@@ -23,9 +23,19 @@ exports.uploadSourceImageSchema = zod_1.z.object({
     contentType: zod_1.z
         .string()
         .trim()
-        .refine((value) => ['image/jpeg', 'image/png', 'image/webp'].includes(value), 'Only JPG, PNG, and WEBP images are supported'),
+        .refine((value) => [
+        'image/jpeg',
+        'image/png',
+        'image/webp',
+        'video/mp4',
+        'video/quicktime',
+    ].includes(value), 'Only JPG, PNG, WEBP, MP4, and MOV media are supported'),
     dataUrl: zod_1.z
         .string()
         .trim()
-        .regex(/^data:image\/(?:jpeg|png|webp);base64,[a-zA-Z0-9+/=]+$/, 'Upload payload must be a valid base64 image'),
+        .regex(/^data:[a-zA-Z0-9.+/-]+;base64,[a-zA-Z0-9+/=]+$/, 'Upload payload must be a valid base64 media file'),
 });
+exports.importSourceImageUrlSchema = zod_1.z.object({
+    url: zod_1.z.string().trim().url('Invalid media URL'),
+});
+exports.resolveSourceImageUrlSchema = exports.importSourceImageUrlSchema;

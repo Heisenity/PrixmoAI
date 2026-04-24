@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { SUPPORTED_DICTATION_LANGUAGE_VALUES } from '../lib/dictationLanguages';
 
 const optionalTrimmedString = (message?: string) =>
   z.preprocess(
@@ -35,6 +36,23 @@ export const transcribeAudioSchema = z.object({
     .min(1, 'Audio format is required')
     .refine(isSupportedAudioMimeType, 'That audio format is not supported right now.'),
   languageHint: optionalTrimmedString(),
+  previousContext: optionalTrimmedString().refine(
+    (value) => !value || value.length <= 320,
+    'Context must stay under 320 characters.'
+  ),
+  stage: z.enum(['stream', 'final']).optional(),
 });
 
-export type TranscribeAudioInput = z.infer<typeof transcribeAudioSchema>;
+export const transcribeAudioSchemaRefined = transcribeAudioSchema.refine(
+  (value) =>
+    !value.languageHint ||
+    SUPPORTED_DICTATION_LANGUAGE_VALUES.includes(
+      value.languageHint.trim().toLowerCase() as (typeof SUPPORTED_DICTATION_LANGUAGE_VALUES)[number]
+    ),
+  {
+    message: 'Selected dictation language is not supported.',
+    path: ['languageHint'],
+  }
+);
+
+export type TranscribeAudioInput = z.infer<typeof transcribeAudioSchemaRefined>;

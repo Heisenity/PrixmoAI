@@ -7,6 +7,15 @@ const subscriptions_1 = require("../db/queries/subscriptions");
 const supabase_1 = require("../db/supabase");
 const constants_1 = require("../config/constants");
 const imageRuntimePolicy_service_1 = require("../services/imageRuntimePolicy.service");
+const buildImageThrottleMessage = (plan, retryAfterSeconds) => {
+    if (plan === 'free') {
+        return `Okay bestie, the image lab needs a tiny breather. Give it ${retryAfterSeconds}s and hit generate again.`;
+    }
+    if (plan === 'basic') {
+        return `You are low-key speedrunning the image lab. Let it chill for ${retryAfterSeconds}s, then go again.`;
+    }
+    return `Even the fast lane needs a quick vibe check. Wait ${retryAfterSeconds}s and you are good to go again.`;
+};
 const enforceFeatureLimit = async (req, res, next, featureKey, limitReachedMessage, getUsageCount) => {
     if (!req.user?.id) {
         return res.status(401).json({
@@ -61,16 +70,12 @@ const imageRuntimePolicyMiddleware = async (req, res, next) => {
         ]);
         const plan = subscription?.plan ?? 'free';
         const runtimePolicy = (0, imageRuntimePolicy_service_1.resolveImageRuntimePolicy)(plan, usageCount);
-        const rateLimitResult = (0, imageRuntimePolicy_service_1.checkImageRateLimit)(req.user.id, runtimePolicy);
+        const rateLimitResult = await (0, imageRuntimePolicy_service_1.checkImageRateLimit)(req.user.id, runtimePolicy);
         if (!rateLimitResult.allowed) {
             res.setHeader('Retry-After', String(rateLimitResult.retryAfterSeconds));
             return res.status(429).json({
                 status: 'fail',
-                message: plan === 'free'
-                    ? `Too many image generations right now. Your Free plan allows ${runtimePolicy.requestsPerMinute} image requests per minute. Please wait ${rateLimitResult.retryAfterSeconds}s and try again.`
-                    : plan === 'basic'
-                        ? `Too many image generations right now. Your Basic plan allows ${runtimePolicy.requestsPerMinute} image requests per minute. Please wait ${rateLimitResult.retryAfterSeconds}s and try again.`
-                        : `Too many image generations right now. Your Pro plan allows ${runtimePolicy.requestsPerMinute} image requests per minute. Please wait ${rateLimitResult.retryAfterSeconds}s and try again.`,
+                message: buildImageThrottleMessage(plan, rateLimitResult.retryAfterSeconds),
                 data: {
                     plan,
                     requestsPerMinute: runtimePolicy.requestsPerMinute,
@@ -83,6 +88,7 @@ const imageRuntimePolicyMiddleware = async (req, res, next) => {
             throttleDelayMs: rateLimitResult.throttleDelayMs,
             burstRequestCount: rateLimitResult.burstRequestCount,
         };
+        req.imageRateLimitReservation = rateLimitResult.reservationId;
         return next();
     }
     catch (error) {

@@ -80,6 +80,29 @@ type ProviderFailure = {
   message: string;
 };
 
+type StructuredArtifactKind =
+  | 'captions'
+  | 'hashtags'
+  | 'reel-script'
+  | 'industry-suggestion'
+  | 'brand-description-suggestion'
+  | 'username-suggestion';
+
+type StructuredStage =
+  | 'provider-http-failure'
+  | 'empty-response'
+  | 'malformed-json'
+  | 'schema-mismatch'
+  | 'retry-recovery-success'
+  | 'retry-recovery-failure'
+  | 'plain-text-salvage-success'
+  | 'plain-text-salvage-failure';
+
+type StructuredJsonParseResult = {
+  value: unknown;
+  strategy: 'strict' | 'extracted' | 'repaired';
+};
+
 const CONTENT_GENERATION_RETRY_MESSAGE =
   'We couldn’t complete your request right now. Please try again in a moment.';
 
@@ -104,6 +127,34 @@ const formatProviderTimeoutLabel = (timeoutMs: number) => {
   }
 
   return `${(timeoutMs / 1000).toFixed(1)}s`;
+};
+
+const isGeminiImmediateFallbackFailure = (message: string) =>
+  /gemini request failed \((429|500|503)\)/i.test(message) ||
+  /status["']?\s*:\s*["']?(UNAVAILABLE|RESOURCE_EXHAUSTED|INTERNAL)/i.test(message) ||
+  /currently experiencing high demand|try again later|resource exhausted|unavailable/i.test(
+    message
+  );
+
+const logContentPhase = (
+  event: 'started' | 'succeeded' | 'failed',
+  details: Record<string, unknown>
+) => {
+  console.info(`[content-generation] ${event}`, details);
+};
+
+const logStructuredStage = (
+  provider: GenerationProvider,
+  artifact: StructuredArtifactKind,
+  stage: StructuredStage,
+  details: Record<string, unknown> = {}
+) => {
+  console.info('[content-generation] structured-stage', {
+    provider,
+    artifact,
+    stage,
+    ...details,
+  });
 };
 
 const createAdaptiveTimeoutController = (baseSignal?: AbortSignal) => {
@@ -311,21 +362,299 @@ const EMPTY_REEL_SCRIPT: ReelScript = {
   cta: '',
 };
 
-const extractJson = (rawText: string): unknown => {
+const STRUCTURED_PROVIDER_RETRY_LIMIT: Record<GenerationProvider, number> = {
+  gemini: 1,
+  groq: 2,
+};
+
+const stripMarkdownFences = (rawText: string) => {
   const fencedMatch = rawText.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  const candidate = fencedMatch ? fencedMatch[1].trim() : rawText.trim();
+  return fencedMatch ? fencedMatch[1].trim() : rawText.trim();
+};
 
-  try {
-    return JSON.parse(candidate);
-  } catch {
-    const firstBrace = candidate.indexOf('{');
-    const lastBrace = candidate.lastIndexOf('}');
+const buildStructuredFailureSnippet = (rawText: string) =>
+  rawText.replace(/\s+/g, ' ').trim().slice(0, 240);
 
-    if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
-      return JSON.parse(candidate.slice(firstBrace, lastBrace + 1));
+const extractLikelyJsonCandidate = (rawText: string) => {
+  const candidate = stripMarkdownFences(rawText);
+  const firstBrace = candidate.indexOf('{');
+
+  if (firstBrace === -1) {
+    return candidate.trim();
+  }
+
+  const sliced = candidate.slice(firstBrace);
+  const lastBrace = sliced.lastIndexOf('}');
+
+  return (lastBrace === -1 ? sliced : sliced.slice(0, lastBrace + 1)).trim();
+};
+
+const removeTrailingJsonCommas = (rawText: string) =>
+  rawText.replace(/,\s*([}\]])/g, '$1');
+
+const closeObviousJsonContainers = (rawText: string) => {
+  const stack: string[] = [];
+  let inString = false;
+  let escaped = false;
+
+  for (const char of rawText) {
+    if (escaped) {
+      escaped = false;
+      continue;
     }
 
-    throw new Error('Provider did not return valid JSON');
+    if (char === '\\') {
+      escaped = true;
+      continue;
+    }
+
+    if (char === '"') {
+      inString = !inString;
+      continue;
+    }
+
+    if (inString) {
+      continue;
+    }
+
+    if (char === '{' || char === '[') {
+      stack.push(char);
+      continue;
+    }
+
+    if (char === '}') {
+      if (stack[stack.length - 1] === '{') {
+        stack.pop();
+      }
+      continue;
+    }
+
+    if (char === ']') {
+      if (stack[stack.length - 1] === '[') {
+        stack.pop();
+      }
+    }
+  }
+
+  return `${rawText}${stack
+    .reverse()
+    .map((token) => (token === '{' ? '}' : ']'))
+    .join('')}`;
+};
+
+const buildStructuredRetryPrompt = (prompt: string) =>
+  `${prompt}\n\nReturn only one valid JSON object. No markdown, no commentary, no trailing commas.`;
+
+const isRetryableStructuredOutputError = (error: unknown) => {
+  const message = error instanceof Error ? error.message : String(error);
+
+  return (
+    /valid json/i.test(message) ||
+    /unexpected .* format/i.test(message) ||
+      /Expected ',' or '}'/i.test(message) ||
+      /unterminated string/i.test(message) ||
+      /unexpected end of json/i.test(message) ||
+      /unexpected non-whitespace character after json/i.test(message)
+  );
+};
+
+const parseJsonCandidate = (
+  candidate: string,
+  strategy: StructuredJsonParseResult['strategy']
+): StructuredJsonParseResult => ({
+  value: JSON.parse(candidate),
+  strategy,
+});
+
+const parseStructuredJson = (rawText: string): StructuredJsonParseResult => {
+  const strictCandidate = stripMarkdownFences(rawText);
+
+  try {
+    return parseJsonCandidate(strictCandidate, 'strict');
+  } catch {
+    const extractedCandidate = extractLikelyJsonCandidate(rawText);
+
+    if (extractedCandidate && extractedCandidate !== strictCandidate) {
+      try {
+        return parseJsonCandidate(extractedCandidate, 'extracted');
+      } catch {
+        // Fall through to repair path.
+      }
+    }
+
+    const repairedCandidate = closeObviousJsonContainers(
+      removeTrailingJsonCommas(extractedCandidate || strictCandidate)
+    );
+
+    if (repairedCandidate) {
+      try {
+        return parseJsonCandidate(repairedCandidate, 'repaired');
+      } catch {
+        // Fall through to terminal error below.
+      }
+    }
+
+    const error = new Error('Provider did not return valid JSON');
+    (error as Error & { rawTextSnippet?: string }).rawTextSnippet =
+      buildStructuredFailureSnippet(rawText);
+    throw error;
+  }
+};
+
+const normalizeWhitespace = (value: string) =>
+  value.replace(/\r/g, '').replace(/[ \t]+\n/g, '\n').trim();
+
+const extractLabeledSection = (
+  block: string,
+  labels: string,
+  nextLabels: string
+) => {
+  const match = block.match(
+    new RegExp(
+      `(?:^|\\n)\\s*(?:${labels})\\s*:\\s*([\\s\\S]*?)(?=\\n\\s*(?:${nextLabels})\\s*:|$)`,
+      'i'
+    )
+  );
+
+  return match?.[1]?.trim() ?? '';
+};
+
+const getCaptionCandidateBlocks = (rawText: string) => {
+  const normalized = normalizeWhitespace(stripMarkdownFences(rawText));
+  const hookBlocks = normalized
+    .split(/(?=^\s*hook\s*:)/gim)
+    .map((block) => block.trim())
+    .filter(Boolean);
+
+  if (hookBlocks.length > 1) {
+    return hookBlocks;
+  }
+
+  const headingNormalized = normalized.replace(
+    /(?:^|\n)\s*(?:variation|option|caption)\s*\d+\s*:?\s*/gim,
+    '\n@@CAPTION_BLOCK@@\n'
+  );
+  const headingBlocks = headingNormalized
+    .split('@@CAPTION_BLOCK@@')
+    .map((block) => block.trim())
+    .filter(Boolean);
+
+  return headingBlocks.length > 0 ? headingBlocks : [normalized];
+};
+
+const salvageCaptionResponseFromText = (rawText: string): unknown | null => {
+  const fieldLabels = {
+    hook: 'hook',
+    mainCopy: 'main\\s*copy|maincopy|main\\s*caption|body|copy',
+    shortCaption: 'short\\s*caption|caption',
+    cta: 'cta|call\\s*to\\s*action',
+  };
+  const nextLabels = Object.values(fieldLabels).join('|');
+
+  const captions = getCaptionCandidateBlocks(rawText)
+    .map((block) => ({
+      hook: extractLabeledSection(block, fieldLabels.hook, nextLabels),
+      mainCopy: extractLabeledSection(
+        block,
+        fieldLabels.mainCopy,
+        nextLabels
+      ),
+      shortCaption: extractLabeledSection(
+        block,
+        fieldLabels.shortCaption,
+        nextLabels
+      ),
+      cta: extractLabeledSection(block, fieldLabels.cta, nextLabels),
+    }))
+    .filter(
+      (caption) =>
+        caption.hook &&
+        caption.mainCopy &&
+        caption.shortCaption &&
+        caption.cta
+    )
+    .slice(0, CAPTION_VARIATION_COUNT);
+
+  return captions.length >= CAPTION_VARIATION_COUNT ? { captions } : null;
+};
+
+const salvageHashtagResponseFromText = (rawText: string): unknown | null => {
+  const normalized = normalizeWhitespace(stripMarkdownFences(rawText));
+  const explicitHashtags =
+    normalized.match(/#[\p{L}\p{N}_][\p{L}\p{N}_]*/gu) ?? [];
+
+  if (explicitHashtags.length >= HASHTAG_VARIATION_COUNT) {
+    return { hashtags: explicitHashtags };
+  }
+
+  const fallbackHashtags = normalized
+    .split(/[\n,]/)
+    .map((value) =>
+      value
+        .replace(/^[\s*-]+/, '')
+        .replace(/^\d+[.)-]\s*/, '')
+        .trim()
+    )
+    .filter(
+      (value) =>
+        value &&
+        value.length <= 40 &&
+        value.split(/\s+/).length <= 3 &&
+        !/[{}[\]":]/.test(value)
+    )
+    .map((value) => (value.startsWith('#') ? value : `#${value}`));
+
+  return fallbackHashtags.length >= HASHTAG_VARIATION_COUNT
+    ? { hashtags: fallbackHashtags }
+    : null;
+};
+
+const salvageReelScriptResponseFromText = (rawText: string): unknown | null => {
+  const normalized = normalizeWhitespace(stripMarkdownFences(rawText));
+  const nextLabels = 'hook|body|cta|call\\s*to\\s*action';
+  const labeled = {
+    hook: extractLabeledSection(normalized, 'hook', nextLabels),
+    body: extractLabeledSection(normalized, 'body', nextLabels),
+    cta: extractLabeledSection(normalized, 'cta|call\\s*to\\s*action', nextLabels),
+  };
+
+  if (labeled.hook && labeled.body && labeled.cta) {
+    return {
+      reelScript: labeled,
+    };
+  }
+
+  const blocks = normalized
+    .split(/\n{2,}/)
+    .map((block) => block.trim())
+    .filter(Boolean);
+
+  if (blocks.length >= 3) {
+    return {
+      reelScript: {
+        hook: blocks[0],
+        body: blocks.slice(1, -1).join('\n\n'),
+        cta: blocks[blocks.length - 1] ?? '',
+      },
+    };
+  }
+
+  return null;
+};
+
+const salvageStructuredResponseFromText = (
+  artifact: StructuredArtifactKind,
+  rawText: string
+) => {
+  switch (artifact) {
+    case 'captions':
+      return salvageCaptionResponseFromText(rawText);
+    case 'hashtags':
+      return salvageHashtagResponseFromText(rawText);
+    case 'reel-script':
+      return salvageReelScriptResponseFromText(rawText);
+    default:
+      return null;
   }
 };
 
@@ -396,6 +725,13 @@ const callGemini = async (
     throw new Error('GEMINI_API_KEY is not configured');
   }
 
+  const startedAt = Date.now();
+  logContentPhase('started', {
+    provider: 'gemini',
+    kind: 'request',
+    promptChars: prompt.length,
+  });
+
   const response = await fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/${DEFAULT_GEMINI_MODEL}:generateContent?key=${apiKey}`,
     {
@@ -413,6 +749,10 @@ const callGemini = async (
             ],
           },
         ],
+        generationConfig: {
+          temperature: 0,
+          responseMimeType: 'application/json',
+        },
       }),
       signal,
     }
@@ -434,6 +774,13 @@ const callGemini = async (
     throw new Error('gemini returned an empty response');
   }
 
+  logContentPhase('succeeded', {
+    provider: 'gemini',
+    kind: 'request',
+    durationMs: Date.now() - startedAt,
+    responseChars: text.length,
+  });
+
   return text;
 };
 
@@ -445,7 +792,8 @@ const extractGroqStreamChunkText = (payload: string) => {
 const readGroqStreamText = async (
   response: Response,
   signal: AbortSignal,
-  adaptiveTimeout: AdaptiveTimeoutController
+  adaptiveTimeout: AdaptiveTimeoutController,
+  onFirstChunk?: () => void
 ) => {
   if (!response.body) {
     throw new Error('groq returned an empty response stream');
@@ -469,6 +817,7 @@ const readGroqStreamText = async (
       if (!hasReceivedFirstChunk) {
         adaptiveTimeout.markFirstChunkReceived();
         hasReceivedFirstChunk = true;
+        onFirstChunk?.();
       } else {
         adaptiveTimeout.markChunkActivity();
       }
@@ -535,6 +884,13 @@ const callGroq = async (prompt: string, signal: AbortSignal): Promise<string> =>
   }
 
   const adaptiveTimeout = createAdaptiveTimeoutController(signal);
+  const startedAt = Date.now();
+  let firstChunkAt: number | null = null;
+  logContentPhase('started', {
+    provider: 'groq',
+    kind: 'stream-request',
+    promptChars: prompt.length,
+  });
 
   try {
     const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
@@ -545,8 +901,11 @@ const callGroq = async (prompt: string, signal: AbortSignal): Promise<string> =>
       },
       body: JSON.stringify({
         model: DEFAULT_GROQ_MODEL,
-        temperature: 0.7,
+        temperature: 0,
         stream: true,
+        response_format: {
+          type: 'json_object',
+        },
         messages: [
           {
             role: 'user',
@@ -563,14 +922,43 @@ const callGroq = async (prompt: string, signal: AbortSignal): Promise<string> =>
       );
     }
 
-    const text = await readGroqStreamText(response, adaptiveTimeout.signal, adaptiveTimeout);
+    const text = await readGroqStreamText(
+      response,
+      adaptiveTimeout.signal,
+      adaptiveTimeout,
+      () => {
+        if (firstChunkAt === null) {
+          firstChunkAt = Date.now();
+          logContentPhase('started', {
+            provider: 'groq',
+            kind: 'first-token',
+            afterMs: firstChunkAt - startedAt,
+          });
+        }
+      }
+    );
 
     if (!text) {
       throw new Error('groq returned an empty response');
     }
 
+    logContentPhase('succeeded', {
+      provider: 'groq',
+      kind: 'stream-request',
+      durationMs: Date.now() - startedAt,
+      firstTokenAfterMs: firstChunkAt === null ? null : firstChunkAt - startedAt,
+      responseChars: text.length,
+    });
+
     return text;
   } catch (error) {
+    logContentPhase('failed', {
+      provider: 'groq',
+      kind: 'stream-request',
+      durationMs: Date.now() - startedAt,
+      firstTokenAfterMs: firstChunkAt === null ? null : firstChunkAt - startedAt,
+      error: error instanceof Error ? error.message : error,
+    });
     if (isAbortError(error)) {
       if (signal.aborted) {
         throw new RequestCancelledError();
@@ -605,23 +993,167 @@ const generateStructuredResponseWithProvider = async <T>(
   provider: GenerationProvider,
   prompt: string,
   schema: z.ZodType<T>,
+  artifact: StructuredArtifactKind,
   signal?: AbortSignal
 ): Promise<T> => {
-  throwIfRequestCancelled(signal);
-  const rawText = await callProvider(provider, prompt, signal);
-  const parsedJson = extractJson(rawText);
-  const result = schema.safeParse(parsedJson);
+  const retryLimit = STRUCTURED_PROVIDER_RETRY_LIMIT[provider] ?? 1;
+  let attempt = 0;
+  let currentPrompt = prompt;
+  let lastError: unknown = null;
 
-  if (result.success) {
-    return result.data;
+  while (attempt < retryLimit) {
+    attempt += 1;
+    throwIfRequestCancelled(signal);
+
+    try {
+      const rawText = await callProvider(provider, currentPrompt, signal);
+      let parsedJson: unknown;
+
+      try {
+        const parsed = parseStructuredJson(rawText);
+        parsedJson = parsed.value;
+      } catch (error) {
+        logStructuredStage(provider, artifact, 'malformed-json', {
+          attempt,
+          retryLimit,
+          error: error instanceof Error ? error.message : String(error),
+          rawTextSnippet:
+            error instanceof Error && 'rawTextSnippet' in error
+              ? (error as Error & { rawTextSnippet?: string }).rawTextSnippet ?? null
+              : buildStructuredFailureSnippet(rawText),
+        });
+
+        const salvaged = salvageStructuredResponseFromText(artifact, rawText);
+        if (salvaged !== null) {
+          const salvagedResult = schema.safeParse(salvaged);
+
+          if (salvagedResult.success) {
+            logStructuredStage(provider, artifact, 'plain-text-salvage-success', {
+              attempt,
+            });
+            if (attempt > 1) {
+              logStructuredStage(provider, artifact, 'retry-recovery-success', {
+                attempt,
+                via: 'plain-text-salvage',
+              });
+            }
+            return salvagedResult.data;
+          }
+
+          logStructuredStage(provider, artifact, 'plain-text-salvage-failure', {
+            attempt,
+            issues: salvagedResult.error.issues
+              .slice(0, 3)
+              .map((issue) => ({
+                path: issue.path.join('.') || 'response',
+                message: issue.message,
+              })),
+          });
+        }
+
+        throw error;
+      }
+
+      const result = schema.safeParse(parsedJson);
+
+      if (result.success) {
+        if (attempt > 1) {
+          logStructuredStage(provider, artifact, 'retry-recovery-success', {
+            attempt,
+            via: 'structured-json',
+          });
+        }
+        return result.data;
+      }
+
+      logStructuredStage(provider, artifact, 'schema-mismatch', {
+        attempt,
+        issues: result.error.issues.slice(0, 3).map((issue) => ({
+          path: issue.path.join('.') || 'response',
+          message: issue.message,
+        })),
+        rawTextSnippet: buildStructuredFailureSnippet(rawText),
+      });
+
+      const salvaged = salvageStructuredResponseFromText(artifact, rawText);
+      if (salvaged !== null) {
+        const salvagedResult = schema.safeParse(salvaged);
+
+        if (salvagedResult.success) {
+          logStructuredStage(provider, artifact, 'plain-text-salvage-success', {
+            attempt,
+          });
+          if (attempt > 1) {
+            logStructuredStage(provider, artifact, 'retry-recovery-success', {
+              attempt,
+              via: 'schema-salvage',
+            });
+          }
+          return salvagedResult.data;
+        }
+
+        logStructuredStage(provider, artifact, 'plain-text-salvage-failure', {
+          attempt,
+          issues: salvagedResult.error.issues.slice(0, 3).map((issue) => ({
+            path: issue.path.join('.') || 'response',
+            message: issue.message,
+          })),
+        });
+      }
+
+      const firstIssue = result.error.issues[0];
+      const fieldPath = firstIssue?.path.join('.') || 'response';
+      const error = new Error(
+        `${provider} returned an unexpected ${fieldPath} format. Please try again.`
+      );
+
+      (error as Error & { rawTextSnippet?: string }).rawTextSnippet =
+        buildStructuredFailureSnippet(rawText);
+      throw error;
+    } catch (error) {
+      lastError = error;
+
+      const message = error instanceof Error ? error.message : String(error);
+      if (/request failed \(\d+\)/i.test(message)) {
+        logStructuredStage(provider, artifact, 'provider-http-failure', {
+          attempt,
+          error: message,
+        });
+      } else if (/empty response/i.test(message)) {
+        logStructuredStage(provider, artifact, 'empty-response', {
+          attempt,
+          error: message,
+        });
+      }
+
+      if (!isRetryableStructuredOutputError(error) || attempt >= retryLimit) {
+        break;
+      }
+
+      console.warn('[content-generation] structured output retry', {
+        provider,
+        attempt,
+        retryLimit,
+        error: error instanceof Error ? error.message : String(error),
+        rawTextSnippet:
+          error instanceof Error && 'rawTextSnippet' in error
+            ? (error as Error & { rawTextSnippet?: string }).rawTextSnippet ?? null
+            : null,
+      });
+      currentPrompt = buildStructuredRetryPrompt(prompt);
+    }
   }
 
-  const firstIssue = result.error.issues[0];
-  const fieldPath = firstIssue?.path.join('.') || 'response';
+  if (attempt > 1) {
+    logStructuredStage(provider, artifact, 'retry-recovery-failure', {
+      attempts: attempt,
+      error: lastError instanceof Error ? lastError.message : String(lastError),
+    });
+  }
 
-  throw new Error(
-    `${provider} returned an unexpected ${fieldPath} format. Please try again.`
-  );
+  throw lastError instanceof Error
+    ? lastError
+    : new Error(`${provider} returned an invalid structured response.`);
 };
 
 const normalizeHashtag = (value: string): string => {
@@ -642,10 +1174,16 @@ const generateCaptionsWithProvider = async (
   productInput: ProductInput,
   signal?: AbortSignal
 ): Promise<CaptionVariant[]> => {
+  const startedAt = Date.now();
+  logContentPhase('started', {
+    provider,
+    kind: 'captions',
+  });
   const response = await generateStructuredResponseWithProvider(
     provider,
     buildCaptionPrompt(brandProfile, productInput),
     captionResponseSchema,
+    'captions',
     signal
   );
 
@@ -669,6 +1207,13 @@ const generateCaptionsWithProvider = async (
     throw new Error(`${provider} did not return enough caption options`);
   }
 
+  logContentPhase('succeeded', {
+    provider,
+    kind: 'captions',
+    durationMs: Date.now() - startedAt,
+    variants: captions.length,
+  });
+
   return captions;
 };
 
@@ -678,10 +1223,16 @@ const generateHashtagsWithProvider = async (
   productInput: ProductInput,
   signal?: AbortSignal
 ): Promise<string[]> => {
+  const startedAt = Date.now();
+  logContentPhase('started', {
+    provider,
+    kind: 'hashtags',
+  });
   const response = await generateStructuredResponseWithProvider(
     provider,
     buildHashtagPrompt(brandProfile, productInput),
     hashtagResponseSchema,
+    'hashtags',
     signal
   );
 
@@ -693,6 +1244,13 @@ const generateHashtagsWithProvider = async (
     throw new Error(`${provider} did not return enough hashtag options`);
   }
 
+  logContentPhase('succeeded', {
+    provider,
+    kind: 'hashtags',
+    durationMs: Date.now() - startedAt,
+    variants: hashtags.length,
+  });
+
   return hashtags;
 };
 
@@ -702,12 +1260,28 @@ const generateReelScriptWithProvider = async (
   productInput: ProductInput,
   signal?: AbortSignal
 ): Promise<ReelScript> => {
+  const startedAt = Date.now();
+  logContentPhase('started', {
+    provider,
+    kind: 'reel-script',
+  });
   const response = await generateStructuredResponseWithProvider(
     provider,
     buildReelScriptPrompt(brandProfile, productInput),
     reelScriptResponseSchema,
+    'reel-script',
     signal
   );
+
+  logContentPhase('succeeded', {
+    provider,
+    kind: 'reel-script',
+    durationMs: Date.now() - startedAt,
+    chars:
+      response.reelScript.hook.length +
+      response.reelScript.body.length +
+      response.reelScript.cta.length,
+  });
 
   return response.reelScript;
 };
@@ -720,33 +1294,77 @@ const generateContentPackWithProvider = async (
 ): Promise<GeneratedContentPack> => {
   const includeReelScript = options.includeReelScript ?? true;
   const signal = options.signal;
+  const startedAt = Date.now();
   throwIfRequestCancelled(signal);
-  const [captions, hashtags] = await Promise.all([
-    generateCaptionsWithProvider(provider, brandProfile, productInput, signal),
-    generateHashtagsWithProvider(provider, brandProfile, productInput, signal),
+  logContentPhase('started', {
+    provider,
+    kind: 'content-pack',
+    includeReelScript,
+  });
+  const captionsPromise = generateCaptionsWithProvider(
+    provider,
+    brandProfile,
+    productInput,
+    signal
+  );
+  const hashtagsPromise = generateHashtagsWithProvider(
+    provider,
+    brandProfile,
+    productInput,
+    signal
+  );
+  const reelScriptPromise = includeReelScript
+    ? (async () => {
+        try {
+          throwIfRequestCancelled(signal);
+          return await generateReelScriptWithProvider(
+            provider,
+            brandProfile,
+            productInput,
+            signal
+          );
+        } catch (error) {
+          if (error instanceof RequestCancelledError) {
+            throw error;
+          }
+
+          console.warn(
+            `[content-generation] ${provider} reel script generation failed; continuing with captions and hashtags only.`,
+            error instanceof Error ? error.message : error
+          );
+          return EMPTY_REEL_SCRIPT;
+        }
+      })()
+    : Promise.resolve(EMPTY_REEL_SCRIPT);
+
+  const [captionsResult, hashtagsResult, reelScriptResult] = await Promise.allSettled([
+    captionsPromise,
+    hashtagsPromise,
+    reelScriptPromise,
   ]);
-  let reelScript = EMPTY_REEL_SCRIPT;
 
-  if (includeReelScript) {
-    try {
-      throwIfRequestCancelled(signal);
-      reelScript = await generateReelScriptWithProvider(
-        provider,
-        brandProfile,
-        productInput,
-        signal
-      );
-    } catch (error) {
-      if (error instanceof RequestCancelledError) {
-        throw error;
-      }
-
-      console.warn(
-        `[content-generation] ${provider} reel script generation failed; continuing with captions and hashtags only.`,
-        error instanceof Error ? error.message : error
-      );
-    }
+  if (captionsResult.status === 'rejected') {
+    throw captionsResult.reason;
   }
+
+  if (hashtagsResult.status === 'rejected') {
+    throw hashtagsResult.reason;
+  }
+
+  if (reelScriptResult.status === 'rejected') {
+    throw reelScriptResult.reason;
+  }
+
+  const captions = captionsResult.value;
+  const hashtags = hashtagsResult.value;
+  const reelScript = reelScriptResult.value;
+
+  logContentPhase('succeeded', {
+    provider,
+    kind: 'content-pack',
+    durationMs: Date.now() - startedAt,
+    hasReelScript: hasMeaningfulReelScript(reelScript),
+  });
 
   return {
     captions,
@@ -782,6 +1400,7 @@ export const generateContentPackWithFallback = async (
   options: GenerationRequestOptions = {}
 ): Promise<GeneratedContentPackWithProvider> => {
   const failures: ProviderFailure[] = [];
+  const startedAt = Date.now();
   throwIfRequestCancelled(options.signal);
   console.info('[content-generation] Provider flow', {
     primary: 'gemini',
@@ -813,9 +1432,17 @@ export const generateContentPackWithFallback = async (
       message,
     });
     console.warn(
-      '[content-generation] Gemini failed; falling back to Groq.',
+      isGeminiImmediateFallbackFailure(message)
+        ? '[content-generation] Gemini overload/unavailable detected; falling back to Groq immediately.'
+        : '[content-generation] Gemini failed; falling back to Groq.',
       message
     );
+    logContentPhase('failed', {
+      provider: 'gemini',
+      kind: 'content-pack',
+      durationMs: Date.now() - startedAt,
+      error: message,
+    });
   }
 
   try {
@@ -841,10 +1468,104 @@ export const generateContentPackWithFallback = async (
       provider: 'groq',
       message,
     });
+    logContentPhase('failed', {
+      provider: 'groq',
+      kind: 'content-pack',
+      durationMs: Date.now() - startedAt,
+      error: message,
+    });
 
     throw new ContentGenerationProvidersExhaustedError(failures);
   }
 };
+
+export const generateStructuredDataWithProviderOrder = async <T>(
+  prompt: string,
+  schema: z.ZodType<T>,
+  artifact: StructuredArtifactKind,
+  providerOrder: GenerationProvider[],
+  options: Pick<GenerationRequestOptions, 'signal' | 'onProviderChange'> = {}
+): Promise<{ data: T; provider: GenerationProvider }> => {
+  const failures: ProviderFailure[] = [];
+  const startedAt = Date.now();
+  throwIfRequestCancelled(options.signal);
+
+  for (const provider of providerOrder) {
+    logContentPhase('started', {
+      provider,
+      kind: artifact,
+    });
+
+    try {
+      await options.onProviderChange?.(provider);
+      const data = await generateStructuredResponseWithProvider(
+        provider,
+        prompt,
+        schema,
+        artifact,
+        options.signal
+      );
+
+      logContentPhase('succeeded', {
+        provider,
+        kind: artifact,
+        durationMs: Date.now() - startedAt,
+      });
+
+      return {
+        data,
+        provider,
+      };
+    } catch (error) {
+      if (error instanceof RequestCancelledError) {
+        throw error;
+      }
+
+      const message =
+        error instanceof Error ? error.message : `${provider} request failed`;
+      failures.push({
+        provider,
+        message,
+      });
+      logContentPhase('failed', {
+        provider,
+        kind: artifact,
+        durationMs: Date.now() - startedAt,
+        error: message,
+      });
+    }
+  }
+
+  throw new ContentGenerationProvidersExhaustedError(failures);
+};
+
+export const generateStructuredDataWithFallback = async <T>(
+  prompt: string,
+  schema: z.ZodType<T>,
+  artifact: StructuredArtifactKind,
+  options: Pick<GenerationRequestOptions, 'signal' | 'onProviderChange'> = {}
+): Promise<{ data: T; provider: GenerationProvider }> =>
+  generateStructuredDataWithProviderOrder(
+    prompt,
+    schema,
+    artifact,
+    ['gemini', 'groq'],
+    options
+  );
+
+export const generateStructuredDataWithGroqFallback = async <T>(
+  prompt: string,
+  schema: z.ZodType<T>,
+  artifact: StructuredArtifactKind,
+  options: Pick<GenerationRequestOptions, 'signal' | 'onProviderChange'> = {}
+): Promise<{ data: T; provider: GenerationProvider }> =>
+  generateStructuredDataWithProviderOrder(
+    prompt,
+    schema,
+    artifact,
+    ['groq', 'gemini'],
+    options
+  );
 
 export const generateContentPack = async (
   brandProfile: BrandProfile | null,

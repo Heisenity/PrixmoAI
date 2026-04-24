@@ -1,5 +1,26 @@
 import { API_BASE_URL } from './constants';
-import type { ApiEnvelope } from '../types';
+import type { ApiEnvelope, ApiErrorDetail } from '../types';
+
+export class ApiRequestError<T = unknown> extends Error {
+  readonly status: number;
+  readonly data?: T;
+  readonly details?: ApiErrorDetail[];
+
+  constructor(
+    message: string,
+    options: {
+      status: number;
+      data?: T;
+      details?: ApiErrorDetail[];
+    }
+  ) {
+    super(message);
+    this.name = 'ApiRequestError';
+    this.status = options.status;
+    this.data = options.data;
+    this.details = options.details;
+  }
+}
 
 type ApiRequestOptions = {
   method?: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE';
@@ -86,9 +107,14 @@ const executeApiRequest = async <T>(
     (rawPayload.trim() && !rawPayload.trim().startsWith('<') ? rawPayload.trim() : '');
 
   if (!response.ok) {
-    throw new Error(
+    throw new ApiRequestError(
       responseMessage ||
-        `Request failed with status ${response.status}. Please try again.`
+        `Request failed with status ${response.status}. Please try again.`,
+      {
+        status: response.status,
+        data: payload?.data,
+        details: payload?.errors,
+      }
     );
   }
 
@@ -97,7 +123,11 @@ const executeApiRequest = async <T>(
   }
 
   if (payload.status === 'fail' || payload.status === 'error') {
-    throw new Error(responseMessage || 'Unable to complete the request.');
+    throw new ApiRequestError(responseMessage || 'Unable to complete the request.', {
+      status: response.status,
+      data: payload.data,
+      details: payload.errors,
+    });
   }
 
   if (payload.data === undefined) {

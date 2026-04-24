@@ -1,5 +1,6 @@
 import { useId } from 'react';
 import type { InputHTMLAttributes } from 'react';
+import { ErrorMessage } from '../shared/ErrorMessage';
 import { getPlayfulErrorMessage } from '../../lib/errorTone';
 import { cn } from '../../lib/utils';
 
@@ -36,7 +37,7 @@ export const Input = ({ label, hint, error, className, id, ...props }: InputProp
         {...props}
       />
       {displayError ? (
-        <span className="field__error">{displayError}</span>
+        <ErrorMessage message={displayError} />
       ) : hint ? (
         <span className="field__hint">{hint}</span>
       ) : null}

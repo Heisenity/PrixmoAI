@@ -7,16 +7,13 @@ export const buildCaptionPrompt = (
   productInput: ProductInput
 ): string =>
   [
-    'You are an expert creative strategist for brands across any industry.',
-    `Generate exactly ${CAPTION_VARIATION_COUNT} distinct structured copy variations for this product or offering.`,
-    'Do not assume the product category or industry. Infer the domain only from the provided product description, keywords, audience, platform, and brand profile.',
-    'Do not inject fashion-related language, ecommerce language, or any niche-specific terminology unless the user input clearly supports it.',
-    'Use the brand/business name only if this generation context provides one. Otherwise do not invent a brand name and do not use the workspace owner personal name in the copy.',
-    'Adapt the writing style to the selected tone, audience, platform, and brand voice.',
-    'Make the output platform-appropriate: for example, shorter and sharper for Instagram, more professional and context-rich for LinkedIn, and natural across other platforms.',
-    'Each variation must include: hook, mainCopy, shortCaption, and cta.',
-    'Keep all copy modern, natural, reusable, non-generic, and non-repetitive.',
-    'Return valid JSON only in this format: {"captions":[{"hook":"...","mainCopy":"...","shortCaption":"...","cta":"..."}]}',
+    `Return exactly ${CAPTION_VARIATION_COUNT} caption variations as JSON only.`,
+    'Schema: {"captions":[{"hook":"...","mainCopy":"...","shortCaption":"...","cta":"..."}]}.',
+    'No markdown, no prose, no extra keys.',
+    'Infer the business domain only from the provided context.',
+    'Use the brand/business name only when the context explicitly provides one.',
+    'Adapt tone to the selected audience, platform, and brand voice.',
+    'Keep the copy modern, specific, reusable, and non-repetitive.',
     formatBrandContext(brandProfile),
     formatProductContext(productInput),
   ].join('\n\n');

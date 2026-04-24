@@ -5,6 +5,7 @@ import { Button } from '../../components/ui/button';
 import { useAuth } from '../../hooks/useAuth';
 import { ProfileFormPanel } from '../../components/settings/ProfileFormPanel';
 import { useBrandProfile } from '../../hooks/useBrandProfile';
+import { normalizeUsername } from '../../lib/username';
 
 export const OnboardingPage = () => {
   const { profile, saveProfile } = useBrandProfile();
@@ -25,7 +26,7 @@ export const OnboardingPage = () => {
       (user?.phone ?? ''),
     username:
       profile?.username ||
-      (user?.email ? user.email.split('@')[0] : '') ||
+      normalizeUsername(user?.email ? user.email.split('@')[0] : '') ||
       undefined,
     avatarUrl:
       profile?.avatarUrl ||
@@ -34,9 +35,13 @@ export const OnboardingPage = () => {
         : '') ||
       (typeof userMetadata.picture === 'string' ? userMetadata.picture : '') ||
       undefined,
+    websiteUrl:
+      profile?.websiteUrl ||
+      (typeof userMetadata.website === 'string' ? userMetadata.website : '') ||
+      undefined,
   };
 
-  if (profile?.brandName && profile?.fullName && profile?.phoneNumber) {
+  if (profile?.brandName && profile?.fullName && profile?.phoneNumber && profile?.username) {
     return <Navigate to="/app/generate" replace />;
   }
 
@@ -128,10 +133,14 @@ export const OnboardingPage = () => {
           <ProfileFormPanel
             profile={profile}
             defaults={profileDefaults}
+            saveContext="onboarding"
             heading="Build your brand memory layer."
             submitLabel="Save profile and enter workspace"
+            persistProfile={async (input) => {
+              await saveProfile(input, { saveContext: 'onboarding' });
+            }}
             onSubmit={async (input) => {
-              await saveProfile(input);
+              await saveProfile(input, { saveContext: 'onboarding' });
               navigate('/app/generate', { replace: true });
             }}
           />

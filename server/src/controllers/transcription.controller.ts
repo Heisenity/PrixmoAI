@@ -29,11 +29,22 @@ export const transcribeGenerateAudio = async (
 
   const cancellation = createRequestCancellation(req, res);
 
+  console.info('[transcription] request started', {
+    userId: req.user.id,
+    mimeType: req.body.mimeType,
+    languageHint: req.body.languageHint ?? null,
+    stage: req.body.stage ?? 'final',
+    previousContextChars: req.body.previousContext?.length || 0,
+    audioBase64Chars: req.body.audioBase64.length,
+  });
+
   try {
     const result = await transcribeAudioWithGroq({
       audioBase64: req.body.audioBase64,
       mimeType: req.body.mimeType,
       languageHint: req.body.languageHint,
+      previousContext: req.body.previousContext,
+      stage: req.body.stage,
       signal: cancellation.signal,
     });
 
@@ -47,12 +58,25 @@ export const transcribeGenerateAudio = async (
       return;
     }
 
+    console.error('[transcription] request failed', {
+      userId: req.user.id,
+      mimeType: req.body.mimeType,
+      languageHint: req.body.languageHint ?? null,
+      stage: req.body.stage ?? 'final',
+      previousContextChars: req.body.previousContext?.length || 0,
+      error: error instanceof Error ? error.message : String(error),
+    });
+
     return res.status(502).json({
       status: 'error',
       message:
         error instanceof Error ? error.message : 'Failed to transcribe audio',
     });
   } finally {
+    console.info('[transcription] request finished', {
+      userId: req.user.id,
+      mimeType: req.body.mimeType,
+    });
     cancellation.cleanup();
   }
 };

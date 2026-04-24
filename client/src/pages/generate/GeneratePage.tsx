@@ -836,6 +836,32 @@ const trimInlineText = (value: string, maxLength = 180) => {
     : normalized;
 };
 
+const CONTENT_GENERATION_VERBOSE_MESSAGES_BY_PHASE: Record<string, string[]> = {
+  idle: [],
+  preparing: [
+    'Reading your brief and extracting the strongest signals.',
+    'Matching the product angle to the right audience energy.',
+    'Pulling in brand memory, tone, and offer context.',
+  ],
+  writing: [
+    'Mapping a sharper creative direction for the thread.',
+    'Testing a few opening-hook angles in the background.',
+    'Drafting caption language around the chosen offer.',
+    'Weaving tone, CTA pressure, and audience fit together.',
+    'Shaping hashtag coverage without making it feel spammy.',
+    'Checking if the brief supports reel-ready phrasing too.',
+  ],
+  stitching: [
+    'Cleaning the strongest draft into a usable response.',
+    'Removing awkward repetition and tightening the flow.',
+    'Packing the final copy into the thread format.',
+  ],
+  syncing: [
+    'Saving the generated copy into this workspace thread.',
+    'Refreshing the conversation so the latest output lands cleanly.',
+  ],
+};
+
 const getUserMessageContent = (message: GenerateConversationMessage) => {
   if (message.role !== 'user') {
     if (message.metadata.mode === 'image') {
@@ -1031,6 +1057,10 @@ export const GeneratePage = () => {
   const [keywordInput, setKeywordInput] = useState('');
   const [contentForm, setContentForm] = useState(() => createDefaultContentForm());
   const [imageForm, setImageForm] = useState(() => createDefaultImageForm());
+  const [contentDescriptionHistoryCommitSignal, setContentDescriptionHistoryCommitSignal] =
+    useState(0);
+  const [imageDescriptionHistoryCommitSignal, setImageDescriptionHistoryCommitSignal] =
+    useState(0);
   const [isAccountMenuOpen, setIsAccountMenuOpen] = useState(false);
   const [contentButtonProgress, setContentButtonProgress] = useState(0);
   const [isContentButtonCompleting, setIsContentButtonCompleting] = useState(false);
@@ -1391,6 +1421,10 @@ export const GeneratePage = () => {
   const submitButtonProgressLabel = 'Generating...';
   const roundedContentButtonProgress = Math.round(contentButtonProgress);
   const activeButtonMotionProfile = contentButtonMotionProfileRef.current;
+  const activeContentVerboseMessages = workspace.isGeneratingCopy
+    ? CONTENT_GENERATION_VERBOSE_MESSAGES_BY_PHASE[workspace.copyGenerationPhase] ??
+      CONTENT_GENERATION_VERBOSE_MESSAGES_BY_PHASE.writing
+    : CONTENT_GENERATION_VERBOSE_MESSAGES_BY_PHASE.idle;
   const displayedContentButtonProgress =
     isContentButtonAnimating &&
     contentButtonProgress >= activeButtonMotionProfile.decimalStartAt &&
@@ -1548,6 +1582,10 @@ export const GeneratePage = () => {
         ...contentForm,
         keywords: splitKeywords(keywordInput),
       });
+
+      if (contentForm.productDescription.trim()) {
+        setContentDescriptionHistoryCommitSignal((current) => current + 1);
+      }
     } catch {
       return;
     }
@@ -1576,6 +1614,10 @@ export const GeneratePage = () => {
         sourceImageUrl: imageForm.sourceImageUrl || undefined,
         prompt: imageForm.prompt || undefined,
       });
+
+      if (imageForm.productDescription.trim()) {
+        setImageDescriptionHistoryCommitSignal((current) => current + 1);
+      }
     } catch {
       return;
     }
@@ -1610,6 +1652,11 @@ export const GeneratePage = () => {
         ...contentForm,
         keywords: splitKeywords(keywordInput),
       })
+      .then(() => {
+        if (contentForm.productDescription.trim()) {
+          setContentDescriptionHistoryCommitSignal((current) => current + 1);
+        }
+      })
       .catch(() => undefined);
   };
 
@@ -1621,6 +1668,11 @@ export const GeneratePage = () => {
         height: 768,
         sourceImageUrl: imageForm.sourceImageUrl || undefined,
         prompt: imageForm.prompt || undefined,
+      })
+      .then(() => {
+        if (imageForm.productDescription.trim()) {
+          setImageDescriptionHistoryCommitSignal((current) => current + 1);
+        }
       })
       .catch(() => undefined);
   };
@@ -2044,6 +2096,11 @@ export const GeneratePage = () => {
                           ? 'Building copy for this thread'
                           : 'Creating a visual for this thread'
                       }
+                      verboseMessages={
+                        workspace.isGeneratingCopy
+                          ? activeContentVerboseMessages
+                          : undefined
+                      }
                     />
                   </div>
                 </div>
@@ -2316,6 +2373,8 @@ export const GeneratePage = () => {
                   <DictationTextareaField
                     className="field field--full"
                     label="Description / brief"
+                    storageKey="generate-content-description"
+                    historyCommitSignal={contentDescriptionHistoryCommitSignal}
                     value={contentForm.productDescription}
                     onChange={(nextValue) =>
                       setContentForm((current) => ({
@@ -2324,7 +2383,6 @@ export const GeneratePage = () => {
                       }))
                     }
                     rows={2}
-                    placeholder="Describe the product or offer, what matters most, and what the audience should feel or do."
                   />
                   <label className="field">
                     <span className="field__label">Keywords</span>
@@ -2422,6 +2480,8 @@ export const GeneratePage = () => {
                   <DictationTextareaField
                     className="field field--full"
                     label="Description / brief"
+                    storageKey="generate-image-description"
+                    historyCommitSignal={imageDescriptionHistoryCommitSignal}
                     value={imageForm.productDescription}
                     onChange={(nextValue) =>
                       setImageForm((current) => ({
@@ -2430,7 +2490,6 @@ export const GeneratePage = () => {
                       }))
                     }
                     rows={2}
-                    placeholder="Describe the subject, important details, and the kind of visual result you want."
                   />
                   <label className="field">
                     <span className="field__label">Optional source image URL</span>
