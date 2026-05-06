@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { apiRequest } from '../lib/axios';
+import { API_BASE_URL } from '../lib/constants';
 import {
   isBrowserCacheFresh,
   readBrowserCache,
@@ -29,6 +30,51 @@ type CopyGenerationPhase =
   | 'stitching'
   | 'syncing';
 
+type CopyGenerationProgressPhase =
+  | CopyGenerationPhase
+  | 'queued'
+  | 'researching'
+  | 'done';
+
+type CopyGenerationStreamEvent = {
+  type?: 'progress' | 'complete' | 'error';
+  phase?: CopyGenerationProgressPhase;
+  message?: string;
+  progress?: number;
+  provider?: string | null;
+  data?: GenerateConversationThread;
+  meta?: Record<string, unknown>;
+};
+
+const mapCopyProgressPhase = (
+  phase?: CopyGenerationProgressPhase
+): CopyGenerationPhase => {
+  switch (phase) {
+    case 'preparing':
+      return 'preparing';
+    case 'stitching':
+      return 'stitching';
+    case 'syncing':
+    case 'done':
+      return 'syncing';
+    case 'queued':
+    case 'researching':
+    case 'writing':
+    default:
+      return 'writing';
+  }
+};
+
+const appendUniqueProgressMessage = (messages: string[], message: string) => {
+  const normalized = message.replace(/\s+/g, ' ').trim();
+
+  if (!normalized || messages[messages.length - 1] === normalized) {
+    return messages;
+  }
+
+  return [...messages, normalized].slice(-8);
+};
+
 const readFileAsDataUrl = (file: File): Promise<string> =>
   new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -48,6 +94,115 @@ const readFileAsDataUrl = (file: File): Promise<string> =>
 
     reader.readAsDataURL(file);
   });
+
+const readCopyGenerationStream = async ({
+  token,
+  body,
+  signal,
+  onProgress,
+}: {
+  token: string;
+  body: unknown;
+  signal?: AbortSignal;
+  onProgress: (event: CopyGenerationStreamEvent) => void;
+}) => {
+  const response = await fetch(`${API_BASE_URL}/api/generate/copy/stream`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'text/event-stream',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(body),
+    signal,
+  });
+
+  if (!response.ok) {
+    const rawPayload = await response.text().catch(() => '');
+    let parsedMessage = '';
+
+    try {
+      const parsed = JSON.parse(rawPayload) as { message?: string };
+      parsedMessage = parsed.message ?? '';
+    } catch {
+      parsedMessage = rawPayload;
+    }
+
+    throw new Error(
+      parsedMessage || `Request failed with status ${response.status}.`
+    );
+  }
+
+  if (!response.body) {
+    throw new Error('Live generation updates are not available in this browser.');
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  const handleEventBlock = (block: string) => {
+    const data = block
+      .split(/\r?\n/)
+      .filter((line) => line.startsWith('data:'))
+      .map((line) => line.slice(5).trimStart())
+      .join('\n')
+      .trim();
+
+    if (!data) {
+      return null;
+    }
+
+    const parsed = JSON.parse(data) as CopyGenerationStreamEvent;
+
+    if (parsed.type === 'progress') {
+      onProgress(parsed);
+      return null;
+    }
+
+    if (parsed.type === 'error') {
+      throw new Error(parsed.message || 'Failed to generate content.');
+    }
+
+    if (parsed.type === 'complete') {
+      return parsed.data ?? null;
+    }
+
+    return null;
+  };
+
+  while (true) {
+    const { done, value } = await reader.read();
+
+    if (value) {
+      buffer += decoder.decode(value, { stream: !done });
+      const blocks = buffer.split(/\n\n|\r\n\r\n/);
+      buffer = blocks.pop() ?? '';
+
+      for (const block of blocks) {
+        const thread = handleEventBlock(block);
+
+        if (thread) {
+          return thread;
+        }
+      }
+    }
+
+    if (done) {
+      break;
+    }
+  }
+
+  if (buffer.trim()) {
+    const thread = handleEventBlock(buffer);
+
+    if (thread) {
+      return thread;
+    }
+  }
+
+  throw new Error('Generation finished without a final thread response.');
+};
 
 type GenerateWorkspaceCache = {
   conversations: GenerateConversation[];
@@ -92,6 +247,9 @@ export const useGenerateWorkspace = () => {
   const [isGeneratingImage, setIsGeneratingImage] = useState(false);
   const [copyGenerationPhase, setCopyGenerationPhase] =
     useState<CopyGenerationPhase>('idle');
+  const [copyGenerationVerboseMessages, setCopyGenerationVerboseMessages] = useState<
+    string[]
+  >([]);
   const [isUploadingSource, setIsUploadingSource] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -398,21 +556,53 @@ export const useGenerateWorkspace = () => {
     setError(null);
     setIsGeneratingCopy(true);
     setCopyGenerationPhase('preparing');
+    setCopyGenerationVerboseMessages([
+      'Starting the content generation request.',
+    ]);
 
     try {
-      setCopyGenerationPhase('writing');
-      const nextThread = await apiRequest<GenerateConversationThread>(
-        '/api/generate/copy',
-        {
-          method: 'POST',
-          token,
-          body: {
-            conversationId: activeConversationId ?? undefined,
-            ...input,
-          },
-          signal: controller.signal,
+      const requestBody = {
+        conversationId: activeConversationId ?? undefined,
+        ...input,
+      };
+      const nextThread = await readCopyGenerationStream({
+        token,
+        body: requestBody,
+        signal: controller.signal,
+        onProgress: (event) => {
+          setCopyGenerationPhase(mapCopyProgressPhase(event.phase));
+
+          if (event.message) {
+            setCopyGenerationVerboseMessages((current) =>
+              appendUniqueProgressMessage(current, event.message!)
+            );
+          }
+        },
+      }).catch(async (streamError) => {
+        if (
+          streamError instanceof Error &&
+          /live generation updates are not available|unexpected end|finished without/i.test(
+            streamError.message
+          )
+        ) {
+          setCopyGenerationPhase('writing');
+          setCopyGenerationVerboseMessages((current) =>
+            appendUniqueProgressMessage(
+              current,
+              'Live updates were not available, so PrixmoAI is waiting for the final result.'
+            )
+          );
+
+          return apiRequest<GenerateConversationThread>('/api/generate/copy', {
+            method: 'POST',
+            token,
+            body: requestBody,
+            signal: controller.signal,
+          });
         }
-      );
+
+        throw streamError;
+      });
 
       setCopyGenerationPhase('stitching');
       setActiveConversationId(nextThread.conversation.id);
@@ -456,6 +646,7 @@ export const useGenerateWorkspace = () => {
         copyGenerationControllerRef.current = null;
         setIsGeneratingCopy(false);
         setCopyGenerationPhase('idle');
+        setCopyGenerationVerboseMessages([]);
       }
     }
   };
@@ -533,6 +724,7 @@ export const useGenerateWorkspace = () => {
     copyGenerationControllerRef.current = null;
     setIsGeneratingCopy(false);
     setCopyGenerationPhase('idle');
+    setCopyGenerationVerboseMessages([]);
     setError(null);
   };
 
@@ -591,6 +783,7 @@ export const useGenerateWorkspace = () => {
     isGeneratingCopy,
     isGeneratingImage,
     copyGenerationPhase,
+    copyGenerationVerboseMessages,
     isUploadingSource,
     error,
     setError,

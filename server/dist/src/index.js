@@ -18,6 +18,7 @@ const runtime_routes_1 = __importDefault(require("./routes/runtime.routes"));
 const scheduler_routes_1 = __importDefault(require("./routes/scheduler.routes"));
 const constants_1 = require("./config/constants");
 const analyticsSync_service_1 = require("./services/analyticsSync.service");
+const analyticsLearning_service_1 = require("./services/analyticsLearning.service");
 const contentGenerationQueue_service_1 = require("./services/contentGenerationQueue.service");
 const imageGenerationQueue_service_1 = require("./services/imageGenerationQueue.service");
 const schedulerPublisher_service_1 = require("./services/schedulerPublisher.service");
@@ -73,6 +74,7 @@ app.listen(PORT, () => {
     if (constants_1.START_BACKGROUND_WORKERS_ON_BOOT) {
         (0, schedulerPublisher_service_1.startSchedulerPublisherWorker)();
         (0, analyticsSync_service_1.startAnalyticsSyncWorker)();
+        (0, analyticsLearning_service_1.startAnalyticsLearningWorker)();
     }
     if (!redis_1.isRedisConfigured) {
         console.warn('[runtime] Redis-backed queues are disabled because REDIS_URL is missing.');

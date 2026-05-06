@@ -70,7 +70,7 @@ const resolveUserFacingFailureMessage = (failures) => {
         return 'Your image brief is too long for the current providers. Shorten the product description or prompt and try again.';
     }
     if (codes.size === 1 && codes.has('timeout')) {
-        return 'Image generation is taking longer than expected right now. Please try again in a moment.';
+        return 'Image generation is temporarily delayed because many requests are being processed right now. Please try again in a moment.';
     }
     if (codes.has('rate_limited')) {
         return 'The image providers are busy right now. Please wait a moment and try again.';
@@ -105,7 +105,19 @@ const buildBrandDirection = (brandProfile) => {
         `- Brand description: ${brandProfile.description ?? 'not provided'}`,
     ];
 };
-const buildImagePrompt = (brandProfile, input) => {
+const buildTrendDirection = (trendIntelligence) => {
+    if (!trendIntelligence || trendIntelligence.topCandidates.length === 0) {
+        return [];
+    }
+    return [
+        'Fresh live creative direction from web and social trend research (distill the pattern, do not copy exact creators or compositions):',
+        `- Summary: ${trendIntelligence.summary}`,
+        `- Primary platform: ${trendIntelligence.selectedPlatform ?? 'not provided'}`,
+        `- Goal: ${trendIntelligence.selectedGoal ?? 'not provided'}`,
+        ...trendIntelligence.insights.slice(0, 3).map((insight, index) => `- Visual signal ${index + 1}: ${insight.headline} | ${insight.explanation}`),
+    ];
+};
+const buildImagePrompt = (brandProfile, input, trendIntelligence) => {
     const parts = [
         `Create a polished, platform-ready marketing visual for ${input.productName}.`,
         input.brandName
@@ -132,6 +144,7 @@ const buildImagePrompt = (brandProfile, input) => {
             : 'Avoid extra products, distorted anatomy, wrong materials, warped text, clutter, and low-detail rendering.',
         'Keep the main subject in sharp focus and make the final image social-media ready.',
         ...buildBrandDirection(brandProfile),
+        ...buildTrendDirection(trendIntelligence),
     ];
     return parts.filter(Boolean).join(' ');
 };
@@ -275,7 +288,7 @@ const classifyProviderFailure = (provider, error) => {
             provider,
             code: 'timeout',
             message: technicalMessage,
-            userMessage: 'Image generation is taking longer than expected right now. Please try again in a moment.',
+            userMessage: 'Image generation is temporarily delayed because many requests are being processed right now. Please try again in a moment.',
         };
     }
     if (/429|too many requests|rate limit|quota/i.test(normalizedMessage)) {
@@ -1003,7 +1016,7 @@ const tryProvider = async (provider, prompt, input, signal, onProviderChange) =>
     }
 };
 const generateProductImage = async (brandProfile, input, options = {}) => {
-    const promptUsed = buildImagePrompt(brandProfile, input);
+    const promptUsed = buildImagePrompt(brandProfile, input, options.trendIntelligence);
     const failures = [];
     const signal = options.signal;
     for (const provider of providers) {

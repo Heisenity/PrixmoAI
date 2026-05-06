@@ -12,6 +12,10 @@ import {
 } from '../db/queries/analytics';
 import { requireSupabaseAdmin, requireUserClient } from '../db/supabase';
 import { getAnalyticsDashboard } from '../services/analyticsDashboard.service';
+import {
+  enqueueAnalyticsLearningJob,
+  refreshAnalyticsLearningForUser,
+} from '../services/analyticsLearning.service';
 import { syncAnalyticsForUser } from '../services/analyticsSync.service';
 import {
   buildAnalyticsBestPostCacheKey,
@@ -63,6 +67,26 @@ export const recordAnalytics = async (
     const client = requireUserClient(req.accessToken);
     const analytics = await saveAnalyticsData(client, userId, req.body);
     await invalidateAnalyticsRuntimeCache(userId);
+    void enqueueAnalyticsLearningJob({
+      userId,
+      triggerSource: 'analytics-recorded',
+      platforms:
+        typeof analytics.platform === 'string' && analytics.platform.trim()
+          ? [analytics.platform.trim().toLowerCase()]
+          : [],
+      contentIds: analytics.contentId ? [analytics.contentId] : [],
+      scheduledPostIds: analytics.scheduledPostId ? [analytics.scheduledPostId] : [],
+      analyticsIds: [analytics.id],
+    }).catch((learningError) => {
+      console.warn('[analytics-learning] failed to enqueue learning job after analytics write', {
+        userId,
+        analyticsId: analytics.id,
+        error:
+          learningError instanceof Error
+            ? learningError.message
+            : String(learningError),
+      });
+    });
 
     return res.status(200).json({
       status: 'success',
@@ -194,7 +218,7 @@ export const getDashboard = async (
 };
 
 export const syncAnalytics = async (
-  req: AuthenticatedRequest,
+  req: AuthenticatedRequest<{}, unknown, { awaitLearning?: unknown }>,
   res: Response
 ) => {
   if (!req.user?.id) {
@@ -207,7 +231,10 @@ export const syncAnalytics = async (
   try {
     const userId = req.user.id;
     const client = requireUserClient(req.accessToken);
-    const summary = await syncAnalyticsForUser(client, userId);
+    const awaitLearning = req.body?.awaitLearning !== false;
+    const summary = await syncAnalyticsForUser(client, userId, {
+      awaitLearning,
+    });
 
     return res.status(200).json({
       status: 'success',
@@ -219,6 +246,47 @@ export const syncAnalytics = async (
       status: 'error',
       message:
         error instanceof Error ? error.message : 'Failed to sync analytics',
+    });
+  }
+};
+
+export const refreshAnalyticsLearning = async (
+  req: AuthenticatedRequest<{}, unknown, { platform?: unknown }>,
+  res: Response
+) => {
+  if (!req.user?.id) {
+    return res.status(401).json({
+      status: 'fail',
+      message: 'Unauthorized',
+    });
+  }
+
+  try {
+    const userId = req.user.id;
+    const client = requireUserClient(req.accessToken);
+    const requestedPlatform =
+      req.body?.platform === 'instagram' || req.body?.platform === 'facebook'
+        ? req.body.platform
+        : null;
+    const summary = await refreshAnalyticsLearningForUser(client, userId, {
+      triggerSource: 'manual-learning-refresh',
+      platforms: requestedPlatform ? [requestedPlatform] : [],
+    });
+
+    await invalidateAnalyticsRuntimeCache(userId);
+
+    return res.status(200).json({
+      status: 'success',
+      message: 'Learning refreshed successfully',
+      data: summary,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      status: 'error',
+      message:
+        error instanceof Error
+          ? error.message
+          : 'Failed to refresh analytics learning',
     });
   }
 };

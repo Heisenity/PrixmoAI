@@ -1,8 +1,11 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.getAnalyticsDashboard = void 0;
+const constants_1 = require("../config/constants");
 const analytics_1 = require("../db/queries/analytics");
+const analyticsLearning_1 = require("../db/queries/analyticsLearning");
 const timezone_1 = require("../lib/timezone");
+const analyticsPerformance_1 = require("../lib/analyticsPerformance");
 const PRESET_DAY_MAP = {
     '7d': 7,
     '14d': 14,
@@ -10,7 +13,12 @@ const PRESET_DAY_MAP = {
     '30d': 30,
 };
 const HEATMAP_DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-const MINIMUM_BEST_TIME_POSTS = 5;
+const MINIMUM_BEST_TIME_POSTS = constants_1.ANALYTICS_LEARNING_MIN_POSTS;
+const MINIMUM_BEST_TIME_ENGAGEMENT_COVERAGE = 0.5;
+const MINIMUM_BEST_TIME_SLOT_SAMPLES = 2;
+const BEST_TIME_OUTLIER_MAD_MULTIPLIER = 3;
+const BEST_TIME_ZERO_MAD_CAP_MULTIPLIER = 3;
+const resolveScheduledPostPublishedAt = (row) => row.published_at ?? (row.status === 'published' ? row.updated_at : null);
 const normalizePlatformKey = (value) => {
     const normalized = value?.trim().toLowerCase();
     if (normalized === 'instagram' || normalized === 'facebook') {
@@ -54,6 +62,35 @@ const formatTitleCase = (value) => value
     .filter(Boolean)
     .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
     .join(' ');
+const formatLearningPatternLabel = (dimension, value) => {
+    const normalizedValue = value.replace(/[-_]+/g, ' ').trim();
+    switch (dimension) {
+        case 'caption_length':
+            return `${normalizedValue} captions`;
+        case 'hook_style':
+            if (normalizedValue.toLowerCase() === 'unknown') {
+                return 'posts with different opening lines';
+            }
+            return `${normalizedValue} hooks`;
+        case 'cta_style':
+            return `${normalizedValue} CTAs`;
+        case 'topic':
+            return `${normalizedValue} topics`;
+        default:
+            return normalizedValue;
+    }
+};
+const isUnknownHookPattern = (pattern) => Boolean(pattern &&
+    pattern.dimension === 'hook_style' &&
+    pattern.label.trim().toLowerCase() === 'unknown');
+const hasMeaningfulPostSignal = (post) => post.performanceScore > 0 ||
+    post.impressions > 0 ||
+    post.reach > 0 ||
+    post.engagements > 0 ||
+    post.likes > 0 ||
+    post.comments > 0 ||
+    post.saves > 0 ||
+    post.shares > 0;
 const CONTENT_TOPIC_RULES = [
     {
         id: 'educational',
@@ -302,6 +339,16 @@ const toRateRatio = (rate, reach, engagements) => {
     return engagements / reach;
 };
 const toPercent = (ratio) => ratio === null ? null : Number((ratio * 100).toFixed(2));
+const median = (values) => {
+    if (!values.length) {
+        return 0;
+    }
+    const sorted = [...values].sort((left, right) => left - right);
+    const midpoint = Math.floor(sorted.length / 2);
+    return sorted.length % 2 === 0
+        ? (sorted[midpoint - 1] + sorted[midpoint]) / 2
+        : sorted[midpoint];
+};
 const computeChangePercent = (current, previous) => {
     if (current === null || previous === null) {
         return null;
@@ -480,42 +527,96 @@ const buildCumulativeSparklineFromRows = (rows, range, selector) => {
     return points;
 };
 const buildHeatmap = (posts) => {
+    const scoredTimingPosts = [];
     const buckets = new Map();
+    let timedPosts = 0;
     for (const post of posts) {
-        if (!post.publishedTime || post.engagementRate === null) {
+        if (!post.publishedTime) {
             continue;
         }
         const date = new Date(post.publishedTime);
         if (!Number.isFinite(date.getTime())) {
             continue;
         }
+        timedPosts += 1;
         const dayIndex = ((0, timezone_1.getIstDayOfWeek)(date) + 6) % 7;
         const hour = (0, timezone_1.getIstHour)(date);
-        const key = `${dayIndex}-${hour}`;
-        const existing = buckets.get(key) ?? { sum: 0, posts: 0, dayIndex, hour };
-        existing.sum += post.engagementRate;
+        const normalizer = post.reach > 0 ? post.reach : post.impressions > 0 ? post.impressions : 0;
+        const platform = normalizePlatformKey(post.platform);
+        const appreciationActions = platform === 'facebook'
+            ? post.reactions > 0
+                ? post.reactions
+                : post.likes
+            : post.likes > 0
+                ? post.likes
+                : post.reactions;
+        const weightedActions = appreciationActions + post.comments * 2 + post.saves * 3 + post.shares * 4;
+        const actionCount = appreciationActions + post.comments + post.saves + post.shares;
+        if (normalizer <= 0 || weightedActions <= 0) {
+            continue;
+        }
+        scoredTimingPosts.push({
+            dayIndex,
+            hour,
+            rawScore: weightedActions / normalizer,
+            cappedScore: 0,
+            engagementPercent: Number(((actionCount / normalizer) * 100).toFixed(2)),
+        });
+    }
+    const scoreMedian = median(scoredTimingPosts.map((entry) => entry.rawScore));
+    const scoreMad = median(scoredTimingPosts.map((entry) => Math.abs(entry.rawScore - scoreMedian)));
+    const robustStdEstimate = scoreMad * 1.4826;
+    const outlierCap = scoreMedian > 0 && scoreMad === 0
+        ? scoreMedian * BEST_TIME_ZERO_MAD_CAP_MULTIPLIER
+        : scoreMedian + robustStdEstimate * BEST_TIME_OUTLIER_MAD_MULTIPLIER;
+    for (const scoredPost of scoredTimingPosts) {
+        const cappedScore = outlierCap > 0 ? Math.min(scoredPost.rawScore, outlierCap) : scoredPost.rawScore;
+        const key = `${scoredPost.dayIndex}-${scoredPost.hour}`;
+        const existing = buckets.get(key) ?? {
+            signalSum: 0,
+            engagementSum: 0,
+            engagementSamples: 0,
+            posts: 0,
+            qualifiedPosts: 0,
+            dayIndex: scoredPost.dayIndex,
+            hour: scoredPost.hour,
+        };
+        scoredPost.cappedScore = cappedScore;
+        existing.signalSum += cappedScore;
+        existing.engagementSum += scoredPost.engagementPercent;
+        existing.engagementSamples += 1;
+        existing.qualifiedPosts += 1;
         existing.posts += 1;
         buckets.set(key, existing);
     }
-    const topSlots = [...buckets.values()]
+    const engagedPosts = scoredTimingPosts.length;
+    const candidateSlots = [...buckets.values()]
+        .filter((entry) => entry.qualifiedPosts > 0)
         .map((entry) => ({
         day: HEATMAP_DAY_LABELS[entry.dayIndex],
         dayIndex: entry.dayIndex,
         hour: entry.hour,
         posts: entry.posts,
-        averageEngagementRate: Number((entry.sum / entry.posts).toFixed(2)),
+        qualifiedPosts: entry.qualifiedPosts,
+        averageEngagementRate: entry.engagementSamples > 0
+            ? Number((entry.engagementSum / entry.engagementSamples).toFixed(2))
+            : 0,
+        averageResponseScore: Number((entry.signalSum / entry.qualifiedPosts).toFixed(6)),
     }))
         .sort((left, right) => {
-        if (right.averageEngagementRate !== left.averageEngagementRate) {
-            return right.averageEngagementRate - left.averageEngagementRate;
+        if (right.averageResponseScore !== left.averageResponseScore) {
+            return right.averageResponseScore - left.averageResponseScore;
+        }
+        if ((right.averageEngagementRate ?? 0) !== (left.averageEngagementRate ?? 0)) {
+            return (right.averageEngagementRate ?? 0) - (left.averageEngagementRate ?? 0);
         }
         return right.posts - left.posts;
     });
-    const maxRate = topSlots[0]?.averageEngagementRate ?? 0;
+    const maxResponseScore = candidateSlots[0]?.averageResponseScore ?? 0;
     const heatmap = [];
     for (let dayIndex = 0; dayIndex < HEATMAP_DAY_LABELS.length; dayIndex += 1) {
         for (let hour = 0; hour < 24; hour += 1) {
-            const slot = topSlots.find((entry) => entry.dayIndex === dayIndex && entry.hour === hour);
+            const slot = candidateSlots.find((entry) => entry.dayIndex === dayIndex && entry.hour === hour);
             const averageEngagementRate = slot?.averageEngagementRate ?? null;
             heatmap.push({
                 day: HEATMAP_DAY_LABELS[dayIndex],
@@ -523,25 +624,47 @@ const buildHeatmap = (posts) => {
                 hour,
                 posts: slot?.posts ?? 0,
                 averageEngagementRate,
-                intensity: averageEngagementRate !== null && maxRate > 0
-                    ? Number((averageEngagementRate / maxRate).toFixed(4))
+                intensity: slot && maxResponseScore > 0
+                    ? Number((slot.averageResponseScore / maxResponseScore).toFixed(4))
                     : 0,
             });
         }
     }
-    const hasEnoughData = posts.length >= MINIMUM_BEST_TIME_POSTS && topSlots.length > 0;
-    const headline = topSlots[0];
-    const secondary = topSlots[1];
+    const headline = candidateSlots[0];
+    const secondary = candidateSlots[1];
+    const hasMinimumPosts = timedPosts >= MINIMUM_BEST_TIME_POSTS;
+    const engagementCoverage = timedPosts > 0 ? engagedPosts / timedPosts : 0;
+    const hasSignalWinner = Boolean(headline && headline.averageResponseScore > 0);
+    const hasRepeatableWinner = Boolean(headline && headline.qualifiedPosts >= MINIMUM_BEST_TIME_SLOT_SAMPLES);
+    const signalStatus = !hasMinimumPosts
+        ? 'not-enough-posts'
+        : engagedPosts === 0
+            ? 'no-engagement'
+            : engagementCoverage < MINIMUM_BEST_TIME_ENGAGEMENT_COVERAGE
+                ? 'low-engagement-coverage'
+                : !hasSignalWinner || !hasRepeatableWinner || !headline || headline.averageEngagementRate <= 0
+                    ? 'no-clear-winner'
+                    : 'ready';
+    const hasEnoughData = signalStatus === 'ready';
     return {
         hasEnoughData,
         minimumPostsRequired: MINIMUM_BEST_TIME_POSTS,
-        postsConsidered: posts.length,
+        postsConsidered: timedPosts,
+        engagedPostsConsidered: engagedPosts,
+        engagementCoverage: Number(engagementCoverage.toFixed(4)),
+        signalStatus,
         summary: hasEnoughData && headline
             ? secondary
-                ? `Best time to post: ${headline.day} ${headline.hour}:00-${String((headline.hour + 2) % 24).padStart(2, '0')}:00 IST, with ${secondary.day} close behind.`
-                : `Best time to post: ${headline.day} around ${headline.hour}:00 IST.`
-            : 'Not enough data yet to determine best posting time.',
-        topSlots: topSlots.slice(0, 5),
+                ? `Best posting window so far: ${headline.day} ${headline.hour}:00 IST, with ${secondary.day} close behind.`
+                : `Best posting window so far: ${headline.day} around ${headline.hour}:00 IST.`
+            : !hasMinimumPosts
+                ? `Timing signal is still forming. Publish at least ${MINIMUM_BEST_TIME_POSTS} posts so PrixmoAI can find your best posting window.`
+                : engagedPosts === 0
+                    ? 'No best time yet. Your recent posts need real engagement before PrixmoAI can judge timing.'
+                    : engagementCoverage < MINIMUM_BEST_TIME_ENGAGEMENT_COVERAGE
+                        ? 'Timing signal is still forming. At least half of your recent posts need engagement before PrixmoAI can judge the best posting time.'
+                        : 'Timing signal is still forming. PrixmoAI needs repeated engagement in a time slot before recommending a best time.',
+        topSlots: hasEnoughData ? candidateSlots.slice(0, 5) : [],
         heatmap,
     };
 };
@@ -653,11 +776,12 @@ const buildContentTopicInsights = (posts) => [...posts.reduce((map, post) => {
     averageRate: entry.posts ? entry.engagementRateTotal / entry.posts : 0,
 }))
     .sort((left, right) => right.averageRate - left.averageRate);
-const buildInsightCards = (posts, previousPosts, platformComparison, bestTime, trendSeries, range) => {
+const buildInsightCards = (posts, previousPosts, platformComparison, bestTime, trendSeries, range, learningProfiles = []) => {
     const cards = [];
     const sortedPosts = [...posts].sort((left, right) => right.performanceScore - left.performanceScore);
-    const topPost = sortedPosts[0];
-    const lowestPost = [...sortedPosts].reverse()[0];
+    const rankedPosts = sortedPosts.filter(hasMeaningfulPostSignal);
+    const topPost = rankedPosts[0];
+    const lowestPost = [...rankedPosts].reverse()[0];
     const bestPlatform = platformComparison[0];
     const secondPlatform = platformComparison[1];
     const contentTypeInsights = buildContentTypeInsights(posts);
@@ -680,13 +804,46 @@ const buildInsightCards = (posts, previousPosts, platformComparison, bestTime, t
     const currentEngagements = posts.reduce((total, post) => total + post.engagements, 0);
     const previousEngagements = previousPosts.reduce((total, post) => total + post.engagements, 0);
     const engagementChange = computeChangePercent(currentEngagements, previousEngagements);
+    for (const profile of learningProfiles.slice(0, 2)) {
+        const platformLabel = formatTitleCase(profile.platform);
+        const topPattern = profile.patterns[0];
+        const weakPattern = profile.weakPatterns[0];
+        cards.push({
+            id: `learning-${profile.platform}`,
+            title: `${platformLabel} learning loop`,
+            description: topPattern
+                ? `${platformLabel} is learning that ${formatLearningPatternLabel(topPattern.dimension, topPattern.label)} are working best for this brand.`
+                : weakPattern
+                    ? `${platformLabel} has enough learning data to flag what to avoid, but a clear repeatable winner has not emerged yet.`
+                    : `${platformLabel} is still collecting enough reliable evidence to describe a repeatable winning pattern clearly.`,
+            supportingMetric: topPattern
+                ? `${topPattern.sampleSize} posts analyzed`
+                : 'Updated from the latest learning sync',
+            confidence: topPattern && topPattern.sampleSize >= 4
+                ? 'high'
+                : topPattern
+                    ? 'medium'
+                    : 'low',
+            tone: 'positive',
+        });
+        if (weakPattern) {
+            cards.push({
+                id: `learning-weak-${profile.platform}`,
+                title: `What to avoid on ${platformLabel}`,
+                description: weakPattern.explanation,
+                supportingMetric: `${weakPattern.sampleSize} posts analyzed`,
+                confidence: weakPattern.sampleSize >= 4 ? 'medium' : 'low',
+                tone: 'warning',
+            });
+        }
+    }
     if (topPost) {
         cards.push({
             id: 'top-post',
             title: 'Top performing post',
             description: `${topPost.platformLabel} ${topPost.postType || 'post'} led this period with ${topPost.engagementRate?.toFixed(1) || '0.0'}% engagement.`,
             supportingMetric: `${topPost.impressions.toLocaleString()} impressions`,
-            confidence: posts.length >= 5 ? 'high' : 'medium',
+            confidence: posts.length >= constants_1.ANALYTICS_LEARNING_MIN_POSTS ? 'high' : 'medium',
             tone: 'positive',
         });
     }
@@ -696,7 +853,7 @@ const buildInsightCards = (posts, previousPosts, platformComparison, bestTime, t
             title: 'Lowest performing post',
             description: `${lowestPost.platformLabel} ${lowestPost.postType || 'post'} needs a different angle or timing based on the current score.`,
             supportingMetric: `${lowestPost.engagementRate?.toFixed(1) || '0.0'}% engagement`,
-            confidence: posts.length >= 5 ? 'medium' : 'low',
+            confidence: posts.length >= constants_1.ANALYTICS_LEARNING_MIN_POSTS ? 'medium' : 'low',
             tone: 'warning',
         });
     }
@@ -711,13 +868,20 @@ const buildInsightCards = (posts, previousPosts, platformComparison, bestTime, t
         });
     }
     else {
+        const hasMinimumPosts = bestTime.postsConsidered >= bestTime.minimumPostsRequired;
         cards.push({
             id: 'best-time',
             title: 'Best time to post',
             description: bestTime.summary,
-            supportingMetric: `${bestTime.postsConsidered}/${bestTime.minimumPostsRequired} posts analyzed`,
+            supportingMetric: bestTime.signalStatus === 'no-engagement'
+                ? 'No engaged posts yet'
+                : bestTime.signalStatus === 'low-engagement-coverage'
+                    ? `${Math.round(bestTime.engagementCoverage * 100)}% of posts have engagement`
+                    : hasMinimumPosts
+                        ? 'Timing signal is still forming'
+                        : `${bestTime.postsConsidered} of ${bestTime.minimumPostsRequired} posts collected`,
             confidence: 'low',
-            tone: 'neutral',
+            tone: bestTime.signalStatus === 'no-engagement' ? 'warning' : 'neutral',
         });
     }
     if (bestPlatform) {
@@ -833,10 +997,76 @@ const buildInsightCards = (posts, previousPosts, platformComparison, bestTime, t
     });
     return cards.slice(0, 8);
 };
+const buildLearningDashboard = (learningProfiles, scopedPostsCount, platformScope) => {
+    const sortedProfiles = [...learningProfiles].sort((left, right) => new Date(right.lastAnalyzedAt).getTime() - new Date(left.lastAnalyzedAt).getTime());
+    const topProfile = (platformScope !== 'all'
+        ? sortedProfiles.find((profile) => profile.platform === platformScope)
+        : null) ??
+        sortedProfiles[0] ??
+        null;
+    const topPattern = topProfile?.patterns.find((pattern) => !isUnknownHookPattern(pattern)) ?? null;
+    const weakPattern = topProfile?.weakPatterns[0] ?? null;
+    const topRecommendationReason = topProfile && typeof topProfile.analyticsContext.recommendationReason === 'string'
+        ? topProfile.analyticsContext.recommendationReason
+        : null;
+    const topRecommendationAccuracy = topProfile && typeof topProfile.analyticsContext.recommendationAccuracy === 'number'
+        ? topProfile.analyticsContext.recommendationAccuracy
+        : null;
+    const topRecommendationAccuracyLabel = topProfile && typeof topProfile.analyticsContext.recommendationAccuracyLabel === 'string'
+        ? topProfile.analyticsContext.recommendationAccuracyLabel
+        : null;
+    const storedRecommendation = topProfile?.recommendationText?.trim() ?? null;
+    const genericRecommendationPattern = /keep testing .* consistent cadence so prixmoai can lock onto a stronger winner/i;
+    const fallbackRecommendation = topPattern
+        ? `Next, try more ${formatLearningPatternLabel(topPattern.dimension, topPattern.label)}. They are landing better than your usual results right now.`
+        : weakPattern
+            ? 'Need a few more strong posts before PrixmoAI can suggest the next post with confidence.'
+            : 'Need a little more clean data before PrixmoAI can suggest the next post.';
+    const topRecommendation = storedRecommendation && !genericRecommendationPattern.test(storedRecommendation)
+        ? storedRecommendation
+        : fallbackRecommendation;
+    const isReady = scopedPostsCount >= constants_1.ANALYTICS_LEARNING_MIN_POSTS;
+    const missingDataMessage = isReady
+        ? null
+        : `Publish ${constants_1.ANALYTICS_LEARNING_MIN_POSTS} scheduler posts to unlock smarter recommendations.`;
+    const platformLabel = topProfile ? formatTitleCase(topProfile.platform) : 'This platform';
+    const summary = !isReady
+        ? missingDataMessage
+        : topPattern
+            ? `${platformLabel} is responding best to ${formatLearningPatternLabel(topPattern.dimension, topPattern.label)} right now.`
+            : weakPattern
+                ? `${platformLabel} can now flag what to avoid, but the next strong winner is still forming.`
+                : topProfile
+                    ? `${platformLabel} has enough data to learn from, but the best next-post pattern is still too close to call.`
+                    : 'PrixmoAI is analyzing your recent posts and will surface learning signals as soon as the next sync completes.';
+    const confidence = !isReady || !topProfile
+        ? 'low'
+        : scopedPostsCount >= 12
+            ? 'high'
+            : scopedPostsCount >= constants_1.ANALYTICS_LEARNING_MIN_POSTS
+                ? 'medium'
+                : 'low';
+    return {
+        summary,
+        topRecommendation: isReady ? topRecommendation : null,
+        recommendationReason: isReady ? topRecommendationReason : null,
+        recommendationAccuracy: isReady ? topRecommendationAccuracy : null,
+        recommendationAccuracyLabel: isReady ? topRecommendationAccuracyLabel : null,
+        confidence,
+        lastAnalyzedAt: isReady
+            ? topProfile?.lastAnalyzedAt ?? topProfile?.updatedAt ?? null
+            : null,
+        isReady,
+        postsConsidered: scopedPostsCount,
+        minimumPostsRequired: constants_1.ANALYTICS_LEARNING_MIN_POSTS,
+        missingDataMessage,
+        profiles: sortedProfiles,
+    };
+};
 const getAnalyticsDashboard = async (client, userId, options = {}) => {
     const range = buildDateRange(options);
     const platformScope = options.platformScope ?? 'all';
-    const [{ data: scheduledPostsData, error: scheduledPostsError }, { data: socialAccountsData, error: socialAccountsError }, rawAnalyticsRows, rawAudienceSnapshots,] = await Promise.all([
+    const [{ data: scheduledPostsData, error: scheduledPostsError }, { data: socialAccountsData, error: socialAccountsError }, rawAnalyticsRows, rawAudienceSnapshots, learningProfiles,] = await Promise.all([
         client
             .from('scheduled_posts')
             .select('*')
@@ -847,6 +1077,9 @@ const getAnalyticsDashboard = async (client, userId, options = {}) => {
             .eq('user_id', userId),
         (0, analytics_1.getAnalyticsByUserId)(client, userId),
         (0, analytics_1.getAnalyticsAudienceSnapshotsByUserId)(client, userId),
+        (0, analyticsLearning_1.listAnalyticsLearningProfilesByUser)(client, userId, {
+            platform: platformScope === 'all' ? null : platformScope,
+        }),
     ]);
     if (scheduledPostsError) {
         throw new Error(scheduledPostsError.message || 'Failed to load scheduled post analytics context');
@@ -854,7 +1087,10 @@ const getAnalyticsDashboard = async (client, userId, options = {}) => {
     if (socialAccountsError) {
         throw new Error(socialAccountsError.message || 'Failed to load connected accounts for analytics');
     }
-    const scheduledPosts = (scheduledPostsData ?? []);
+    const scheduledPosts = (scheduledPostsData ?? []).map((row) => ({
+        ...row,
+        published_at: resolveScheduledPostPublishedAt(row),
+    }));
     const socialAccounts = (socialAccountsData ?? []);
     const scheduledPostById = new Map(scheduledPosts.map((row) => [row.id, row]));
     const socialAccountById = new Map(socialAccounts.map((row) => [row.id, row]));
@@ -907,7 +1143,9 @@ const getAnalyticsDashboard = async (client, userId, options = {}) => {
             pageLikes: toSafeNumber(rawRow.pageLikes),
             completionRate: rawRow.completionRate ?? null,
             followersAtPostTime: rawRow.followersAtPostTime ?? null,
-            publishedTime: rawRow.publishedTime || scheduledPost?.published_at || null,
+            publishedTime: rawRow.publishedTime ||
+                (scheduledPost ? resolveScheduledPostPublishedAt(scheduledPost) : null) ||
+                null,
             topComments: rawRow.topComments || [],
             engagementRate,
             platformKey: platform,
@@ -928,7 +1166,8 @@ const getAnalyticsDashboard = async (client, userId, options = {}) => {
         if (platformScope !== 'all' && platform !== platformScope) {
             return false;
         }
-        return post.status === 'published' && isWithinRange(post.published_at, range.start, range.end);
+        return (post.status === 'published' &&
+            isWithinRange(resolveScheduledPostPublishedAt(post), range.start, range.end));
     });
     const previousPublishedPosts = scheduledPosts.filter((post) => {
         const platform = normalizePlatformKey(post.platform);
@@ -936,7 +1175,7 @@ const getAnalyticsDashboard = async (client, userId, options = {}) => {
             return false;
         }
         return (post.status === 'published' &&
-            isWithinRange(post.published_at, range.previousStart, range.previousEnd));
+            isWithinRange(resolveScheduledPostPublishedAt(post), range.previousStart, range.previousEnd));
     });
     const trendSeries = buildTrendBuckets(currentRows, range);
     const platformBreakdownForMetric = (selector) => {
@@ -988,14 +1227,8 @@ const getAnalyticsDashboard = async (client, userId, options = {}) => {
         saves: buildMetric(sumMetric(currentSnapshots, (row) => row.saves), sumMetric(previousSnapshots, (row) => row.saves), buildCumulativeSparklineFromRows(currentRows, range, (row) => row.saves), platformBreakdownForMetric((row) => row.saves)),
         shares: buildMetric(sumMetric(currentSnapshots, (row) => row.shares), sumMetric(previousSnapshots, (row) => row.shares), buildCumulativeSparklineFromRows(currentRows, range, (row) => row.shares), platformBreakdownForMetric((row) => row.shares)),
         newFollowers: buildMetric(currentFollowerGrowth, previousFollowerGrowth, currentFollowerSeries),
-        postsPublished: buildMetric(currentPublishedPosts.length, previousPublishedPosts.length, buildSparkline(trendSeries, (point) => currentPublishedPosts.filter((post) => isWithinRange(post.published_at, point.date, (0, timezone_1.addIstDays)(new Date(point.date), 1).toISOString())).length)),
+        postsPublished: buildMetric(currentPublishedPosts.length, previousPublishedPosts.length, buildSparkline(trendSeries, (point) => currentPublishedPosts.filter((post) => isWithinRange(resolveScheduledPostPublishedAt(post), point.date, (0, timezone_1.addIstDays)(new Date(point.date), 1).toISOString())).length)),
     };
-    const postImpressionValues = currentSnapshots.map((row) => row.impressions);
-    const postReachValues = currentSnapshots.map((row) => row.reach);
-    const minImpressions = Math.min(...postImpressionValues, 0);
-    const maxImpressions = Math.max(...postImpressionValues, 1);
-    const minReach = Math.min(...postReachValues, 0);
-    const maxReach = Math.max(...postReachValues, 1);
     const postTrendMap = new Map();
     for (const row of currentRows) {
         const entries = postTrendMap.get(row.postKey) ?? [];
@@ -1008,15 +1241,23 @@ const getAnalyticsDashboard = async (client, userId, options = {}) => {
         });
         postTrendMap.set(row.postKey, entries);
     }
+    const postScores = (0, analyticsPerformance_1.buildAnalyticsPerformanceScores)(currentSnapshots.map((row) => ({
+        id: row.id,
+        likes: row.likes,
+        comments: row.comments,
+        saves: row.saves,
+        shares: row.shares,
+        impressions: row.impressions,
+        reach: row.reach,
+        engagements: row.engagements,
+        engagementRate: row.engagementRate,
+        followersAtPostTime: row.followersAtPostTime,
+        publishedTime: row.publishedTime,
+    })));
+    const postScoreMap = new Map(postScores.map((entry) => [entry.id, entry]));
     const posts = currentSnapshots
         .map((row) => {
-        const normalizedImpressions = maxImpressions === minImpressions
-            ? 1
-            : (row.impressions - minImpressions) / (maxImpressions - minImpressions);
-        const normalizedReach = maxReach === minReach ? 1 : (row.reach - minReach) / (maxReach - minReach);
-        const performanceScore = (row.engagementRateRatio ?? 0) * 0.5 +
-            normalizedImpressions * 0.3 +
-            normalizedReach * 0.2;
+        const performance = postScoreMap.get(row.id);
         return {
             id: row.id,
             scheduledPostId: row.scheduledPostId,
@@ -1048,7 +1289,7 @@ const getAnalyticsDashboard = async (client, userId, options = {}) => {
             followersAtPostTime: row.followersAtPostTime,
             engagements: row.engagements,
             engagementRate: row.engagementRate,
-            performanceScore: Number((performanceScore * 100).toFixed(2)),
+            performanceScore: Number((performance?.score ?? 0).toFixed(2)),
             keywords: extractKeywords(row.caption),
             topComments: row.topComments,
             trend: (postTrendMap.get(row.postKey) ?? [])
@@ -1056,7 +1297,34 @@ const getAnalyticsDashboard = async (client, userId, options = {}) => {
                 .slice(-8),
         };
     })
-        .sort((left, right) => right.performanceScore - left.performanceScore);
+        .sort((left, right) => {
+        const leftScore = postScoreMap.get(left.id);
+        const rightScore = postScoreMap.get(right.id);
+        if (leftScore && rightScore) {
+            return (0, analyticsPerformance_1.compareAnalyticsPerformanceScores)({
+                ...leftScore,
+                likes: left.likes,
+                comments: left.comments,
+                saves: left.saves,
+                shares: left.shares,
+                reach: left.reach,
+                impressions: left.impressions,
+                publishedTime: left.publishedTime,
+                id: left.id,
+            }, {
+                ...rightScore,
+                likes: right.likes,
+                comments: right.comments,
+                saves: right.saves,
+                shares: right.shares,
+                reach: right.reach,
+                impressions: right.impressions,
+                publishedTime: right.publishedTime,
+                id: right.id,
+            });
+        }
+        return right.performanceScore - left.performanceScore;
+    });
     const bestTime = buildHeatmap(posts.filter((post) => Boolean(post.publishedTime)));
     const platformComparison = buildPlatformComparison(posts);
     const audienceFollowerSeries = currentFollowerSeries.length
@@ -1155,7 +1423,8 @@ const getAnalyticsDashboard = async (client, userId, options = {}) => {
         keywords: extractKeywords(row.caption),
         topComments: row.topComments,
         trend: [],
-    })), platformComparison, bestTime, trendSeries, range);
+    })), platformComparison, bestTime, trendSeries, range, learningProfiles);
+    const learning = buildLearningDashboard(learningProfiles, posts.length, platformScope);
     return {
         dateRange: {
             preset: range.preset,
@@ -1181,6 +1450,7 @@ const getAnalyticsDashboard = async (client, userId, options = {}) => {
         insights,
         platformComparison,
         bestTimeToPost: bestTime,
+        learning,
     };
 };
 exports.getAnalyticsDashboard = getAnalyticsDashboard;

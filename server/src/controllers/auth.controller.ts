@@ -6,6 +6,7 @@ import {
   generateStructuredDataWithFallback,
   generateStructuredDataWithGroqFallback,
 } from '../ai/gemini';
+import { formatRetrievedBrandMemories } from '../ai/prompts/shared';
 import {
   getBrandProfileByUserId,
   getBrandProfileOwnerByUsername,
@@ -36,6 +37,11 @@ import {
   isValidNormalizedUsername,
   normalizeUsername,
 } from '../lib/username';
+import {
+  formatSemanticReferenceChunks,
+  getRelevantMemoriesForBrandDescription,
+  syncBrandProfileSemanticMemory,
+} from '../services/brandMemory.service';
 
 type AuthenticatedRequest<
   Params = Record<string, string>,
@@ -539,57 +545,6 @@ const sanitizeGeneratedBrandDescription = (value: string) =>
     .slice(0, 500)
     .trim();
 
-const buildConsoleTextSummary = (value?: string | null, previewLength = 72) => {
-  const normalized = value?.replace(/\s+/g, ' ').trim() ?? '';
-
-  if (!normalized) {
-    return {
-      present: false,
-      chars: 0,
-      preview: null as string | null,
-    };
-  }
-
-  return {
-    present: true,
-    chars: normalized.length,
-    preview:
-      normalized.length > previewLength
-        ? `${normalized.slice(0, previewLength).trimEnd()}...`
-        : normalized,
-  };
-};
-
-const summarizeIndustrySuggestionInputForConsole = (
-  input: IndustrySuggestionInput
-) => ({
-  brandName: input.brandName,
-  username: input.username?.trim() || null,
-  websiteUrl: input.websiteUrl?.trim() || null,
-  description: buildConsoleTextSummary(input.description, 88),
-  businessProblem: buildConsoleTextSummary(input.suggestionText, 88),
-  socialContext: buildConsoleTextSummary(input.socialContext, 88),
-  catalogSize: input.catalog.length,
-});
-
-const summarizeBrandDescriptionInputForConsole = (
-  input: BrandDescriptionSuggestionInput
-) => ({
-  brandName: input.brandName,
-  username: input.username?.trim() || null,
-  websiteUrl: input.websiteUrl?.trim() || null,
-  industry: input.industry.trim(),
-  primaryIndustry: input.primaryIndustry.trim(),
-  secondaryIndustries: input.secondaryIndustries,
-  secondaryCount: input.secondaryIndustries.length,
-  targetAudience: buildConsoleTextSummary(input.targetAudience, 72),
-  brandVoice: input.brandVoice.trim(),
-  socialContext: buildConsoleTextSummary(input.socialContext, 88),
-  existingDescription: buildConsoleTextSummary(input.existingDescription, 88),
-  shortInput: buildConsoleTextSummary(input.shortInput, 88),
-  language: input.language,
-});
-
 const slugifyUsernameSeed = (value: string) =>
   normalizeUsername(
     value
@@ -722,13 +677,6 @@ const buildUsernameSuggestions = async ({
   let provider: 'groq' | 'gemini' | 'fallback' = 'fallback';
   let aiCandidates: string[] = [];
 
-  console.info('[auth] username suggestion started', {
-    desiredUsername,
-    brandName,
-    fullName: fullName?.trim() || null,
-    emailLocalPart: emailLocalPart?.trim() || null,
-  });
-
   try {
     const aiSuggestion = await generateStructuredDataWithGroqFallback(
       buildUsernameSuggestionPrompt({
@@ -743,13 +691,6 @@ const buildUsernameSuggestions = async ({
 
     provider = aiSuggestion.provider;
     aiCandidates = aiSuggestion.data.suggestions;
-
-    console.info('[auth] username suggestion ai candidates ready', {
-      desiredUsername,
-      provider,
-      candidateCount: aiCandidates.length,
-      candidates: aiCandidates.slice(0, 5),
-    });
   } catch (error) {
     console.warn('[auth] username suggestion fell back to deterministic mode', {
       desiredUsername,
@@ -774,13 +715,6 @@ const buildUsernameSuggestions = async ({
   );
 
   if (initialAvailable.length >= 2) {
-    console.info('[auth] username suggestion finalized', {
-      desiredUsername,
-      provider,
-      availableCount: initialAvailable.length,
-      selectedSuggestions: initialAvailable.slice(0, 2),
-    });
-
     return {
       suggestions: initialAvailable.slice(0, 2),
       provider,
@@ -822,13 +756,6 @@ const buildUsernameSuggestions = async ({
     }
   }
 
-  console.info('[auth] username suggestion finalized', {
-    desiredUsername,
-    provider: initialAvailable.length ? provider : 'fallback',
-    availableCount: extendedCandidates.length,
-    selectedSuggestions: extendedCandidates.slice(0, 2),
-  });
-
   return {
     suggestions: extendedCandidates.slice(0, 2),
     provider: initialAvailable.length ? provider : 'fallback',
@@ -854,16 +781,6 @@ const getUsernameAvailability = async ({
 }): Promise<UsernameAvailabilityResponse> => {
   const normalizedUsername = normalizeUsername(desiredUsername);
   const emailLocalPart = getEmailLocalPart(email);
-
-  console.info('[auth] username availability started', {
-    userId,
-    requestContext,
-    desiredUsername,
-    normalizedUsername,
-    brandName: brandName?.trim() || null,
-    fullName: fullName?.trim() || null,
-    emailLocalPart: emailLocalPart?.trim() || null,
-  });
 
   const persistResult = async ({
     isAvailable,
@@ -954,14 +871,26 @@ const isUsernameConflictError = (error: unknown) =>
   );
 
 const buildBrandDescriptionSuggestionPrompt = (
-  input: BrandDescriptionSuggestionInput
+  input: BrandDescriptionSuggestionInput,
+  brandMemories: Parameters<typeof formatRetrievedBrandMemories>[0] = []
 ) => {
   const languageLabel = DICTATION_LANGUAGE_LABELS[input.language] ?? 'English';
   const secondaryIndustries = input.secondaryIndustries?.length
     ? input.secondaryIndustries.join(', ')
     : 'not provided';
+  const semanticMemorySection = formatRetrievedBrandMemories(brandMemories);
+  const socialContextChunks = formatSemanticReferenceChunks(
+    'Social media context',
+    input.socialContext,
+    4
+  );
+  const existingDescriptionChunks = formatSemanticReferenceChunks(
+    'Existing description context',
+    input.existingDescription,
+    3
+  );
 
-  return [
+  const lines = [
     'You write polished, production-ready brand descriptions for business profiles.',
     `Write the final description in ${languageLabel}.`,
     'Use the short brand note as the primary source, then strengthen it with the supporting brand context.',
@@ -982,15 +911,31 @@ const buildBrandDescriptionSuggestionPrompt = (
     `- Secondary industries: ${secondaryIndustries}`,
     `- Target audience: ${input.targetAudience?.trim() || 'not provided'}`,
     `- Brand voice: ${input.brandVoice?.trim() || 'not provided'}`,
-    `- Social media links / bios / posts: ${input.socialContext?.trim() || 'not provided'}`,
-    `- Existing description: ${input.existingDescription?.trim() || 'not provided'}`,
     `- Short brand note: ${input.shortInput.trim()}`,
     '',
     'Return JSON only in this exact shape:',
     '{',
     '  "description": "Production-ready brand description"',
     '}',
-  ].join('\n');
+  ];
+
+  if (semanticMemorySection) {
+    lines.splice(lines.length - 4, 0, '', semanticMemorySection);
+  }
+
+  if (socialContextChunks.length > 0) {
+    lines.splice(lines.length - 4, 0, '', ...socialContextChunks);
+  } else {
+    lines.splice(lines.length - 4, 0, '', '- Social media links / bios / posts: not provided');
+  }
+
+  if (existingDescriptionChunks.length > 0) {
+    lines.splice(lines.length - 4, 0, '', ...existingDescriptionChunks);
+  } else {
+    lines.splice(lines.length - 4, 0, '', '- Existing description: not provided');
+  }
+
+  return lines.join('\n');
 };
 
 const persistIndustrySuggestionEvent = async ({
@@ -1181,6 +1126,16 @@ export const saveProfile = async (
     );
     await persistBrandProfileMemoryEvent(req, previousProfile, profile);
 
+    try {
+      await syncBrandProfileSemanticMemory(client, req.user.id, profile);
+    } catch (memoryError) {
+      console.warn('[auth] failed to index brand profile semantic memory', {
+        userId: req.user.id,
+        profileId: profile.id,
+        error: memoryError instanceof Error ? memoryError.message : String(memoryError),
+      });
+    }
+
     return res.status(200).json({
       status: 'success',
       message: 'Brand profile saved successfully',
@@ -1330,12 +1285,6 @@ export const suggestIndustry = async (
 
   const requestContext = req.body.requestContext ?? 'settings';
 
-  console.info('[auth] industry suggestion started', {
-    userId: req.user.id,
-    requestContext,
-    input: summarizeIndustrySuggestionInputForConsole(req.body),
-  });
-
   try {
     const aiSuggestion = await generateStructuredDataWithFallback(
       buildIndustrySuggestionPrompt(req.body),
@@ -1361,9 +1310,6 @@ export const suggestIndustry = async (
       provider: aiSuggestion.provider,
       primaryIndustry,
       secondaryCount: secondaryIndustries.length,
-      secondaryIndustries,
-      reasoning: responsePayload.reasoning,
-      signals: responsePayload.signals,
     });
 
     try {
@@ -1394,9 +1340,6 @@ export const suggestIndustry = async (
     console.warn('[auth] industry suggestion fell back to heuristic scoring', {
       userId: req.user.id,
       requestContext,
-      selectedPrimaryIndustry: fallbackSuggestion.primaryIndustry,
-      secondaryIndustries: fallbackSuggestion.secondaryIndustries,
-      signals: fallbackSuggestion.signals,
       error:
         error instanceof ContentGenerationProvidersExhaustedError
           ? error.failures
@@ -1452,12 +1395,32 @@ export const suggestBrandDescription = async (
   console.info('[auth] brand description suggestion started', {
     userId: req.user.id,
     requestContext,
-    input: summarizeBrandDescriptionInputForConsole(req.body),
+    language: req.body.language,
+    shortInputChars: req.body.shortInput.length,
   });
 
   try {
+    let brandMemories = [] as Awaited<
+      ReturnType<typeof getRelevantMemoriesForBrandDescription>
+    >;
+
+    try {
+      const client = requireUserClient(req.accessToken);
+      brandMemories = await getRelevantMemoriesForBrandDescription(
+        client,
+        req.user.id,
+        req.body
+      );
+    } catch (memoryError) {
+      console.warn('[auth] failed to retrieve semantic brand memory for description', {
+        userId: req.user.id,
+        requestContext,
+        error: memoryError instanceof Error ? memoryError.message : String(memoryError),
+      });
+    }
+
     const aiSuggestion = await generateStructuredDataWithGroqFallback(
-      buildBrandDescriptionSuggestionPrompt(req.body),
+      buildBrandDescriptionSuggestionPrompt(req.body, brandMemories),
       brandDescriptionSuggestionResponseSchema,
       'brand-description-suggestion'
     );
@@ -1471,10 +1434,6 @@ export const suggestBrandDescription = async (
       language: req.body.language,
       provider: aiSuggestion.provider,
       descriptionChars: description.length,
-      descriptionPreview:
-        description.length > 120
-          ? `${description.slice(0, 120).trimEnd()}...`
-          : description,
     });
 
     try {

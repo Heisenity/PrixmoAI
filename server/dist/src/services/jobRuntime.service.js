@@ -9,6 +9,7 @@ const getJobCancelKey = (jobId) => (0, redis_1.buildRedisKey)('job', 'cancelled'
 const ACTIVE_JOB_RUNTIME_TTL_MS = Math.min(constants_1.JOB_RUNTIME_TTL_MS, 30 * 60000);
 const FAILED_JOB_RUNTIME_TTL_MS = Math.min(constants_1.JOB_RUNTIME_TTL_MS, 2 * 60 * 60000);
 const localJobAbortControllers = new Map();
+const JOB_CANCELLATION_POLL_INTERVAL_MS = 750;
 const withJobStateTtl = async (jobId, ttlMs = ACTIVE_JOB_RUNTIME_TTL_MS) => {
     await (0, redis_1.getRedisClient)().pexpire(getJobStateKey(jobId), ttlMs);
 };
@@ -111,9 +112,46 @@ exports.clearJobCancellation = clearJobCancellation;
 const createLocalJobCancellationSignal = (jobId) => {
     const controller = new AbortController();
     localJobAbortControllers.set(jobId, controller);
+    const cancelKey = getJobCancelKey(jobId);
+    let cancelled = false;
+    let pollInFlight = false;
+    const stopPolling = () => {
+        if (cancelled) {
+            return;
+        }
+        cancelled = true;
+        if (pollTimer) {
+            clearInterval(pollTimer);
+        }
+    };
+    const pollForCancellation = async () => {
+        if (pollInFlight || controller.signal.aborted) {
+            return;
+        }
+        pollInFlight = true;
+        try {
+            const isCancelled = await (0, redis_1.getRedisClient)().exists(cancelKey);
+            if (isCancelled && !controller.signal.aborted) {
+                controller.abort();
+                stopPolling();
+            }
+        }
+        catch {
+            // Best effort only; runtime cancellation still works through local aborts.
+        }
+        finally {
+            pollInFlight = false;
+        }
+    };
+    const pollTimer = setInterval(() => {
+        void pollForCancellation();
+    }, JOB_CANCELLATION_POLL_INTERVAL_MS);
+    pollTimer.unref?.();
+    void pollForCancellation();
     return {
         signal: controller.signal,
         cleanup: () => {
+            stopPolling();
             const current = localJobAbortControllers.get(jobId);
             if (current === controller) {
                 localJobAbortControllers.delete(jobId);

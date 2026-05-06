@@ -78,10 +78,16 @@ export const JOB_CANCELLATION_TTL_MS = Number(
 );
 export const DEFAULT_GEMINI_MODEL =
   process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+export const DEFAULT_GEMINI_EMBEDDING_MODEL =
+  process.env.GEMINI_EMBEDDING_MODEL || 'gemini-embedding-001';
 export const DEFAULT_GROQ_MODEL =
   process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
 export const GEMINI_GENERATION_TIMEOUT_MS = Number(
   process.env.GEMINI_GENERATION_TIMEOUT_MS || 25_000
+);
+export const GEMINI_EMBEDDING_DIMENSION = 768;
+export const GEMINI_EMBEDDING_TIMEOUT_MS = Number(
+  process.env.GEMINI_EMBEDDING_TIMEOUT_MS || 12_000
 );
 export const GEMINI_FALLBACK_GRACE_MS = Number(
   process.env.GEMINI_FALLBACK_GRACE_MS || 9_000
@@ -173,6 +179,47 @@ export const isMetaInstagramOAuthConfigured = Boolean(
 
 export const CAPTION_VARIATION_COUNT = 3;
 export const HASHTAG_VARIATION_COUNT = 15;
+export const BRAND_MEMORY_MATCH_COUNT = Number(
+  process.env.BRAND_MEMORY_MATCH_COUNT || 7
+);
+export const BRAND_MEMORY_MIN_SIMILARITY = Number(
+  process.env.BRAND_MEMORY_MIN_SIMILARITY || 0.68
+);
+export const BRAND_MEMORY_VECTOR_CANDIDATE_COUNT = Number(
+  process.env.BRAND_MEMORY_VECTOR_CANDIDATE_COUNT || 24
+);
+export const BRAND_MEMORY_KEYWORD_CANDIDATE_COUNT = Number(
+  process.env.BRAND_MEMORY_KEYWORD_CANDIDATE_COUNT || 24
+);
+export const BRAND_MEMORY_RERANK_CANDIDATE_COUNT = Number(
+  process.env.BRAND_MEMORY_RERANK_CANDIDATE_COUNT || 10
+);
+export const TAVILY_SEARCH_API_BASE_URL =
+  trimTrailingSlash(process.env.TAVILY_SEARCH_API_BASE_URL || 'https://api.tavily.com');
+export const TAVILY_SEARCH_TIMEOUT_MS = Number(
+  process.env.TAVILY_SEARCH_TIMEOUT_MS || 12_000
+);
+export const TAVILY_SEARCH_QUERY_LIMIT = Number(
+  process.env.TAVILY_SEARCH_QUERY_LIMIT || 3
+);
+export const TAVILY_SEARCH_RESULT_LIMIT = Number(
+  process.env.TAVILY_SEARCH_RESULT_LIMIT || 6
+);
+export const APIFY_API_BASE_URL =
+  trimTrailingSlash(process.env.APIFY_API_BASE_URL || 'https://api.apify.com');
+export const APIFY_TIMEOUT_MS = Number(process.env.APIFY_TIMEOUT_MS || 45_000);
+export const APIFY_RESULT_LIMIT = Number(
+  process.env.APIFY_RESULT_LIMIT || 12
+);
+export const TREND_RESEARCH_CACHE_TTL_MS = Number(
+  process.env.TREND_RESEARCH_CACHE_TTL_MS || 10 * 60_000
+);
+export const TREND_RESEARCH_MAX_CANDIDATES = Number(
+  process.env.TREND_RESEARCH_MAX_CANDIDATES || 20
+);
+export const TREND_RESEARCH_MAX_INSIGHTS = Number(
+  process.env.TREND_RESEARCH_MAX_INSIGHTS || 6
+);
 
 export const FEATURE_KEYS = {
   contentGeneration: 'content_generation',
@@ -284,6 +331,18 @@ export const SCHEDULER_PUBLISH_JOB_CONCURRENCY = Number(
 );
 export const ANALYTICS_SYNC_JOB_CONCURRENCY = Number(
   process.env.ANALYTICS_SYNC_JOB_CONCURRENCY || 4
+);
+export const ANALYTICS_LEARNING_JOB_CONCURRENCY = Number(
+  process.env.ANALYTICS_LEARNING_JOB_CONCURRENCY || 2
+);
+export const ANALYTICS_LEARNING_LOOKBACK_DAYS = Number(
+  process.env.ANALYTICS_LEARNING_LOOKBACK_DAYS || 120
+);
+export const ANALYTICS_LEARNING_MIN_POSTS = Number(
+  process.env.ANALYTICS_LEARNING_MIN_POSTS || 6
+);
+export const ANALYTICS_LEARNING_MAX_PATTERNS = Number(
+  process.env.ANALYTICS_LEARNING_MAX_PATTERNS || 4
 );
 
 export const BILLING_PLAN_CATALOG: Record<PlanType, BillingPlan> = {

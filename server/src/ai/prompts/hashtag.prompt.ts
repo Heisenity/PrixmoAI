@@ -1,10 +1,21 @@
 import { HASHTAG_VARIATION_COUNT } from '../../config/constants';
-import type { BrandProfile, ProductInput } from '../../types';
-import { formatBrandContext, formatProductContext } from './shared';
+import type {
+  BrandMemoryMatch,
+  BrandProfile,
+  ProductInput,
+  RealtimeTrendIntelligence,
+} from '../../types';
+import {
+  formatBrandContext,
+  formatProductContext,
+  formatTrendIntelligence,
+} from './shared';
 
 export const buildHashtagPrompt = (
   brandProfile: BrandProfile | null,
-  productInput: ProductInput
+  productInput: ProductInput,
+  brandMemories?: BrandMemoryMatch[],
+  trendIntelligence?: RealtimeTrendIntelligence | null
 ): string =>
   [
     `Return exactly ${HASHTAG_VARIATION_COUNT} hashtags as JSON only.`,
@@ -13,6 +24,9 @@ export const buildHashtagPrompt = (
     'Infer the business domain only from the provided context.',
     'Use the brand/business name only when the context explicitly provides one.',
     'Mix broad discovery hashtags with niche conversion hashtags that match the product, audience, and platform.',
-    formatBrandContext(brandProfile),
+    'Favor live, relevant tags suggested by current trend intelligence when they genuinely fit the request.',
+    'Never include spammy, unsafe, sexual, hateful, political, or irrelevant hashtags.',
+    formatBrandContext(brandProfile, brandMemories),
     formatProductContext(productInput),
+    formatTrendIntelligence(trendIntelligence),
   ].join('\n\n');

@@ -31,9 +31,11 @@ export const useAnalyticsDashboard = (filters: AnalyticsDashboardFilters) => {
   const [dashboard, setDashboard] = useState<AnalyticsDashboard | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isLearningRefreshing, setIsLearningRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastUpdatedTime, setLastUpdatedTime] = useState<string | null>(null);
   const cacheRef = useRef<Record<string, AnalyticsDashboard>>({});
+  const delayedLearningFetchRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const resolveFilters = useCallback(
     (overrides?: Partial<AnalyticsDashboardFilters>): AnalyticsDashboardFilters => ({
@@ -46,7 +48,11 @@ export const useAnalyticsDashboard = (filters: AnalyticsDashboardFilters) => {
   const fetchDashboard = useCallback(
     async (
       overrides?: Partial<AnalyticsDashboardFilters>,
-      options?: { cacheBust?: boolean; setAsCurrent?: boolean }
+      options?: {
+        cacheBust?: boolean;
+        setAsCurrent?: boolean;
+        updateLastUpdated?: boolean;
+      }
     ) => {
       if (!token) {
         return null;
@@ -75,7 +81,9 @@ export const useAnalyticsDashboard = (filters: AnalyticsDashboardFilters) => {
 
       if (options?.setAsCurrent !== false) {
         setDashboard(nextDashboard);
-        setLastUpdatedTime(new Date().toISOString());
+        if (options?.updateLastUpdated !== false) {
+          setLastUpdatedTime(new Date().toISOString());
+        }
         setError(null);
       }
 
@@ -120,13 +128,48 @@ export const useAnalyticsDashboard = (filters: AnalyticsDashboardFilters) => {
   );
 
   const refresh = useCallback(
-    async (options?: { sync?: boolean }) => {
+    async (options?: { sync?: boolean; learningOnly?: boolean }) => {
       if (!token) {
         return;
       }
 
       const isManualRefresh = Boolean(options?.sync);
+      const isLearningOnlyRefresh = Boolean(options?.learningOnly);
+      const nextFilters = resolveFilters();
       const cachedEntry = getCachedDashboardEntry();
+
+      if (isLearningOnlyRefresh) {
+        setIsLearningRefreshing(true);
+
+        try {
+          await apiRequest<{
+            postsAnalyzed: number;
+            profilesUpdated: number;
+            updatedPlatforms: string[];
+          }>('/api/analytics/learning/refresh', {
+            method: 'POST',
+            token,
+            body: {
+              platform: nextFilters.platform === 'all' ? undefined : nextFilters.platform,
+            },
+          });
+
+          await fetchDashboard(undefined, {
+            cacheBust: true,
+            updateLastUpdated: false,
+          });
+        } catch (dashboardError) {
+          setError(
+            dashboardError instanceof Error
+              ? dashboardError.message
+              : 'Failed to refresh analytics learning'
+          );
+        } finally {
+          setIsLearningRefreshing(false);
+        }
+
+        return;
+      }
 
       if (
         !isManualRefresh &&
@@ -148,21 +191,31 @@ export const useAnalyticsDashboard = (filters: AnalyticsDashboardFilters) => {
 
       try {
         if (isManualRefresh) {
-          void apiRequest<{ postsSynced: number }>('/api/analytics/sync', {
+          await apiRequest<{ postsSynced: number }>('/api/analytics/sync', {
             method: 'POST',
             token,
-          })
-            .then(() => fetchDashboard(undefined, { cacheBust: true }))
-            .catch((syncError) => {
-              setError(
-                syncError instanceof Error
-                  ? syncError.message
-                  : 'Failed to sync analytics dashboard'
-              );
-            });
+            body: {
+              awaitLearning: false,
+            },
+          });
         }
 
         await fetchDashboard(undefined, { cacheBust: isManualRefresh });
+
+        if (isManualRefresh) {
+          if (delayedLearningFetchRef.current) {
+            clearTimeout(delayedLearningFetchRef.current);
+          }
+
+          delayedLearningFetchRef.current = setTimeout(() => {
+            void fetchDashboard(undefined, {
+              cacheBust: true,
+              updateLastUpdated: false,
+            }).finally(() => {
+              delayedLearningFetchRef.current = null;
+            });
+          }, 2200);
+        }
       } catch (dashboardError) {
         setError(
           dashboardError instanceof Error
@@ -177,7 +230,7 @@ export const useAnalyticsDashboard = (filters: AnalyticsDashboardFilters) => {
         }
       }
     },
-    [fetchDashboard, getCachedDashboardEntry, token]
+    [fetchDashboard, getCachedDashboardEntry, resolveFilters, token]
   );
 
   useEffect(() => {
@@ -229,6 +282,15 @@ export const useAnalyticsDashboard = (filters: AnalyticsDashboardFilters) => {
     };
   }, [fetchDashboard, getCachedDashboardEntry, token]);
 
+  useEffect(
+    () => () => {
+      if (delayedLearningFetchRef.current) {
+        clearTimeout(delayedLearningFetchRef.current);
+      }
+    },
+    []
+  );
+
   const displayedLastUpdatedTime = useMemo(
     () => lastUpdatedTime ?? dashboard?.lastUpdatedAt ?? null,
     [dashboard?.lastUpdatedAt, lastUpdatedTime]
@@ -238,6 +300,7 @@ export const useAnalyticsDashboard = (filters: AnalyticsDashboardFilters) => {
     dashboard,
     isLoading,
     isRefreshing,
+    isLearningRefreshing,
     lastUpdatedTime: displayedLastUpdatedTime,
     error,
     refresh,

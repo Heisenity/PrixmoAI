@@ -10,6 +10,7 @@ import {
   saveGeneratedImage,
   trackImageGenerationUsage,
 } from '../db/queries/images';
+import { getGeneratedContentById } from '../db/queries/content';
 import { requireUserClient } from '../db/supabase';
 import type {
   GenerateImageInput,
@@ -35,6 +36,10 @@ import {
 import { storeGeneratedImageInR2 } from '../services/r2Storage.service';
 import { enqueueImageGenerationJob } from '../services/imageGenerationQueue.service';
 import { invalidateAnalyticsRuntimeCache } from '../services/runtimeCache.service';
+import {
+  getRelevantMemoriesForImageGeneration,
+  syncGeneratedImageSemanticMemory,
+} from '../services/brandMemory.service';
 
 type AuthenticatedRequest<
   Params = Record<string, string>,
@@ -186,11 +191,53 @@ export const generateImage = async (
     });
 
     const client = requireUserClient(req.accessToken);
-    const brandProfile = await getBrandProfileByUserId(client, req.user.id);
+    const [brandProfile, linkedContent] = await Promise.all([
+      getBrandProfileByUserId(client, req.user.id),
+      req.body.contentId
+        ? getGeneratedContentById(client, req.user.id, req.body.contentId).catch(
+            () => null
+          )
+        : Promise.resolve(null),
+    ]);
     const generationInput = {
       ...req.body,
       ...resolveBrandPreference(brandProfile, req.body.useBrandName),
     };
+    const memoryQueryInput = {
+      brandName: generationInput.brandName ?? null,
+      useBrandName: generationInput.useBrandName,
+      productName: generationInput.productName,
+      productDescription:
+        generationInput.productDescription ??
+        generationInput.prompt ??
+        linkedContent?.productDescription ??
+        null,
+      platform: linkedContent?.platform ?? null,
+      goal: linkedContent?.goal ?? null,
+      tone: linkedContent?.tone ?? null,
+      audience: linkedContent?.audience ?? null,
+      keywords: linkedContent?.keywords ?? [],
+    };
+    let brandMemories = [] as Awaited<
+      ReturnType<typeof getRelevantMemoriesForImageGeneration>
+    >;
+
+    try {
+      brandMemories = await getRelevantMemoriesForImageGeneration(
+        client,
+        req.user.id,
+        brandProfile,
+        memoryQueryInput
+      );
+    } catch (memoryError) {
+      console.warn('[image] failed to retrieve semantic brand memory', {
+        userId: req.user.id,
+        error:
+          memoryError instanceof Error
+            ? memoryError.message
+            : String(memoryError),
+      });
+    }
     const runtimePolicy =
       req.imageRuntimePolicy ?? resolveImageRuntimePolicy('free', 0);
     const { jobId, result } = await enqueueImageGenerationJob(
@@ -199,6 +246,21 @@ export const generateImage = async (
         data: {
           userId: req.user.id,
           brandProfile,
+          brandMemories,
+          contentContext: linkedContent
+            ? {
+                brandName: generationInput.brandName ?? null,
+                useBrandName: generationInput.useBrandName,
+                productName: linkedContent.productName,
+                productDescription:
+                  linkedContent.productDescription ?? generationInput.prompt ?? null,
+                platform: linkedContent.platform ?? null,
+                goal: linkedContent.goal ?? null,
+                tone: linkedContent.tone ?? null,
+                audience: linkedContent.audience ?? null,
+                keywords: linkedContent.keywords ?? [],
+              }
+            : memoryQueryInput,
           input: generationInput,
         },
       },
@@ -227,6 +289,22 @@ export const generateImage = async (
       storageContentType: storedImageAsset?.contentType ?? null,
       storageSizeBytes: storedImageAsset?.sizeBytes ?? null,
     });
+
+    try {
+      await syncGeneratedImageSemanticMemory(client, req.user.id, image, {
+        brandProfile,
+        productName: generationInput.productName,
+        productDescription: generationInput.productDescription ?? null,
+        backgroundStyle: generationInput.backgroundStyle ?? null,
+        sourceImageUrl: generationInput.sourceImageUrl ?? null,
+      });
+    } catch (memoryError) {
+      console.warn('[image] failed to index generated image memory', {
+        userId: req.user.id,
+        imageId: image.id,
+        error: memoryError instanceof Error ? memoryError.message : String(memoryError),
+      });
+    }
 
     throwIfRequestCancelled(
       cancellation.signal,

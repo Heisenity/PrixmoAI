@@ -10,7 +10,7 @@ import {
   Settings,
   Sparkles,
 } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import { APP_NAME, PLAN_DASHBOARD_DETAILS } from '../../lib/constants';
 import { getAvatarCandidates } from '../../lib/profile';
@@ -46,12 +46,20 @@ export const Sidebar = ({ collapsed, onToggleCollapse }: SidebarProps) => {
   const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
   const profileMenuRef = useRef<HTMLDivElement | null>(null);
   const { prompt, dismissPrompt } = useUpgradePrompt();
-  const avatarCandidates = getAvatarCandidates(
-    profile?.avatarUrl,
-    user?.user_metadata && typeof user.user_metadata === 'object'
-      ? (user.user_metadata as Record<string, unknown>)
-      : null
-  );
+  const avatarCandidates = useMemo(() => {
+    const metadataSources: Array<Record<string, unknown> | null> = [
+      user?.user_metadata && typeof user.user_metadata === 'object'
+        ? (user.user_metadata as Record<string, unknown>)
+        : null,
+      ...(user?.identities ?? []).map((identity) =>
+        identity.identity_data && typeof identity.identity_data === 'object'
+          ? (identity.identity_data as Record<string, unknown>)
+          : null
+      ),
+    ];
+
+    return getAvatarCandidates(profile?.avatarUrl, metadataSources);
+  }, [profile?.avatarUrl, user?.identities, user?.user_metadata]);
   const currentPlan = subscription?.plan ?? catalog?.currentSubscription.plan ?? 'free';
   const planDetails = PLAN_DASHBOARD_DETAILS[currentPlan];
   const isUsageLoading = isBillingLoading || isAnalyticsLoading;
@@ -142,7 +150,9 @@ export const Sidebar = ({ collapsed, onToggleCollapse }: SidebarProps) => {
                 <strong>{profile?.fullName || 'Workspace Owner'}</strong>
                 <CurrentPlanBadge plan={currentPlan} className="sidebar__plan-badge" />
               </div>
-              <span>{profile?.industry || 'Open workspace options'}</span>
+              <span>
+                {profile?.primaryIndustry || 'Open workspace options'}
+              </span>
             </div>
 
             <nav className="sidebar__profile-menu-links" aria-label="Workspace navigation">
@@ -199,7 +209,9 @@ export const Sidebar = ({ collapsed, onToggleCollapse }: SidebarProps) => {
             <div className="sidebar__profile-title">
               <strong>{profile?.fullName || 'Workspace Owner'}</strong>
             </div>
-            <p>{profile?.industry || 'Open workspace options'}</p>
+            <p>
+              {profile?.primaryIndustry || 'Open workspace options'}
+            </p>
             <div className="sidebar__profile-usage" aria-label="Current usage left">
               <span>{usageSummary}</span>
             </div>

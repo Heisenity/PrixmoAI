@@ -1,10 +1,11 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.deleteContent = exports.getContentHistory = exports.generateContent = void 0;
+exports.recommendScheduleCaption = exports.submitContentFeedback = exports.deleteContent = exports.getContentHistory = exports.generateContent = void 0;
 const gemini_1 = require("../ai/gemini");
 const constants_1 = require("../config/constants");
 const brandProfiles_1 = require("../db/queries/brandProfiles");
 const content_1 = require("../db/queries/content");
+const brandMemory_service_1 = require("../services/brandMemory.service");
 const subscriptions_1 = require("../db/queries/subscriptions");
 const supabase_1 = require("../db/supabase");
 const requestCancellation_1 = require("../lib/requestCancellation");
@@ -12,6 +13,8 @@ const generatedAssetPayloads_1 = require("../lib/generatedAssetPayloads");
 const r2Storage_service_1 = require("../services/r2Storage.service");
 const contentGenerationQueue_service_1 = require("../services/contentGenerationQueue.service");
 const runtimeCache_service_1 = require("../services/runtimeCache.service");
+const brandMemory_service_2 = require("../services/brandMemory.service");
+const contentRecommendation_service_1 = require("../services/contentRecommendation.service");
 const parsePositiveInt = (value, fallback) => {
     if (typeof value !== 'string') {
         return fallback;
@@ -74,12 +77,23 @@ const generateContent = async (req, res) => {
             ...req.body,
             ...resolveBrandPreference(brandProfile, req.body.useBrandName),
         };
+        let brandMemories = [];
+        try {
+            brandMemories = await (0, brandMemory_service_2.getRelevantMemoriesForContentGeneration)(client, req.user.id, brandProfile, generationInput);
+        }
+        catch (memoryError) {
+            console.warn('[content-controller] failed to retrieve semantic brand memory', {
+                userId: req.user.id,
+                error: memoryError instanceof Error ? memoryError.message : String(memoryError),
+            });
+        }
         const plan = subscription?.plan ?? 'free';
         const reelScriptLimit = (0, subscriptions_1.getPlanFeatureLimit)(plan, constants_1.FEATURE_KEYS.reelScriptGeneration);
         const includeReelScript = reelScriptLimit === null || reelScriptUsageCount < reelScriptLimit;
         const { jobId, result: { contentPack, provider }, } = await (0, contentGenerationQueue_service_1.enqueueContentGenerationJob)({
             userId: req.user.id,
             brandProfile,
+            brandMemories,
             input: generationInput,
             includeReelScript,
         }, cancellation.signal);
@@ -109,6 +123,16 @@ const generateContent = async (req, res) => {
             storageSizeBytes: storedContentAsset?.sizeBytes ?? null,
             ...contentPack,
         });
+        try {
+            await (0, brandMemory_service_2.syncGeneratedContentSemanticMemory)(client, req.user.id, content);
+        }
+        catch (memoryError) {
+            console.warn('[content-controller] failed to index generated content memory', {
+                userId: req.user.id,
+                contentId: content.id,
+                error: memoryError instanceof Error ? memoryError.message : String(memoryError),
+            });
+        }
         (0, requestCancellation_1.throwIfRequestCancelled)(cancellation.signal, 'Content generation cancelled by user.');
         await (0, content_1.trackContentGenerationUsage)(client, req.user.id, {
             contentId: content.id,
@@ -234,3 +258,86 @@ const deleteContent = async (req, res) => {
     }
 };
 exports.deleteContent = deleteContent;
+const submitContentFeedback = async (req, res) => {
+    if (!req.user?.id) {
+        return res.status(401).json({
+            status: 'fail',
+            message: 'Unauthorized',
+        });
+    }
+    try {
+        const client = (0, supabase_1.requireUserClient)(req.accessToken);
+        const brandProfile = await (0, brandProfiles_1.getBrandProfileByUserId)(client, req.user.id);
+        const feedbackEvent = await (0, brandMemory_service_1.recordBrandMemoryFeedback)(client, {
+            userId: req.user.id,
+            brandProfileId: brandProfile?.id ?? null,
+            sourceTable: req.body.sourceTable,
+            sourceId: req.body.sourceId,
+            sourceKey: req.body.sourceKey ?? 'primary',
+            memoryType: req.body.memoryType,
+            eventType: req.body.eventType,
+            platform: req.body.platform ?? null,
+            contentId: req.body.contentId ?? null,
+            generatedImageId: req.body.generatedImageId ?? null,
+            scheduledPostId: req.body.scheduledPostId ?? null,
+            scheduledItemId: req.body.scheduledItemId ?? null,
+            intensity: req.body.intensity ?? 1,
+            wasAiRecommended: req.body.wasAiRecommended ?? false,
+            metadata: req.body.metadata ?? {},
+        });
+        return res.status(200).json({
+            status: 'success',
+            message: 'Feedback recorded successfully',
+            data: feedbackEvent,
+        });
+    }
+    catch (error) {
+        return res.status(500).json({
+            status: 'error',
+            message: error instanceof Error
+                ? error.message
+                : 'Failed to record memory feedback',
+        });
+    }
+};
+exports.submitContentFeedback = submitContentFeedback;
+const recommendScheduleCaption = async (req, res) => {
+    if (!req.user?.id) {
+        return res.status(401).json({
+            status: 'fail',
+            message: 'Unauthorized',
+        });
+    }
+    try {
+        const client = (0, supabase_1.requireUserClient)(req.accessToken);
+        const [brandProfile, content] = await Promise.all([
+            (0, brandProfiles_1.getBrandProfileByUserId)(client, req.user.id),
+            (0, content_1.getGeneratedContentById)(client, req.user.id, req.params.id),
+        ]);
+        if (!content) {
+            return res.status(404).json({
+                status: 'fail',
+                message: 'Content item not found',
+            });
+        }
+        const recommendation = await (0, contentRecommendation_service_1.recommendCaptionForScheduling)(client, {
+            userId: req.user.id,
+            brandProfile,
+            content,
+            requestContext: req.body.requestContext ?? 'scheduler',
+        });
+        return res.status(200).json({
+            status: 'success',
+            data: recommendation,
+        });
+    }
+    catch (error) {
+        return res.status(500).json({
+            status: 'error',
+            message: error instanceof Error
+                ? error.message
+                : 'Failed to recommend a caption for scheduling',
+        });
+    }
+};
+exports.recommendScheduleCaption = recommendScheduleCaption;

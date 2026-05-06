@@ -20,6 +20,7 @@ import {
   updateGenerateConversation,
 } from '../db/queries/generateWorkspace';
 import {
+  getGeneratedContentById,
   getReelScriptDailyUsageCount,
   saveGeneratedContent,
   trackContentGenerationUsage,
@@ -58,7 +59,14 @@ import {
 } from '../services/r2Storage.service';
 import { enqueueContentGenerationJob } from '../services/contentGenerationQueue.service';
 import { enqueueImageGenerationJob } from '../services/imageGenerationQueue.service';
+import { getJobRuntimeSnapshot } from '../services/jobRuntime.service';
 import { invalidateAnalyticsRuntimeCache } from '../services/runtimeCache.service';
+import {
+  getRelevantMemoriesForContentGeneration,
+  getRelevantMemoriesForImageGeneration,
+  syncGeneratedContentSemanticMemory,
+  syncGeneratedImageSemanticMemory,
+} from '../services/brandMemory.service';
 
 type AuthenticatedRequest<
   Params = Record<string, string>,
@@ -70,6 +78,96 @@ type AuthenticatedRequest<
   accessToken?: string;
   imageRuntimePolicy?: ReturnType<typeof resolveImageRuntimePolicy>;
   imageRateLimitReservation?: string;
+};
+
+type WorkspaceGenerationProgressPhase =
+  | 'preparing'
+  | 'queued'
+  | 'researching'
+  | 'writing'
+  | 'stitching'
+  | 'syncing'
+  | 'done';
+
+type WorkspaceGenerationProgressPayload = {
+  phase: WorkspaceGenerationProgressPhase;
+  message: string;
+  progress?: number;
+  provider?: string | null;
+};
+
+const createWorkspaceGenerationStream = (res: Response) => {
+  let closed = false;
+
+  res.status(200);
+  res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.flushHeaders?.();
+
+  res.once('close', () => {
+    closed = true;
+  });
+
+  const send = (event: string, payload: unknown) => {
+    if (closed || res.writableEnded) {
+      return;
+    }
+
+    res.write(`event: ${event}\n`);
+    res.write(`data: ${JSON.stringify(payload)}\n\n`);
+  };
+
+  return {
+    progress: (payload: WorkspaceGenerationProgressPayload) =>
+      send('progress', {
+        type: 'progress',
+        ...payload,
+        sentAt: new Date().toISOString(),
+      }),
+    complete: (payload: unknown) => {
+      send('complete', {
+        type: 'complete',
+        ...(
+          payload && typeof payload === 'object'
+            ? payload
+            : { data: payload }
+        ),
+        sentAt: new Date().toISOString(),
+      });
+      res.end();
+    },
+    fail: (message: string) => {
+      send('error', {
+        type: 'error',
+        message,
+        sentAt: new Date().toISOString(),
+      });
+      res.end();
+    },
+  };
+};
+
+const resolveCopyRuntimePhase = (
+  message: string | null | undefined,
+  progress: number
+): WorkspaceGenerationProgressPhase => {
+  const normalized = (message ?? '').toLowerCase();
+
+  if (/queued|queue/.test(normalized) || progress < 15) {
+    return 'queued';
+  }
+
+  if (/research|trend|social|web/.test(normalized) || progress < 35) {
+    return 'researching';
+  }
+
+  if (/provider|generating|generation|content/.test(normalized) || progress < 75) {
+    return 'writing';
+  }
+
+  return 'stitching';
 };
 
 const trimText = (value: string, maxLength = 120) => {
@@ -428,8 +526,81 @@ export const generateWorkspaceCopy = async (
 
   const cancellation = createRequestCancellation(req, res);
   const startedAt = Date.now();
+  const progressStream =
+    req.path.endsWith('/stream') || req.originalUrl.includes('/copy/stream')
+      ? createWorkspaceGenerationStream(res)
+      : null;
+  let runtimeProgressTimer: NodeJS.Timeout | null = null;
+  let runtimeProgressInFlight = false;
+  let lastRuntimeProgressSignature = '';
+  const emitProgress = (payload: WorkspaceGenerationProgressPayload) => {
+    progressStream?.progress(payload);
+  };
+  const stopRuntimeProgressPolling = () => {
+    if (!runtimeProgressTimer) {
+      return;
+    }
+
+    clearInterval(runtimeProgressTimer);
+    runtimeProgressTimer = null;
+  };
+  const startRuntimeProgressPolling = (jobId: string) => {
+    if (!progressStream) {
+      return;
+    }
+
+    const pollRuntime = async () => {
+      if (runtimeProgressInFlight) {
+        return;
+      }
+
+      runtimeProgressInFlight = true;
+
+      try {
+        const snapshot = await getJobRuntimeSnapshot(jobId);
+
+        if (!snapshot) {
+          return;
+        }
+
+        const signature = [
+          snapshot.status,
+          snapshot.progress,
+          snapshot.message ?? '',
+          snapshot.currentProvider ?? '',
+        ].join('|');
+
+        if (signature === lastRuntimeProgressSignature) {
+          return;
+        }
+
+        lastRuntimeProgressSignature = signature;
+        emitProgress({
+          phase: resolveCopyRuntimePhase(snapshot.message, snapshot.progress),
+          message: snapshot.message || 'PrixmoAI is working on the content pack.',
+          progress: snapshot.progress,
+          provider: snapshot.currentProvider ?? null,
+        });
+      } catch {
+        // Runtime polling is best-effort; the main generation request still owns the result.
+      } finally {
+        runtimeProgressInFlight = false;
+      }
+    };
+
+    void pollRuntime();
+    runtimeProgressTimer = setInterval(() => {
+      void pollRuntime();
+    }, 850);
+    runtimeProgressTimer.unref?.();
+  };
 
   try {
+    emitProgress({
+      phase: 'preparing',
+      progress: 3,
+      message: 'Starting the content generation request.',
+    });
     console.info('[workspace-copy] Generate content request started', {
       userId: req.user.id,
       productName: req.body.productName,
@@ -438,6 +609,11 @@ export const generateWorkspaceCopy = async (
       goal: req.body.goal ?? null,
     });
 
+    emitProgress({
+      phase: 'preparing',
+      progress: 8,
+      message: 'Checking the active thread, brand profile, and plan access.',
+    });
     const client = requireUserClient(req.accessToken);
     const existingConversation = await ensureConversation(
       client,
@@ -453,6 +629,36 @@ export const generateWorkspaceCopy = async (
       ...req.body,
       ...resolveBrandPreference(brandProfile, req.body.useBrandName),
     };
+    let brandMemories = [] as Awaited<
+      ReturnType<typeof getRelevantMemoriesForContentGeneration>
+    >;
+
+    emitProgress({
+      phase: 'preparing',
+      progress: 16,
+      message: 'Pulling brand memory and past signals for this brief.',
+    });
+    try {
+      brandMemories = await getRelevantMemoriesForContentGeneration(
+        client,
+        req.user.id,
+        brandProfile,
+        generationInput
+      );
+    } catch (memoryError) {
+      console.warn('[workspace-copy] failed to retrieve semantic brand memory', {
+        userId: req.user.id,
+        error: memoryError instanceof Error ? memoryError.message : String(memoryError),
+      });
+    }
+
+    emitProgress({
+      phase: 'preparing',
+      progress: 22,
+      message: brandMemories.length
+        ? `Found ${brandMemories.length} brand memory signal${brandMemories.length === 1 ? '' : 's'} to guide the copy.`
+        : 'No strong brand-memory match found, so PrixmoAI is using the current brief.',
+    });
     const plan = subscription?.plan ?? 'free';
     const reelScriptLimit = getPlanFeatureLimit(
       plan,
@@ -467,11 +673,27 @@ export const generateWorkspaceCopy = async (
       {
         userId: req.user.id,
         brandProfile,
+        brandMemories,
         input: generationInput,
         includeReelScript,
       },
-      cancellation.signal
+      cancellation.signal,
+      async (queuedJobId) => {
+        emitProgress({
+          phase: 'queued',
+          progress: 28,
+          message: 'Queued the generation job and started live backend tracking.',
+        });
+        startRuntimeProgressPolling(queuedJobId);
+      }
     );
+    stopRuntimeProgressPolling();
+    emitProgress({
+      phase: 'stitching',
+      progress: 78,
+      provider,
+      message: `Generated the content with ${provider}. Saving the result now.`,
+    });
     console.info('[workspace-copy] Queue job resolved', {
       userId: req.user.id,
       jobId,
@@ -485,6 +707,12 @@ export const generateWorkspaceCopy = async (
       'Content generation cancelled by user.'
     );
 
+    emitProgress({
+      phase: 'stitching',
+      progress: 84,
+      provider,
+      message: 'Creating or updating the workspace thread.',
+    });
     const conversation =
       existingConversation ??
       (await createGenerateConversation(client, req.user.id, {
@@ -501,6 +729,12 @@ export const generateWorkspaceCopy = async (
       cancellation.signal,
       'Content generation cancelled by user.'
     );
+    emitProgress({
+      phase: 'stitching',
+      progress: 88,
+      provider,
+      message: 'Saving the generated copy securely.',
+    });
     const storedContentAsset = await storeGeneratedContentInR2({
       userId: req.user.id,
       productName: generationInput.productName,
@@ -528,10 +762,32 @@ export const generateWorkspaceCopy = async (
       ...contentPack,
     });
 
+    emitProgress({
+      phase: 'syncing',
+      progress: 92,
+      provider,
+      message: 'Updating brand memory with the new generated content.',
+    });
+    try {
+      await syncGeneratedContentSemanticMemory(client, req.user.id, content);
+    } catch (memoryError) {
+      console.warn('[workspace-copy] failed to index generated content memory', {
+        userId: req.user.id,
+        contentId: content.id,
+        error: memoryError instanceof Error ? memoryError.message : String(memoryError),
+      });
+    }
+
     throwIfRequestCancelled(
       cancellation.signal,
       'Content generation cancelled by user.'
     );
+    emitProgress({
+      phase: 'syncing',
+      progress: 95,
+      provider,
+      message: 'Writing the assistant response into the conversation.',
+    });
     const userMessage = await createGenerateMessage(client, req.user.id, {
       conversationId: conversation.id,
       role: 'user',
@@ -559,6 +815,12 @@ export const generateWorkspaceCopy = async (
       cancellation.signal,
       'Content generation cancelled by user.'
     );
+    emitProgress({
+      phase: 'syncing',
+      progress: 97,
+      provider,
+      message: 'Attaching captions, hashtags, and script assets to the thread.',
+    });
     await createGeneratedAssets(client, req.user.id, {
       conversationId: conversation.id,
       messageId: assistantMessage.id,
@@ -566,11 +828,15 @@ export const generateWorkspaceCopy = async (
         {
           assetType: 'copy',
           payload: {
+            contentId: content.id,
+            productName: content.productName,
+            productDescription: content.productDescription,
             captions: content.captions,
             platform: content.platform,
             goal: content.goal,
             tone: content.tone,
             audience: content.audience,
+            keywords: content.keywords,
           },
         },
         {
@@ -634,6 +900,12 @@ export const generateWorkspaceCopy = async (
         productName: generationInput.productName,
       }, `reel-script-generation:${content.id}`);
     }
+    emitProgress({
+      phase: 'syncing',
+      progress: 99,
+      provider,
+      message: 'Refreshing analytics and loading the final thread.',
+    });
     await invalidateAnalyticsRuntimeCache(req.user.id);
 
     const thread = await getGenerateConversationThread(
@@ -651,15 +923,23 @@ export const generateWorkspaceCopy = async (
       durationMs: Date.now() - startedAt,
     });
 
-    return res.status(200).json({
+    const responsePayload = {
       status: 'success',
       message: 'Content generated successfully',
       data: thread,
       meta: {
         jobId,
       },
-    });
+    };
+
+    if (progressStream) {
+      progressStream.complete(responsePayload);
+      return;
+    }
+
+    return res.status(200).json(responsePayload);
   } catch (error) {
+    stopRuntimeProgressPolling();
     if (isRequestCancelledError(error)) {
       console.info('[workspace-copy] Generate content request cancelled', {
         userId: req.user?.id ?? 'unknown-user',
@@ -669,19 +949,29 @@ export const generateWorkspaceCopy = async (
     }
 
     logWorkspaceCopyFailure(req.user?.id ?? 'unknown-user', error);
+    const errorMessage =
+      error instanceof ContentGenerationProvidersExhaustedError
+        ? error.message
+        : error instanceof Error
+        ? error.message
+        : 'Failed to generate content';
+
+    if (progressStream) {
+      progressStream.fail(errorMessage);
+      return;
+    }
+
     return res.status(500).json({
       status: 'error',
-      message:
-        error instanceof ContentGenerationProvidersExhaustedError
-          ? error.message
-          : error instanceof Error
-          ? error.message
-          : 'Failed to generate content',
+      message: errorMessage,
     });
   } finally {
+    stopRuntimeProgressPolling();
     cancellation.cleanup();
   }
 };
+
+export const generateWorkspaceCopyStream = generateWorkspaceCopy;
 
 export const generateWorkspaceImage = async (
   req: AuthenticatedRequest<{}, unknown, GenerateConversationImageInput>,
@@ -705,16 +995,54 @@ export const generateWorkspaceImage = async (
     });
 
     const client = requireUserClient(req.accessToken);
-    const existingConversation = await ensureConversation(
-      client,
-      req.user.id,
-      req.body.conversationId
-    );
-    const brandProfile = await getBrandProfileByUserId(client, req.user.id);
+    const [existingConversation, brandProfile, linkedContent] = await Promise.all([
+      ensureConversation(client, req.user.id, req.body.conversationId),
+      getBrandProfileByUserId(client, req.user.id),
+      req.body.contentId
+        ? getGeneratedContentById(client, req.user.id, req.body.contentId).catch(
+            () => null
+          )
+        : Promise.resolve(null),
+    ]);
     const generationInput = {
       ...req.body,
       ...resolveBrandPreference(brandProfile, req.body.useBrandName),
     };
+    const memoryQueryInput = {
+      brandName: generationInput.brandName ?? null,
+      useBrandName: generationInput.useBrandName,
+      productName: generationInput.productName,
+      productDescription:
+        generationInput.productDescription ??
+        generationInput.prompt ??
+        linkedContent?.productDescription ??
+        null,
+      platform: linkedContent?.platform ?? null,
+      goal: linkedContent?.goal ?? null,
+      tone: linkedContent?.tone ?? null,
+      audience: linkedContent?.audience ?? null,
+      keywords: linkedContent?.keywords ?? [],
+    };
+    let brandMemories = [] as Awaited<
+      ReturnType<typeof getRelevantMemoriesForImageGeneration>
+    >;
+
+    try {
+      brandMemories = await getRelevantMemoriesForImageGeneration(
+        client,
+        req.user.id,
+        brandProfile,
+        memoryQueryInput
+      );
+    } catch (memoryError) {
+      console.warn('[workspace-image] failed to retrieve semantic brand memory', {
+        userId: req.user.id,
+        error:
+          memoryError instanceof Error
+            ? memoryError.message
+            : String(memoryError),
+      });
+    }
     const runtimePolicy =
       req.imageRuntimePolicy ?? resolveImageRuntimePolicy('free', 0);
     const { jobId, result } = await enqueueImageGenerationJob(
@@ -723,6 +1051,21 @@ export const generateWorkspaceImage = async (
         data: {
           userId: req.user.id,
           brandProfile,
+          brandMemories,
+          contentContext: linkedContent
+            ? {
+                brandName: generationInput.brandName ?? null,
+                useBrandName: generationInput.useBrandName,
+                productName: linkedContent.productName,
+                productDescription:
+                  linkedContent.productDescription ?? generationInput.prompt ?? null,
+                platform: linkedContent.platform ?? null,
+                goal: linkedContent.goal ?? null,
+                tone: linkedContent.tone ?? null,
+                audience: linkedContent.audience ?? null,
+                keywords: linkedContent.keywords ?? [],
+              }
+            : memoryQueryInput,
           input: generationInput,
         },
       },
@@ -770,6 +1113,22 @@ export const generateWorkspaceImage = async (
       storageContentType: storedImageAsset?.contentType ?? null,
       storageSizeBytes: storedImageAsset?.sizeBytes ?? null,
     });
+
+    try {
+      await syncGeneratedImageSemanticMemory(client, req.user.id, image, {
+        brandProfile,
+        productName: generationInput.productName,
+        productDescription: generationInput.productDescription ?? null,
+        backgroundStyle: generationInput.backgroundStyle ?? null,
+        sourceImageUrl: generationInput.sourceImageUrl ?? null,
+      });
+    } catch (memoryError) {
+      console.warn('[workspace-image] failed to index generated image memory', {
+        userId: req.user.id,
+        imageId: image.id,
+        error: memoryError instanceof Error ? memoryError.message : String(memoryError),
+      });
+    }
 
     throwIfRequestCancelled(
       cancellation.signal,

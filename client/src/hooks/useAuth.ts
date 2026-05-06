@@ -111,31 +111,66 @@ const readMetadataString = (
   return null;
 };
 
+const getAuthMetadataSources = (currentUser: User | null) => {
+  const sources: Record<string, unknown>[] = [];
+
+  if (
+    currentUser?.user_metadata &&
+    typeof currentUser.user_metadata === 'object'
+  ) {
+    sources.push(currentUser.user_metadata as Record<string, unknown>);
+  }
+
+  currentUser?.identities?.forEach((identity) => {
+    if (identity.identity_data && typeof identity.identity_data === 'object') {
+      sources.push(identity.identity_data as Record<string, unknown>);
+    }
+  });
+
+  return sources;
+};
+
+const readMetadataStringFromSources = (
+  sources: Record<string, unknown>[],
+  keys: string[]
+) => {
+  for (const source of sources) {
+    const value = readMetadataString(source, keys);
+
+    if (value) {
+      return value;
+    }
+  }
+
+  return null;
+};
+
 const getAuthProfileDefaults = (currentUser: User | null) => {
-  const metadata =
-    currentUser && currentUser.user_metadata && typeof currentUser.user_metadata === 'object'
-      ? (currentUser.user_metadata as Record<string, unknown>)
-      : {};
+  const metadataSources = getAuthMetadataSources(currentUser);
 
   return {
-    fullName: readMetadataString(metadata, [
+    fullName: readMetadataStringFromSources(metadataSources, [
       'full_name',
       'name',
       'user_name',
       'preferred_username',
     ]),
     phoneNumber:
-      readMetadataString(metadata, ['phone_number', 'phone']) ||
+      readMetadataStringFromSources(metadataSources, ['phone_number', 'phone']) ||
       currentUser?.phone ||
       null,
-    avatarUrl: readMetadataString(metadata, [
+    avatarUrl: readMetadataStringFromSources(metadataSources, [
       'avatar_url',
       'picture',
       'picture_url',
       'profile_image_url',
+      'photo_url',
+      'photoURL',
+      'image',
+      'avatar',
     ]),
     username: normalizeUsername(
-      readMetadataString(metadata, [
+      readMetadataStringFromSources(metadataSources, [
         'preferred_username',
         'user_name',
         'nickname',

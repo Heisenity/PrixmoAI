@@ -32,7 +32,8 @@ import {
   updateJobRuntime,
   waitForQueueJobResult,
 } from './jobRuntime.service';
-import type { BrandProfile } from '../types';
+import type { BrandProfile, BrandMemoryMatch, ProductInput } from '../types';
+import { collectRealtimeTrendIntelligence } from './trendIntelligence.service';
 
 type ResolvedGenerateImageInput = GenerateImageInput & {
   brandName?: string | null;
@@ -41,6 +42,8 @@ type ResolvedGenerateImageInput = GenerateImageInput & {
 type ImageGenerationJobData = {
   userId: string;
   brandProfile: BrandProfile | null;
+  brandMemories?: BrandMemoryMatch[];
+  contentContext?: ProductInput | null;
   input: ResolvedGenerateImageInput;
 };
 
@@ -158,10 +161,57 @@ export const startImageGenerationWorker = () => {
           message: 'Starting image generation.',
         });
 
+        await job.updateProgress(30);
+        await updateJobRuntime(job.id!, {
+          progress: 30,
+          message: 'Researching live visual and platform trends.',
+        });
+
+        const trendSeed: ProductInput = {
+          brandName:
+            job.data.contentContext?.brandName ?? job.data.input.brandName ?? null,
+          useBrandName:
+            job.data.contentContext?.useBrandName ?? job.data.input.useBrandName,
+          productName:
+            job.data.contentContext?.productName ?? job.data.input.productName,
+          productDescription:
+            job.data.contentContext?.productDescription ??
+            job.data.input.productDescription ??
+            job.data.input.prompt ??
+            null,
+          platform: job.data.contentContext?.platform ?? null,
+          goal: job.data.contentContext?.goal ?? null,
+          tone: job.data.contentContext?.tone ?? null,
+          audience: job.data.contentContext?.audience ?? null,
+          keywords: job.data.contentContext?.keywords ?? [],
+        };
+
+        const trendIntelligence =
+          await collectRealtimeTrendIntelligence({
+            purpose: 'image-generation',
+            userId: job.data.userId,
+            brandProfile: job.data.brandProfile,
+            productInput: trendSeed,
+            brandMemories: job.data.brandMemories,
+            signal,
+          }).catch((error) => {
+            if (error instanceof RequestCancelledError) {
+              throw error;
+            }
+
+            console.warn('[image-generation] live trend research failed; continuing without it.', {
+              jobId: job.id,
+              userId: job.data.userId,
+              error: error instanceof Error ? error.message : String(error),
+            });
+            return null;
+          });
+
         const result = await generateProductImage(
           job.data.brandProfile,
           job.data.input,
           {
+            trendIntelligence,
             signal,
             onProviderChange: async (provider) => {
               await updateJobRuntime(job.id!, {

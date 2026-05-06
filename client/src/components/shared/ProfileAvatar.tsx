@@ -12,31 +12,50 @@ export const ProfileAvatar = ({
   fullName,
   className,
 }: ProfileAvatarProps) => {
+  const candidateKey = avatarCandidates
+    .filter((value): value is string => Boolean(value))
+    .filter((value, index, array) => array.indexOf(value) === index)
+    .join('\u0001');
   const candidates = useMemo(
-    () =>
-      [...new Set(avatarCandidates.filter((value): value is string => Boolean(value)))],
-    [avatarCandidates]
+    () => (candidateKey ? candidateKey.split('\u0001') : []),
+    [candidateKey]
   );
-  const [avatarIndex, setAvatarIndex] = useState(0);
+  const [failedCandidates, setFailedCandidates] = useState<string[]>([]);
 
   useEffect(() => {
-    setAvatarIndex(0);
+    setFailedCandidates((current) => {
+      const next = current.filter((candidate) => candidates.includes(candidate));
+
+      return next.length === current.length ? current : next;
+    });
   }, [candidates]);
 
-  const activeAvatar = candidates[avatarIndex];
+  const activeAvatar =
+    candidates.find((candidate) => !failedCandidates.includes(candidate)) ?? null;
 
   return (
     <div className={className}>
       {activeAvatar ? (
         <img
+          key={activeAvatar}
           src={activeAvatar}
-          alt={fullName || 'Workspace owner'}
+          alt={fullName ? `${fullName} profile photo` : 'Workspace owner profile photo'}
+          loading="eager"
+          decoding="async"
+          referrerPolicy="no-referrer"
+          draggable={false}
           onError={() => {
-            setAvatarIndex((current) => current + 1);
+            setFailedCandidates((current) =>
+              current.includes(activeAvatar) ? current : [...current, activeAvatar]
+            );
           }}
         />
       ) : (
-        <span>{getProfileInitials(fullName)}</span>
+        <span className="profile-avatar__fallback" aria-hidden="true">
+          <span className="profile-avatar__fallback-initials">
+            {getProfileInitials(fullName)}
+          </span>
+        </span>
       )}
     </div>
   );

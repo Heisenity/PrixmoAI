@@ -53,6 +53,7 @@ type ScheduledItemRow = {
   account_id: string;
   social_account_id: string;
   caption: string | null;
+  metadata: Record<string, unknown>;
   scheduled_at: string;
   status: ScheduledItemStatus;
   attempt_count: number;
@@ -129,6 +130,7 @@ const toScheduledItem = (row: ScheduledItemRow): ScheduledItem => ({
   accountId: row.account_id,
   socialAccountId: row.social_account_id,
   caption: row.caption,
+  metadata: row.metadata ?? {},
   scheduledAt: row.scheduled_at,
   status: row.status,
   attemptCount: row.attempt_count,
@@ -324,6 +326,7 @@ export const createScheduledItem = async (
       account_id: input.accountId,
       social_account_id: input.socialAccountId,
       caption: input.caption ?? null,
+      metadata: input.metadata ?? {},
       scheduled_at: input.scheduledAt,
       status: input.status ?? 'pending',
       attempt_count: input.attemptCount ?? 0,
@@ -594,6 +597,7 @@ export const updateScheduledItem = async (
         ? { social_account_id: input.socialAccountId }
         : {}),
       ...(input.caption !== undefined ? { caption: input.caption } : {}),
+      ...(input.metadata !== undefined ? { metadata: input.metadata } : {}),
       ...(input.scheduledAt !== undefined ? { scheduled_at: input.scheduledAt } : {}),
       ...(input.status !== undefined ? { status: input.status } : {}),
       ...(input.attemptCount !== undefined

@@ -104,7 +104,6 @@ const BENGALI_VAD_CHUNK_SILENCE_MS = 1080;
 const BENGALI_RECORDER_REQUEST_DATA_COOLDOWN_MS = 260;
 const BENGALI_STOP_TAIL_FLUSH_MAX_MS = 900;
 const BENGALI_STOP_TAIL_FLUSH_POLL_MS = 60;
-const BENGALI_FINAL_PREVIEW_TAIL_TOKENS = 16;
 const MAX_CONTEXT_CHARS = 320;
 const MAX_PREVIEW_TRANSCRIPT_CHARS = 2200;
 const MAX_TRANSCRIPT_MERGE_TOKENS = 18;
@@ -114,7 +113,7 @@ const TARGET_SAMPLE_RATE = 16000;
 const STREAM_TRANSCRIPT_MIN_CHARS = 8;
 const WAVEFORM_BAR_COUNT = 12;
 const DICTATION_HISTORY_STORAGE_PREFIX = 'prixmoai.dictation.history';
-const PROMPT_HISTORY_RING_SIZE = 3;
+const PROMPT_HISTORY_RING_SIZE = 10;
 const DRAFT_SYNC_DEBOUNCE_MS = 450;
 
 const createIdleWaveform = () =>
@@ -173,7 +172,9 @@ const normalizePromptHistoryRing = (value: unknown): PromptHistoryRing => {
       ? Math.max(0, Math.min(PROMPT_HISTORY_RING_SIZE, Math.floor(candidate.size)))
       : entries.filter(Boolean).length;
   const nextIndex =
-    typeof candidate.nextIndex === 'number' && Number.isFinite(candidate.nextIndex)
+    rawEntries.length !== PROMPT_HISTORY_RING_SIZE
+      ? size % PROMPT_HISTORY_RING_SIZE
+      : typeof candidate.nextIndex === 'number' && Number.isFinite(candidate.nextIndex)
       ? ((Math.floor(candidate.nextIndex) % PROMPT_HISTORY_RING_SIZE) + PROMPT_HISTORY_RING_SIZE) %
         PROMPT_HISTORY_RING_SIZE
       : size % PROMPT_HISTORY_RING_SIZE;
@@ -775,6 +776,66 @@ const collapseRepeatedTrailingSpan = (value: string) => {
   return normalized;
 };
 
+const collapseAdjacentRepeatedTranscriptPhrases = (value: string, minPhraseLength = 2) => {
+  const normalized = normalizeTranscriptForMerge(value);
+
+  if (!normalized) {
+    return normalized;
+  }
+
+  const tokens = normalized.split(' ');
+
+  if (tokens.length < minPhraseLength * 2) {
+    return normalized;
+  }
+
+  const dedupedTokens: string[] = [];
+  let index = 0;
+
+  while (index < tokens.length) {
+    let consumed = false;
+    const maxPhraseLength = Math.min(10, Math.floor((tokens.length - index) / 2));
+
+    for (
+      let phraseLength = maxPhraseLength;
+      phraseLength >= minPhraseLength;
+      phraseLength -= 1
+    ) {
+      const firstPhrase = tokens.slice(index, index + phraseLength);
+      const secondPhrase = tokens.slice(index + phraseLength, index + phraseLength * 2);
+
+      if (
+        firstPhrase.length === secondPhrase.length &&
+        firstPhrase.every(
+          (token, phraseIndex) =>
+            canonicalizeTranscriptToken(token) ===
+            canonicalizeTranscriptToken(secondPhrase[phraseIndex] ?? '')
+        )
+      ) {
+        dedupedTokens.push(...firstPhrase);
+        index += phraseLength * 2;
+        consumed = true;
+        break;
+      }
+    }
+
+    if (!consumed) {
+      dedupedTokens.push(tokens[index] ?? '');
+      index += 1;
+    }
+  }
+
+  return normalizeTranscriptForMerge(dedupedTokens.join(' '));
+};
+
+const normalizeBengaliTranscriptForDisplay = (value: string) =>
+  collapseNearDuplicateBengaliClauses(
+    collapseAdjacentRepeatedTranscriptPhrases(
+      collapseRepeatedTrailingSpan(value),
+      2
+    )
+  );
+
 const buildRollingContext = (value: string) => {
   const normalized = value.replace(/\s+/g, ' ').trim();
 
@@ -1016,7 +1077,7 @@ const mergePreviewTranscript = (
   const finalizeMergedPreview = (value: string) =>
     trimPreviewTranscriptMemory(
       language === 'bn'
-        ? normalizeTranscriptForMerge(value)
+        ? normalizeBengaliTranscriptForDisplay(value)
         : collapseRepeatedTrailingSpan(value)
     );
 
@@ -1051,10 +1112,6 @@ const mergePreviewTranscript = (
     );
   }
 
-  if (language === 'bn') {
-    return finalizeMergedPreview(`${previous} ${next}`.trim());
-  }
-
   const characterOverlapLength = findCharacterOverlapLength(previous, next);
 
   if (characterOverlapLength > 0) {
@@ -1062,36 +1119,6 @@ const mergePreviewTranscript = (
   }
 
   return finalizeMergedPreview(`${previous} ${next}`.trim());
-};
-
-const mergeFinalTranscriptWithPreviewTail = (
-  finalValue: string,
-  previewValue: string,
-  language?: string
-) => {
-  const normalizedFinal = normalizeTranscriptForMerge(finalValue);
-  const normalizedPreview = normalizeTranscriptForMerge(previewValue);
-
-  if (!normalizedPreview) {
-    return normalizedFinal;
-  }
-
-  if (!normalizedFinal) {
-    return normalizedPreview;
-  }
-
-  const comparableFinal = buildComparableTranscript(normalizedFinal);
-  const previewTokens = normalizedPreview.split(' ').filter(Boolean);
-  const previewTail = previewTokens
-    .slice(-Math.min(BENGALI_FINAL_PREVIEW_TAIL_TOKENS, previewTokens.length))
-    .join(' ');
-  const comparablePreviewTail = buildComparableTranscript(previewTail);
-
-  if (!comparablePreviewTail || comparableFinal.includes(comparablePreviewTail)) {
-    return normalizedFinal;
-  }
-
-  return mergePreviewTranscript(normalizedFinal, previewTail, language);
 };
 
 const isAbortLikeError = (error: unknown) =>
@@ -2220,11 +2247,7 @@ export const DictationTextareaField = ({
           }
 
           if (resolvedLanguageHintRef.current === 'bn') {
-            finalTranscript = mergeFinalTranscriptWithPreviewTail(
-              finalTranscript,
-              previewTranscriptRef.current,
-              resolvedLanguageHintRef.current
-            );
+            finalTranscript = normalizeBengaliTranscriptForDisplay(finalTranscript);
           }
 
           if (!finalTranscript.trim()) {
@@ -2344,11 +2367,12 @@ export const DictationTextareaField = ({
                   isHistoryOpen ? 'generate-chat__dictation-history-toggle--open' : ''
                 }`}
                 onClick={() => setIsHistoryOpen((current) => !current)}
-                aria-label={`Show last 3 prompts for ${DICTATION_LANGUAGE_OPTIONS.find((option) => option.value === resolvedLanguageHint)?.label ?? 'current language'}`}
+                aria-label={`Show last ${PROMPT_HISTORY_RING_SIZE} prompts for ${DICTATION_LANGUAGE_OPTIONS.find((option) => option.value === resolvedLanguageHint)?.label ?? 'current language'}`}
                 aria-expanded={isHistoryOpen}
-                title="Show last 3 prompts"
+                title={`Show last ${PROMPT_HISTORY_RING_SIZE} prompts`}
               >
                 <ChevronDown size={14} />
+                <span>Last prompts</span>
               </button>
             ) : null}
           </div>
@@ -2376,7 +2400,7 @@ export const DictationTextareaField = ({
           aria-label={`${label} prompt history`}
         >
           <div className="generate-chat__dictation-history-panel-header">
-            <strong>Last 3 prompts</strong>
+            <strong>Last {PROMPT_HISTORY_RING_SIZE} prompts</strong>
             <span>
               {DICTATION_LANGUAGE_OPTIONS.find(
                 (option) => option.value === resolvedLanguageHint

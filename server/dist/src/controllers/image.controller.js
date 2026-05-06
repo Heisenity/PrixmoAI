@@ -4,6 +4,7 @@ exports.resolveSourceImageUrl = exports.importSourceImageUrl = exports.uploadSou
 const imageGen_1 = require("../ai/imageGen");
 const brandProfiles_1 = require("../db/queries/brandProfiles");
 const images_1 = require("../db/queries/images");
+const content_1 = require("../db/queries/content");
 const supabase_1 = require("../db/supabase");
 const imageRuntimePolicy_service_1 = require("../services/imageRuntimePolicy.service");
 const storage_service_1 = require("../services/storage.service");
@@ -11,6 +12,7 @@ const requestCancellation_1 = require("../lib/requestCancellation");
 const r2Storage_service_1 = require("../services/r2Storage.service");
 const imageGenerationQueue_service_1 = require("../services/imageGenerationQueue.service");
 const runtimeCache_service_1 = require("../services/runtimeCache.service");
+const brandMemory_service_1 = require("../services/brandMemory.service");
 const parsePositiveInt = (value, fallback) => {
     if (typeof value !== 'string') {
         return fallback;
@@ -114,17 +116,62 @@ const generateImage = async (req, res) => {
             contentId: req.body.contentId ?? null,
         });
         const client = (0, supabase_1.requireUserClient)(req.accessToken);
-        const brandProfile = await (0, brandProfiles_1.getBrandProfileByUserId)(client, req.user.id);
+        const [brandProfile, linkedContent] = await Promise.all([
+            (0, brandProfiles_1.getBrandProfileByUserId)(client, req.user.id),
+            req.body.contentId
+                ? (0, content_1.getGeneratedContentById)(client, req.user.id, req.body.contentId).catch(() => null)
+                : Promise.resolve(null),
+        ]);
         const generationInput = {
             ...req.body,
             ...resolveBrandPreference(brandProfile, req.body.useBrandName),
         };
+        const memoryQueryInput = {
+            brandName: generationInput.brandName ?? null,
+            useBrandName: generationInput.useBrandName,
+            productName: generationInput.productName,
+            productDescription: generationInput.productDescription ??
+                generationInput.prompt ??
+                linkedContent?.productDescription ??
+                null,
+            platform: linkedContent?.platform ?? null,
+            goal: linkedContent?.goal ?? null,
+            tone: linkedContent?.tone ?? null,
+            audience: linkedContent?.audience ?? null,
+            keywords: linkedContent?.keywords ?? [],
+        };
+        let brandMemories = [];
+        try {
+            brandMemories = await (0, brandMemory_service_1.getRelevantMemoriesForImageGeneration)(client, req.user.id, brandProfile, memoryQueryInput);
+        }
+        catch (memoryError) {
+            console.warn('[image] failed to retrieve semantic brand memory', {
+                userId: req.user.id,
+                error: memoryError instanceof Error
+                    ? memoryError.message
+                    : String(memoryError),
+            });
+        }
         const runtimePolicy = req.imageRuntimePolicy ?? (0, imageRuntimePolicy_service_1.resolveImageRuntimePolicy)('free', 0);
         const { jobId, result } = await (0, imageGenerationQueue_service_1.enqueueImageGenerationJob)({
             runtimePolicy,
             data: {
                 userId: req.user.id,
                 brandProfile,
+                brandMemories,
+                contentContext: linkedContent
+                    ? {
+                        brandName: generationInput.brandName ?? null,
+                        useBrandName: generationInput.useBrandName,
+                        productName: linkedContent.productName,
+                        productDescription: linkedContent.productDescription ?? generationInput.prompt ?? null,
+                        platform: linkedContent.platform ?? null,
+                        goal: linkedContent.goal ?? null,
+                        tone: linkedContent.tone ?? null,
+                        audience: linkedContent.audience ?? null,
+                        keywords: linkedContent.keywords ?? [],
+                    }
+                    : memoryQueryInput,
                 input: generationInput,
             },
         }, cancellation.signal);
@@ -148,6 +195,22 @@ const generateImage = async (req, res) => {
             storageContentType: storedImageAsset?.contentType ?? null,
             storageSizeBytes: storedImageAsset?.sizeBytes ?? null,
         });
+        try {
+            await (0, brandMemory_service_1.syncGeneratedImageSemanticMemory)(client, req.user.id, image, {
+                brandProfile,
+                productName: generationInput.productName,
+                productDescription: generationInput.productDescription ?? null,
+                backgroundStyle: generationInput.backgroundStyle ?? null,
+                sourceImageUrl: generationInput.sourceImageUrl ?? null,
+            });
+        }
+        catch (memoryError) {
+            console.warn('[image] failed to index generated image memory', {
+                userId: req.user.id,
+                imageId: image.id,
+                error: memoryError instanceof Error ? memoryError.message : String(memoryError),
+            });
+        }
         (0, requestCancellation_1.throwIfRequestCancelled)(cancellation.signal, 'Image generation cancelled by user.');
         await (0, images_1.trackImageGenerationUsage)(client, req.user.id, {
             imageId: image.id,

@@ -17,16 +17,77 @@ export const readProfileMetadataString = (
   return null;
 };
 
+const AVATAR_METADATA_KEYS = [
+  'avatar_url',
+  'picture',
+  'picture_url',
+  'profile_image_url',
+  'photo_url',
+  'photoURL',
+  'image',
+  'avatar',
+];
+
+const isMetadataRecord = (value: unknown): value is Record<string, unknown> =>
+  Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+
+const collectProfileMetadataSources = (
+  metadata:
+    | Record<string, unknown>
+    | Array<Record<string, unknown> | null | undefined>
+    | null
+    | undefined
+) => {
+  const sources = Array.isArray(metadata) ? metadata : [metadata];
+  const records: Record<string, unknown>[] = [];
+
+  sources.forEach((source) => {
+    if (!isMetadataRecord(source)) {
+      return;
+    }
+
+    records.push(source);
+
+    ['identity_data', 'user_metadata', 'raw_user_meta_data', 'profile'].forEach(
+      (nestedKey) => {
+        const nested = source[nestedKey];
+
+        if (isMetadataRecord(nested)) {
+          records.push(nested);
+        }
+      }
+    );
+
+    if (Array.isArray(source.identities)) {
+      source.identities.forEach((identity) => {
+        if (!isMetadataRecord(identity)) {
+          return;
+        }
+
+        if (isMetadataRecord(identity.identity_data)) {
+          records.push(identity.identity_data);
+        }
+      });
+    }
+  });
+
+  return records;
+};
+
 export const getAvatarCandidates = (
   primaryAvatarUrl: string | null | undefined,
-  metadata: Record<string, unknown> | null | undefined
+  metadata:
+    | Record<string, unknown>
+    | Array<Record<string, unknown> | null | undefined>
+    | null
+    | undefined
 ) => {
+  const metadataSources = collectProfileMetadataSources(metadata);
   const candidates = [
     primaryAvatarUrl,
-    readProfileMetadataString(metadata, ['avatar_url']),
-    readProfileMetadataString(metadata, ['picture']),
-    readProfileMetadataString(metadata, ['picture_url']),
-    readProfileMetadataString(metadata, ['profile_image_url']),
+    ...metadataSources.map((source) =>
+      readProfileMetadataString(source, AVATAR_METADATA_KEYS)
+    ),
   ].filter((value): value is string => Boolean(value));
 
   return [...new Set(candidates)];

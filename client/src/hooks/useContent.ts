@@ -1,7 +1,14 @@
 import { useCallback, useEffect, useState } from 'react';
 import { apiRequest } from '../lib/axios';
 import { useAuth } from './useAuth';
-import type { GenerateContentInput, GeneratedContent, PaginatedResult } from '../types';
+import type {
+  BrandMemoryFeedbackEvent,
+  BrandMemoryFeedbackEventType,
+  GenerateContentInput,
+  GeneratedContent,
+  PaginatedResult,
+  ScheduleCaptionRecommendation,
+} from '../types';
 
 type ContentCache = {
   history: PaginatedResult<GeneratedContent> | null;
@@ -158,6 +165,53 @@ export const useContent = () => {
     }
   };
 
+  const submitMemoryFeedback = async (input: {
+    sourceTable: string;
+    sourceId: string;
+    sourceKey?: string | null;
+    memoryType: string;
+    eventType: BrandMemoryFeedbackEventType;
+    platform?: string | null;
+    contentId?: string | null;
+    generatedImageId?: string | null;
+    scheduledPostId?: string | null;
+    scheduledItemId?: string | null;
+    intensity?: number;
+    wasAiRecommended?: boolean;
+    metadata?: Record<string, unknown>;
+  }) => {
+    if (!token) {
+      throw new Error('Sign in again to record feedback.');
+    }
+
+    return await apiRequest<BrandMemoryFeedbackEvent | null>('/api/content/feedback', {
+      method: 'POST',
+      token,
+      body: input,
+    });
+  };
+
+  const recommendScheduleCaption = async (
+    contentId: string,
+    input?: {
+      generatedImageId?: string | null;
+      requestContext?: string | null;
+    }
+  ) => {
+    if (!token) {
+      throw new Error('Sign in again to fetch a scheduling recommendation.');
+    }
+
+    return await apiRequest<ScheduleCaptionRecommendation>(
+      `/api/content/${contentId}/schedule-recommendation`,
+      {
+        method: 'POST',
+        token,
+        body: input ?? {},
+      }
+    );
+  };
+
   return {
     history,
     activeContent,
@@ -167,5 +221,7 @@ export const useContent = () => {
     setActiveContent,
     refreshHistory,
     generate,
+    submitMemoryFeedback,
+    recommendScheduleCaption,
   };
 };

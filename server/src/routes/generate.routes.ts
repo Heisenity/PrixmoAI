@@ -3,6 +3,7 @@ import {
   createWorkspaceConversation,
   deleteWorkspaceConversation,
   generateWorkspaceCopy,
+  generateWorkspaceCopyStream,
   generateWorkspaceImage,
   getWorkspaceConversationThread,
   listWorkspaceConversations,
@@ -77,6 +78,14 @@ router.post(
   planLimitMiddleware,
   validate(generateConversationCopySchema),
   generateWorkspaceCopy
+);
+
+router.post(
+  '/copy/stream',
+  authMiddleware,
+  planLimitMiddleware,
+  validate(generateConversationCopySchema),
+  generateWorkspaceCopyStream
 );
 
 router.post(

@@ -168,6 +168,7 @@ export const getSocialAccountsByUser = async (
     .from('social_accounts')
     .select('*', { count: 'exact' })
     .eq('user_id', userId)
+    .eq('verification_status', 'verified')
     .order('connected_at', { ascending: false })
     .range(from, to);
 
@@ -193,7 +194,8 @@ export const getSocialAccountCountByUser = async (
   const { count, error } = await client
     .from('social_accounts')
     .select('*', { count: 'exact', head: true })
-    .eq('user_id', userId);
+    .eq('user_id', userId)
+    .eq('verification_status', 'verified');
 
   if (error) {
     throw new Error(error.message || 'Failed to fetch social account count');

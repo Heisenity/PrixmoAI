@@ -49,6 +49,33 @@ export type SubscriptionStatus =
   | 'expired';
 export type WeeklyDirection = 'up' | 'down' | 'flat';
 export type ProfileSaveContext = 'onboarding' | 'settings' | 'system';
+export type BrandMemoryType =
+  | 'brand-profile-summary'
+  | 'brand-description'
+  | 'brand-voice-note'
+  | 'platform-performance-insight'
+  | 'user-generation-prompt'
+  | 'generated-caption'
+  | 'generated-hashtags'
+  | 'generated-reel-script'
+  | 'image-prompt';
+export type BrandMemoryTaskType =
+  | 'caption-generation'
+  | 'hashtag-generation'
+  | 'reel-script-generation'
+  | 'image-generation'
+  | 'brand-description'
+  | 'scheduler-caption-recommendation';
+export type BrandMemoryFeedbackEventType =
+  | 'accepted'
+  | 'rejected'
+  | 'regenerated'
+  | 'edited'
+  | 'scheduled'
+  | 'reused'
+  | 'performance_promoted'
+  | 'performance_demoted'
+  | 'schedule_opened';
 
 export interface ApiErrorDetail {
   field?: string;
@@ -87,6 +114,100 @@ export interface BrandProfile {
   updatedAt: string;
 }
 
+export interface BrandMemoryMatch {
+  id: string;
+  brandProfileId: string | null;
+  sourceTable: string;
+  sourceId: string;
+  sourceKey: string;
+  memoryType: BrandMemoryType | string;
+  contentText: string;
+  metadata: Record<string, unknown>;
+  similarity: number;
+  vectorSimilarity?: number;
+  keywordScore?: number;
+  hybridScore?: number;
+  rerankScore?: number;
+  qualityScore?: number;
+  promotionScore?: number;
+  performanceScore?: number;
+  reuseCount?: number;
+  successfulReuseCount?: number;
+  acceptanceCount?: number;
+  rejectionCount?: number;
+  regenerationCount?: number;
+  editCount?: number;
+  scheduleUseCount?: number;
+  freshnessScore?: number;
+  taskPolicyScore?: number;
+  compositeScore?: number;
+  lastFeedbackAt?: string | null;
+  archivedAt?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface BrandMemoryFeedbackEvent {
+  id: string;
+  userId: string;
+  brandProfileId: string | null;
+  sourceTable: string;
+  sourceId: string;
+  sourceKey: string;
+  memoryType: BrandMemoryType | string;
+  eventType: BrandMemoryFeedbackEventType;
+  platform: string | null;
+  contentId: string | null;
+  generatedImageId: string | null;
+  scheduledPostId: string | null;
+  scheduledItemId: string | null;
+  acceptedFeedbackEventId: string | null;
+  usedForScheduler: boolean | null;
+  usedSameCaptionForScheduler: boolean | null;
+  intensity: number;
+  wasAiRecommended: boolean;
+  weightDelta: number | null;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+}
+
+export interface BrandMemoryGenerationLog {
+  id: string;
+  userId: string;
+  brandProfileId: string | null;
+  taskType: BrandMemoryTaskType | string;
+  requestContext: string | null;
+  provider: string | null;
+  rerankProvider: string | null;
+  fallbackUsed: boolean;
+  retrievalStrategy: string | null;
+  queryText: string;
+  selectedPlatform: string | null;
+  selectedGoal: string | null;
+  retrievedMemories: Record<string, unknown>[];
+  selectedMemories: Record<string, unknown>[];
+  analyticsContext: Record<string, unknown>;
+  evaluationSummary: Record<string, unknown>;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+}
+
+export interface BrandPlatformMemorySnapshot {
+  id: string;
+  userId: string;
+  brandProfileId: string | null;
+  platform: string;
+  snapshotType: string;
+  summaryText: string;
+  metrics: Record<string, unknown>;
+  topPosts: Record<string, unknown>[];
+  signals: Record<string, unknown>;
+  sourceWindowStart: string | null;
+  sourceWindowEnd: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface BrandProfileInput {
   brandName: string;
   fullName: string;
@@ -119,6 +240,73 @@ export interface ProductInput {
   tone?: string | null;
   audience?: string | null;
   keywords?: string[];
+}
+
+export type RealtimeTrendResearchPurpose =
+  | 'caption-generation'
+  | 'hashtag-generation'
+  | 'reel-script-generation'
+  | 'image-generation';
+
+export type TrendSignalSource = 'web' | 'social';
+
+export interface TrendSignalReason {
+  label: string;
+  weight: number;
+}
+
+export interface TrendSignalCandidate {
+  id: string;
+  source: TrendSignalSource;
+  platform: string | null;
+  title: string | null;
+  text: string;
+  url: string | null;
+  authorName: string | null;
+  hashtags: string[];
+  publishedAt: string | null;
+  ageHours: number | null;
+  metrics: {
+    likes: number;
+    comments: number;
+    shares: number;
+    views: number;
+    followers: number;
+  };
+  topicMatchScore: number;
+  freshnessScore: number;
+  shareRatioScore: number;
+  commentIntensityScore: number;
+  creatorStreakScore: number;
+  sentimentBoostScore: number;
+  qualityScore: number;
+  viralScore: number;
+  reasons: TrendSignalReason[];
+}
+
+export interface RealtimeTrendInsight {
+  headline: string;
+  explanation: string;
+  platform: string | null;
+  source: TrendSignalSource;
+  viralScore: number;
+  reasons: TrendSignalReason[];
+  referenceUrl: string | null;
+}
+
+export interface RealtimeTrendIntelligence {
+  purpose: RealtimeTrendResearchPurpose;
+  generatedAt: string;
+  queryText: string;
+  selectedPlatform: string | null;
+  selectedGoal: string | null;
+  searchQueries: string[];
+  scrapedPlatforms: string[];
+  summary: string;
+  topHashtags: string[];
+  insights: RealtimeTrendInsight[];
+  topCandidates: TrendSignalCandidate[];
+  filteredOutCount: number;
 }
 
 export interface ReelScript {
@@ -357,6 +545,7 @@ export interface ScheduledItem {
   attemptCount: number;
   lastError: string | null;
   idempotencyKey: string;
+  metadata: Record<string, unknown>;
   createdAt: string;
   updatedAt: string;
   mediaAsset?: MediaAsset;
@@ -410,11 +599,24 @@ export interface CreateScheduledItemInput {
   attemptCount?: number;
   lastError?: string | null;
   idempotencyKey?: string;
+  metadata?: Record<string, unknown>;
 }
 
 export interface UpdateScheduledItemInput
   extends Partial<CreateScheduledItemInput> {
   status?: ScheduledItemStatus;
+}
+
+export interface ScheduleCaptionRecommendation {
+  recommendedCaption: string;
+  selectedVariantIndex: number;
+  sourceKey: string | null;
+  reasoning: string;
+  note: string;
+  strategy: 'ai' | 'fallback';
+  provider: 'groq' | 'gemini' | 'fallback' | null;
+  supportingMemoryIds: string[];
+  observabilityLogId: string | null;
 }
 
 export interface CreateScheduledPostInput {
@@ -602,6 +804,91 @@ export interface GenerationOverview {
   platformSignals: PlatformPerformanceSummary[];
 }
 
+export interface AnalyticsLearningPattern {
+  dimension: string;
+  label: string;
+  sampleSize: number;
+  averagePerformanceScore: number;
+  lift: number;
+  supportingMetrics: Record<string, number>;
+  explanation: string;
+}
+
+export interface AnalyticsLearningProfile {
+  id: string;
+  userId: string;
+  brandProfileId: string | null;
+  platform: string;
+  profileType: string;
+  summaryText: string;
+  recommendationText: string | null;
+  metrics: Record<string, unknown>;
+  patterns: AnalyticsLearningPattern[];
+  weakPatterns: AnalyticsLearningPattern[];
+  topContentIds: string[];
+  analyticsContext: Record<string, unknown>;
+  sourceWindowStart: string | null;
+  sourceWindowEnd: string | null;
+  lastAnalyzedAt: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AnalyticsLearningDashboard {
+  summary: string;
+  topRecommendation: string | null;
+  recommendationReason: string | null;
+  recommendationAccuracy: number | null;
+  recommendationAccuracyLabel: string | null;
+  confidence: 'low' | 'medium' | 'high';
+  lastAnalyzedAt: string | null;
+  isReady: boolean;
+  postsConsidered: number;
+  minimumPostsRequired: number;
+  missingDataMessage: string | null;
+  profiles: AnalyticsLearningProfile[];
+}
+
+export interface AnalyticsLearningPostSignal {
+  id: string;
+  userId: string;
+  analyticsId: string;
+  contentId: string | null;
+  scheduledPostId: string | null;
+  platform: string;
+  sourcePostKey: string;
+  performanceScore: number;
+  outcomeLabel: 'winning' | 'solid' | 'neutral' | 'weak';
+  formatType: string | null;
+  captionLengthBucket: string | null;
+  hookStyle: string | null;
+  ctaStyle: string | null;
+  hashtagBucket: string | null;
+  topicTags: string[];
+  metrics: Record<string, unknown>;
+  strategy: Record<string, unknown>;
+  userFeedback: Record<string, unknown>;
+  publishedTime: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AnalyticsLearningRun {
+  id: string;
+  userId: string;
+  triggerSource: string;
+  platforms: string[];
+  status: 'running' | 'completed' | 'failed';
+  postsAnalyzed: number;
+  profilesUpdated: number;
+  summary: Record<string, unknown>;
+  errorMessage: string | null;
+  sourceWindowStart: string | null;
+  sourceWindowEnd: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export type AnalyticsPlatformScope = 'all' | 'instagram' | 'facebook';
 
 export interface AnalyticsMetricPoint {
@@ -725,6 +1012,14 @@ export interface AnalyticsBestTimeInsight {
   hasEnoughData: boolean;
   minimumPostsRequired: number;
   postsConsidered: number;
+  engagedPostsConsidered: number;
+  engagementCoverage: number;
+  signalStatus:
+    | 'ready'
+    | 'not-enough-posts'
+    | 'no-engagement'
+    | 'low-engagement-coverage'
+    | 'no-clear-winner';
   summary: string;
   topSlots: AnalyticsBestTimeSlot[];
   heatmap: AnalyticsHeatmapCell[];
@@ -801,6 +1096,7 @@ export interface AnalyticsDashboard {
   insights: AnalyticsInsightCard[];
   platformComparison: AnalyticsPlatformComparison[];
   bestTimeToPost: AnalyticsBestTimeInsight;
+  learning: AnalyticsLearningDashboard;
 }
 
 export interface Subscription {

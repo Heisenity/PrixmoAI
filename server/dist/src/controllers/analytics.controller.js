@@ -1,9 +1,10 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.getInternalResearchEvents = exports.getInternalResearchSummary = exports.getHistory = exports.getBestPost = exports.getWeeklyComparison = exports.getSummary = exports.syncAnalytics = exports.getDashboard = exports.getOverview = exports.recordAnalytics = void 0;
+exports.getInternalResearchEvents = exports.getInternalResearchSummary = exports.getHistory = exports.getBestPost = exports.getWeeklyComparison = exports.getSummary = exports.refreshAnalyticsLearning = exports.syncAnalytics = exports.getDashboard = exports.getOverview = exports.recordAnalytics = void 0;
 const analytics_1 = require("../db/queries/analytics");
 const supabase_1 = require("../db/supabase");
 const analyticsDashboard_service_1 = require("../services/analyticsDashboard.service");
+const analyticsLearning_service_1 = require("../services/analyticsLearning.service");
 const analyticsSync_service_1 = require("../services/analyticsSync.service");
 const runtimeCache_service_1 = require("../services/runtimeCache.service");
 const parsePositiveInt = (value, fallback) => {
@@ -26,6 +27,24 @@ const recordAnalytics = async (req, res) => {
         const client = (0, supabase_1.requireUserClient)(req.accessToken);
         const analytics = await (0, analytics_1.saveAnalyticsData)(client, userId, req.body);
         await (0, runtimeCache_service_1.invalidateAnalyticsRuntimeCache)(userId);
+        void (0, analyticsLearning_service_1.enqueueAnalyticsLearningJob)({
+            userId,
+            triggerSource: 'analytics-recorded',
+            platforms: typeof analytics.platform === 'string' && analytics.platform.trim()
+                ? [analytics.platform.trim().toLowerCase()]
+                : [],
+            contentIds: analytics.contentId ? [analytics.contentId] : [],
+            scheduledPostIds: analytics.scheduledPostId ? [analytics.scheduledPostId] : [],
+            analyticsIds: [analytics.id],
+        }).catch((learningError) => {
+            console.warn('[analytics-learning] failed to enqueue learning job after analytics write', {
+                userId,
+                analyticsId: analytics.id,
+                error: learningError instanceof Error
+                    ? learningError.message
+                    : String(learningError),
+            });
+        });
         return res.status(200).json({
             status: 'success',
             message: 'Analytics recorded successfully',
@@ -134,7 +153,10 @@ const syncAnalytics = async (req, res) => {
     try {
         const userId = req.user.id;
         const client = (0, supabase_1.requireUserClient)(req.accessToken);
-        const summary = await (0, analyticsSync_service_1.syncAnalyticsForUser)(client, userId);
+        const awaitLearning = req.body?.awaitLearning !== false;
+        const summary = await (0, analyticsSync_service_1.syncAnalyticsForUser)(client, userId, {
+            awaitLearning,
+        });
         return res.status(200).json({
             status: 'success',
             message: 'Analytics synced successfully',
@@ -149,6 +171,40 @@ const syncAnalytics = async (req, res) => {
     }
 };
 exports.syncAnalytics = syncAnalytics;
+const refreshAnalyticsLearning = async (req, res) => {
+    if (!req.user?.id) {
+        return res.status(401).json({
+            status: 'fail',
+            message: 'Unauthorized',
+        });
+    }
+    try {
+        const userId = req.user.id;
+        const client = (0, supabase_1.requireUserClient)(req.accessToken);
+        const requestedPlatform = req.body?.platform === 'instagram' || req.body?.platform === 'facebook'
+            ? req.body.platform
+            : null;
+        const summary = await (0, analyticsLearning_service_1.refreshAnalyticsLearningForUser)(client, userId, {
+            triggerSource: 'manual-learning-refresh',
+            platforms: requestedPlatform ? [requestedPlatform] : [],
+        });
+        await (0, runtimeCache_service_1.invalidateAnalyticsRuntimeCache)(userId);
+        return res.status(200).json({
+            status: 'success',
+            message: 'Learning refreshed successfully',
+            data: summary,
+        });
+    }
+    catch (error) {
+        return res.status(500).json({
+            status: 'error',
+            message: error instanceof Error
+                ? error.message
+                : 'Failed to refresh analytics learning',
+        });
+    }
+};
+exports.refreshAnalyticsLearning = refreshAnalyticsLearning;
 const getSummary = async (req, res) => {
     if (!req.user?.id) {
         return res.status(401).json({

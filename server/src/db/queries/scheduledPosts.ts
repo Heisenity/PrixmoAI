@@ -41,6 +41,10 @@ export type UpdateScheduledPostInput = Partial<CreateScheduledPostInput> & {
   publishedAt?: string | null;
 };
 
+const resolveScheduledPostPublishedAt = (
+  row: Pick<ScheduledPostRow, 'status' | 'published_at' | 'updated_at'>
+) => row.published_at ?? (row.status === 'published' ? row.updated_at : null);
+
 const compactObject = <T extends Record<string, unknown>>(value: T): Partial<T> =>
   Object.fromEntries(
     Object.entries(value).filter(([, entry]) => entry !== undefined)
@@ -122,7 +126,7 @@ const toScheduledPost = (row: ScheduledPostRow): ScheduledPost => ({
   externalPostId: row.external_post_id,
   publishAttemptedAt: row.publish_attempted_at,
   lastError: row.last_error,
-  publishedAt: row.published_at,
+  publishedAt: resolveScheduledPostPublishedAt(row),
   ...getScheduledPostActionState(row),
   createdAt: row.created_at,
   updatedAt: row.updated_at,
@@ -254,6 +258,14 @@ export const updateScheduledPost = async (
   scheduledPostId: string,
   input: UpdateScheduledPostInput
 ): Promise<ScheduledPost> => {
+  const autoPublishedAt =
+    input.status === 'published' && input.publishedAt === undefined
+      ? new Date().toISOString()
+      : input.publishedAt;
+  const autoPublishAttemptedAt =
+    input.status === 'published' && input.publishAttemptedAt === undefined
+      ? autoPublishedAt
+      : input.publishAttemptedAt;
   const payload = compactObject({
     social_account_id: input.socialAccountId,
     content_id: input.contentId,
@@ -265,9 +277,9 @@ export const updateScheduledPost = async (
     scheduled_for: input.scheduledFor,
     status: input.status,
     external_post_id: input.externalPostId,
-    publish_attempted_at: input.publishAttemptedAt,
+    publish_attempted_at: autoPublishAttemptedAt,
     last_error: input.lastError,
-    published_at: input.publishedAt,
+    published_at: autoPublishedAt,
   });
 
   const updateScheduledPostRow = async (nextPayload: Partial<typeof payload>) =>

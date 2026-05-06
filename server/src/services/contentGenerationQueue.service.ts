@@ -31,7 +31,8 @@ import {
   updateJobRuntime,
   waitForQueueJobResult,
 } from './jobRuntime.service';
-import type { BrandProfile } from '../types';
+import type { BrandMemoryMatch, BrandProfile } from '../types';
+import { collectRealtimeTrendIntelligence } from './trendIntelligence.service';
 
 type ResolvedGenerateContentInput = GenerateContentInput & {
   brandName?: string | null;
@@ -40,6 +41,7 @@ type ResolvedGenerateContentInput = GenerateContentInput & {
 type ContentGenerationJobData = {
   userId: string;
   brandProfile: BrandProfile | null;
+  brandMemories: BrandMemoryMatch[];
   input: ResolvedGenerateContentInput;
   includeReelScript: boolean;
 };
@@ -148,11 +150,40 @@ export const startContentGenerationWorker = () => {
           message: 'Preparing content generation.',
         });
 
+        await job.updateProgress(25);
+        await updateJobRuntime(job.id!, {
+          progress: 25,
+          message: 'Researching live web and social trends.',
+        });
+
+        const trendIntelligence =
+          await collectRealtimeTrendIntelligence({
+            purpose: 'caption-generation',
+            userId: job.data.userId,
+            brandProfile: job.data.brandProfile,
+            productInput: job.data.input,
+            brandMemories: job.data.brandMemories,
+            signal,
+          }).catch((error) => {
+            if (error instanceof RequestCancelledError) {
+              throw error;
+            }
+
+            console.warn('[content-generation] live trend research failed; continuing without it.', {
+              jobId: job.id,
+              userId: job.data.userId,
+              error: error instanceof Error ? error.message : String(error),
+            });
+            return null;
+          });
+
         const result = await generateContentPackWithFallback(
           job.data.brandProfile,
           job.data.input,
           {
             includeReelScript: job.data.includeReelScript,
+            brandMemories: job.data.brandMemories,
+            trendIntelligence,
             signal,
             onProviderChange: async (provider) => {
               await updateJobRuntime(job.id!, {
@@ -197,7 +228,8 @@ export const startContentGenerationWorker = () => {
 
 export const enqueueContentGenerationJob = async (
   data: ContentGenerationJobData,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  onQueued?: (jobId: string) => void | Promise<void>
 ) => {
   if (!isRedisConfigured) {
     throw new Error(
@@ -224,6 +256,7 @@ export const enqueueContentGenerationJob = async (
       userId: data.userId,
       productName: data.input.productName,
       includeReelScript: data.includeReelScript,
+      brandMemoryCount: data.brandMemories.length,
     });
 
     await setJobQueued(
@@ -232,6 +265,7 @@ export const enqueueContentGenerationJob = async (
       'Queued for generation.',
       data.userId
     );
+    await onQueued?.(job.id!);
 
     const result = await waitForQueueJobResult<GeneratedContentPackWithProvider>(
       job,

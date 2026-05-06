@@ -5,6 +5,7 @@ const SCHEDULED_POST_ACTION_BUFFER_MS = 4000;
 exports.SCHEDULED_POST_ACTION_BUFFER_MS = SCHEDULED_POST_ACTION_BUFFER_MS;
 const SCHEDULED_POST_ACTION_BLOCKED_REASON = 'Post is being prepared for publishing';
 exports.SCHEDULED_POST_ACTION_BLOCKED_REASON = SCHEDULED_POST_ACTION_BLOCKED_REASON;
+const resolveScheduledPostPublishedAt = (row) => row.published_at ?? (row.status === 'published' ? row.updated_at : null);
 const compactObject = (value) => Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined));
 const isMissingMediaTypeColumnError = (message) => {
     const normalized = (message || '').toLowerCase();
@@ -62,7 +63,7 @@ const toScheduledPost = (row) => ({
     externalPostId: row.external_post_id,
     publishAttemptedAt: row.publish_attempted_at,
     lastError: row.last_error,
-    publishedAt: row.published_at,
+    publishedAt: resolveScheduledPostPublishedAt(row),
     ...getScheduledPostActionState(row),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -153,6 +154,12 @@ const getDueScheduledPosts = async (client, limit = 10) => {
 };
 exports.getDueScheduledPosts = getDueScheduledPosts;
 const updateScheduledPost = async (client, userId, scheduledPostId, input) => {
+    const autoPublishedAt = input.status === 'published' && input.publishedAt === undefined
+        ? new Date().toISOString()
+        : input.publishedAt;
+    const autoPublishAttemptedAt = input.status === 'published' && input.publishAttemptedAt === undefined
+        ? autoPublishedAt
+        : input.publishAttemptedAt;
     const payload = compactObject({
         social_account_id: input.socialAccountId,
         content_id: input.contentId,
@@ -164,9 +171,9 @@ const updateScheduledPost = async (client, userId, scheduledPostId, input) => {
         scheduled_for: input.scheduledFor,
         status: input.status,
         external_post_id: input.externalPostId,
-        publish_attempted_at: input.publishAttemptedAt,
+        publish_attempted_at: autoPublishAttemptedAt,
         last_error: input.lastError,
-        published_at: input.publishedAt,
+        published_at: autoPublishedAt,
     });
     const updateScheduledPostRow = async (nextPayload) => await client
         .from('scheduled_posts')

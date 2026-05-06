@@ -1,6 +1,6 @@
 import dotenv from 'dotenv';
 import type { GenerateImageInput } from '../schemas/image.schema';
-import type { BrandProfile } from '../types';
+import type { BrandProfile, RealtimeTrendIntelligence } from '../types';
 import {
   isAbortError,
   RequestCancelledError,
@@ -196,7 +196,7 @@ const resolveUserFacingFailureMessage = (failures: ProviderFailure[]) => {
   }
 
   if (codes.size === 1 && codes.has('timeout')) {
-    return 'Image generation is taking longer than expected right now. Please try again in a moment.';
+    return 'Image generation is temporarily delayed because many requests are being processed right now. Please try again in a moment.';
   }
 
   if (codes.has('rate_limited')) {
@@ -241,9 +241,29 @@ const buildBrandDirection = (brandProfile: BrandProfile | null): string[] => {
   ];
 };
 
+const buildTrendDirection = (
+  trendIntelligence: RealtimeTrendIntelligence | null | undefined
+): string[] => {
+  if (!trendIntelligence || trendIntelligence.topCandidates.length === 0) {
+    return [];
+  }
+
+  return [
+    'Fresh live creative direction from web and social trend research (distill the pattern, do not copy exact creators or compositions):',
+    `- Summary: ${trendIntelligence.summary}`,
+    `- Primary platform: ${trendIntelligence.selectedPlatform ?? 'not provided'}`,
+    `- Goal: ${trendIntelligence.selectedGoal ?? 'not provided'}`,
+    ...trendIntelligence.insights.slice(0, 3).map(
+      (insight, index) =>
+        `- Visual signal ${index + 1}: ${insight.headline} | ${insight.explanation}`
+    ),
+  ];
+};
+
 const buildImagePrompt = (
   brandProfile: BrandProfile | null,
-  input: ResolvedGenerateImageInput
+  input: ResolvedGenerateImageInput,
+  trendIntelligence?: RealtimeTrendIntelligence | null
 ): string => {
   const parts = [
     `Create a polished, platform-ready marketing visual for ${input.productName}.`,
@@ -271,6 +291,7 @@ const buildImagePrompt = (
       : 'Avoid extra products, distorted anatomy, wrong materials, warped text, clutter, and low-detail rendering.',
     'Keep the main subject in sharp focus and make the final image social-media ready.',
     ...buildBrandDirection(brandProfile),
+    ...buildTrendDirection(trendIntelligence),
   ];
 
   return parts.filter(Boolean).join(' ');
@@ -487,7 +508,7 @@ const classifyProviderFailure = (
       code: 'timeout',
       message: technicalMessage,
       userMessage:
-        'Image generation is taking longer than expected right now. Please try again in a moment.',
+        'Image generation is temporarily delayed because many requests are being processed right now. Please try again in a moment.',
     };
   }
 
@@ -1514,13 +1535,18 @@ export const generateProductImage = async (
   brandProfile: BrandProfile | null,
   input: ResolvedGenerateImageInput,
   options: {
+    trendIntelligence?: RealtimeTrendIntelligence | null;
     signal?: AbortSignal;
     onProviderChange?: (
       provider: ImageGenerationProvider
     ) => void | Promise<void>;
   } = {}
 ): Promise<GeneratedImageResult> => {
-  const promptUsed = buildImagePrompt(brandProfile, input);
+  const promptUsed = buildImagePrompt(
+    brandProfile,
+    input,
+    options.trendIntelligence
+  );
   const failures: ProviderFailure[] = [];
   const signal = options.signal;
 

@@ -7,6 +7,11 @@ import type {
   GeneratedImage as GeneratedImageRecord,
   SchedulerGeneratedMediaIntent,
 } from '../../types';
+import {
+  createRasterImageFileFromUrl,
+  downloadRasterImageFromBlob,
+  downloadRasterImageFromUrl,
+} from '../../lib/generatedImageExport';
 import { formatDateTime } from '../../lib/utils';
 import { ScheduleGeneratedImageAction } from './ScheduleGeneratedImageAction';
 
@@ -22,13 +27,32 @@ export const GeneratedImage = ({
   const { token } = useAuth();
   const [watermarkedAssetUrl, setWatermarkedAssetUrl] = useState<string | null>(null);
   const [isPreparingWatermark, setIsPreparingWatermark] = useState(false);
+  const [isDownloadingImage, setIsDownloadingImage] = useState(false);
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
+  const fetchServerWatermarkedImage = async (signal?: AbortSignal) => {
+    if (!token) {
+      throw new Error('Sign in again to download the watermarked image.');
+    }
+
+    const response = await fetch(`${API_BASE_URL}/api/images/${image.id}/watermarked`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+      signal,
+    });
+
+    if (!response.ok) {
+      throw new Error('Unable to prepare the watermarked image.');
+    }
+
+    return response.blob();
+  };
 
   useEffect(() => {
     let nextObjectUrl: string | null = null;
     const controller = new AbortController();
 
-    if (!showWatermark || !token) {
+    if (!showWatermark) {
       setWatermarkedAssetUrl(null);
       setIsPreparingWatermark(false);
       return () => undefined;
@@ -39,26 +63,29 @@ export const GeneratedImage = ({
 
     void (async () => {
       try {
-        const response = await fetch(
-          `${API_BASE_URL}/api/images/${image.id}/watermarked`,
-          {
-            headers: {
-              Authorization: `Bearer ${token}`,
-            },
-            signal: controller.signal,
-          }
-        );
-
-        if (!response.ok) {
-          throw new Error('Unable to prepare the watermarked image.');
-        }
-
-        const blob = await response.blob();
-        nextObjectUrl = URL.createObjectURL(blob);
+        const file = await createRasterImageFileFromUrl({
+          sourceUrl: image.generatedImageUrl,
+          fileName: `prixmoai-watermarked-${image.id}.png`,
+          watermark: true,
+          signal: controller.signal,
+        });
+        nextObjectUrl = URL.createObjectURL(file);
         setWatermarkedAssetUrl(nextObjectUrl);
       } catch {
-        if (!controller.signal.aborted) {
-          setWatermarkedAssetUrl(null);
+        if (controller.signal.aborted) {
+          return;
+        }
+
+        try {
+          const serverWatermarkedBlob = await fetchServerWatermarkedImage(
+            controller.signal
+          );
+          nextObjectUrl = URL.createObjectURL(serverWatermarkedBlob);
+          setWatermarkedAssetUrl(nextObjectUrl);
+        } catch {
+          if (!controller.signal.aborted) {
+            setWatermarkedAssetUrl(null);
+          }
         }
       } finally {
         if (!controller.signal.aborted) {
@@ -74,7 +101,7 @@ export const GeneratedImage = ({
         URL.revokeObjectURL(nextObjectUrl);
       }
     };
-  }, [image.id, showWatermark, token]);
+  }, [image.generatedImageUrl, image.id, showWatermark, token]);
 
   useEffect(() => {
     if (!isPreviewOpen) {
@@ -98,12 +125,54 @@ export const GeneratedImage = ({
     showWatermark && watermarkedAssetUrl
       ? watermarkedAssetUrl
       : image.generatedImageUrl;
-  const actionUrl =
-    showWatermark && watermarkedAssetUrl
-      ? watermarkedAssetUrl
-      : !showWatermark
-        ? image.generatedImageUrl
-        : null;
+  const isDownloadDisabled = isDownloadingImage || (showWatermark && !token);
+  const handleDownload = async () => {
+    if (isDownloadDisabled) {
+      return;
+    }
+
+    setIsDownloadingImage(true);
+
+    try {
+      await downloadRasterImageFromUrl({
+        sourceUrl: image.generatedImageUrl,
+        fileName: showWatermark
+          ? `prixmoai-watermarked-${image.id}.png`
+          : `prixmoai-generated-${image.id}.png`,
+        watermark: showWatermark,
+      });
+    } catch {
+      if (!showWatermark) {
+        return;
+      }
+
+      try {
+        const serverWatermarkedBlob = await fetchServerWatermarkedImage();
+        await downloadRasterImageFromBlob({
+          sourceBlob: serverWatermarkedBlob,
+          fileName: `prixmoai-watermarked-${image.id}.png`,
+          watermark: false,
+        });
+      } catch {
+        // Keep the UI calm; the user can try again if the source image is temporarily unreachable.
+      }
+    } finally {
+      setIsDownloadingImage(false);
+    }
+  };
+  const handleOpenImage = () => {
+    if (showWatermark) {
+      if (watermarkedAssetUrl) {
+        window.open(watermarkedAssetUrl, '_blank', 'noopener,noreferrer');
+        return;
+      }
+
+      setIsPreviewOpen(true);
+      return;
+    }
+
+    window.open(image.generatedImageUrl, '_blank', 'noopener,noreferrer');
+  };
 
   return (
     <>
@@ -129,62 +198,37 @@ export const GeneratedImage = ({
           >
             <ZoomIn size={16} />
           </button>
-          {actionUrl ? (
-            <>
-              <a
-                className="generated-image-card__action"
-                href={actionUrl}
-                download={
-                  showWatermark ? `prixmoai-watermarked-${image.id}.svg` : undefined
-                }
-                target="_blank"
-                rel="noreferrer"
-                aria-label="Download generated image"
-                title="Download image"
-              >
-                <Download size={16} />
-              </a>
-              <a
-                className="generated-image-card__action"
-                href={actionUrl}
-                target="_blank"
-                rel="noreferrer"
-                aria-label="Open generated image"
-                title="Open image"
-              >
-                <ExternalLink size={16} />
-              </a>
-            </>
-          ) : (
-            <>
-              <button
-                type="button"
-                className="generated-image-card__action generated-image-card__action--disabled"
-                disabled
-                aria-label="Preparing watermarked image"
-                title={
-                  isPreparingWatermark
-                    ? 'Preparing watermarked image'
-                    : 'Watermarked image unavailable'
-                }
-              >
-                <Download size={16} />
-              </button>
-              <button
-                type="button"
-                className="generated-image-card__action generated-image-card__action--disabled"
-                disabled
-                aria-label="Preparing watermarked image"
-                title={
-                  isPreparingWatermark
-                    ? 'Preparing watermarked image'
-                    : 'Watermarked image unavailable'
-                }
-              >
-                <ExternalLink size={16} />
-              </button>
-            </>
-          )}
+          <button
+            type="button"
+            className="generated-image-card__action"
+            onClick={() => {
+              void handleDownload();
+            }}
+            disabled={isDownloadDisabled}
+            aria-label="Download generated image"
+            title={
+              showWatermark
+                ? isPreparingWatermark
+                  ? 'Download PNG with PrixmoAI watermark'
+                  : 'Download PNG with PrixmoAI watermark'
+                : 'Download PNG image'
+            }
+          >
+            <Download size={16} />
+          </button>
+          <button
+            type="button"
+            className="generated-image-card__action"
+            onClick={handleOpenImage}
+            aria-label="Open generated image"
+            title={
+              showWatermark && !watermarkedAssetUrl
+                ? 'Preview watermarked image'
+                : 'Open image'
+            }
+          >
+            <ExternalLink size={16} />
+          </button>
         </div>
       </div>
       <div className="generated-image-card__media">
@@ -223,6 +267,9 @@ export const GeneratedImage = ({
             </button>
           </div>
           <div className="generated-image-lightbox__media">
+            {showWatermark && !watermarkedAssetUrl ? (
+              <span className="generated-image-card__watermark">PRIXMOAI</span>
+            ) : null}
             <img src={previewUrl} alt="Generated visual preview" />
           </div>
         </div>

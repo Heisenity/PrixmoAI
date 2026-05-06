@@ -322,28 +322,26 @@ export const useScheduler = (options: UseSchedulerOptions = {}) => {
       }
 
       const cached = readSchedulerCache(user.id);
+      const hasFreshCache = Boolean(
+        !force &&
+          cached?.cachedAt &&
+          isBrowserCacheFresh(cached.cachedAt, SCHEDULER_CACHE_TTL_MS)
+      );
 
       if (cached?.value) {
         setAccounts(cached.value.accounts);
         setPosts(cached.value.posts);
         setItems(cached.value.items);
         setError(null);
-
-        if (
-          !force &&
-          cached.cachedAt &&
-          isBrowserCacheFresh(cached.cachedAt, SCHEDULER_CACHE_TTL_MS)
-        ) {
-          setSchedulerStatus('ready');
-          return;
-        }
       }
 
       if (!silent && !cached?.value) {
         setIsLoading(true);
         setSchedulerStatus('syncing');
-      } else if (!silent) {
+      } else if (!silent && !hasFreshCache) {
         setSchedulerStatus('syncing');
+      } else if (hasFreshCache) {
+        setSchedulerStatus('ready');
       }
 
       try {

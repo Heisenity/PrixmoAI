@@ -7,11 +7,13 @@
     "build": "tsc -p tsconfig.json",
     "doppler:build": "doppler run -- tsc -p tsconfig.json",
     "doppler:dev": "doppler run -- nodemon --exec ts-node src/index.ts",
+    "doppler:evaluate:brand-memory": "doppler run -- ts-node src/scripts/evaluateBrandMemory.ts",
     "doppler:start": "doppler run -- node dist/src/index.js",
     "doppler:gemini:test": "doppler run -- ts-node src/scripts/testGemini.ts",
     "doppler:typecheck": "doppler run -- tsc --noEmit -p tsconfig.json",
     "start": "node dist/src/index.js",
     "typecheck": "tsc --noEmit -p tsconfig.json",
+    "evaluate:brand-memory": "ts-node src/scripts/evaluateBrandMemory.ts",
     "test": "echo \"Error: no test specified\" && exit 1",
     "dev": "nodemon --exec ts-node src/index.ts"
   },

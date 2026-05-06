@@ -5,6 +5,7 @@ import { Button } from '../../components/ui/button';
 import { useAuth } from '../../hooks/useAuth';
 import { ProfileFormPanel } from '../../components/settings/ProfileFormPanel';
 import { useBrandProfile } from '../../hooks/useBrandProfile';
+import { getAvatarCandidates } from '../../lib/profile';
 import { normalizeUsername } from '../../lib/username';
 
 export const OnboardingPage = () => {
@@ -12,6 +13,14 @@ export const OnboardingPage = () => {
   const { user, signOut } = useAuth();
   const navigate = useNavigate();
   const userMetadata = (user?.user_metadata ?? {}) as Record<string, unknown>;
+  const avatarCandidates = getAvatarCandidates(profile?.avatarUrl, [
+    userMetadata,
+    ...(user?.identities ?? []).map((identity) =>
+      identity.identity_data && typeof identity.identity_data === 'object'
+        ? (identity.identity_data as Record<string, unknown>)
+        : null
+    ),
+  ]);
   const profileDefaults = {
     brandName: profile?.brandName || '',
     fullName:
@@ -29,12 +38,7 @@ export const OnboardingPage = () => {
       normalizeUsername(user?.email ? user.email.split('@')[0] : '') ||
       undefined,
     avatarUrl:
-      profile?.avatarUrl ||
-      (typeof userMetadata.avatar_url === 'string'
-        ? userMetadata.avatar_url
-        : '') ||
-      (typeof userMetadata.picture === 'string' ? userMetadata.picture : '') ||
-      undefined,
+      profile?.avatarUrl || avatarCandidates[0] || undefined,
     websiteUrl:
       profile?.websiteUrl ||
       (typeof userMetadata.website === 'string' ? userMetadata.website : '') ||

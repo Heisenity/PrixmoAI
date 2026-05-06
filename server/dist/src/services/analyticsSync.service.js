@@ -9,6 +9,7 @@ const redis_1 = require("../lib/redis");
 const queueNames_1 = require("../queues/queueNames");
 const workerOptions_1 = require("../queues/workerOptions");
 const runtimeCache_service_1 = require("./runtimeCache.service");
+const analyticsLearning_service_1 = require("./analyticsLearning.service");
 const GRAPH_BASE_URL = `https://graph.facebook.com/${constants_1.META_GRAPH_VERSION}`;
 const INSTAGRAM_GRAPH_BASE_URL = 'https://graph.instagram.com';
 const SYNC_DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
@@ -77,7 +78,7 @@ const toSyncScheduledPost = (row) => ({
     mediaType: row.media_type ?? inferMediaTypeFromUrl(row.media_url),
     status: row.status,
     externalPostId: row.external_post_id,
-    publishedAt: row.published_at,
+    publishedAt: row.published_at ?? (row.status === 'published' ? row.updated_at : null),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
 });
@@ -802,6 +803,7 @@ const fetchMetaAudienceSnapshot = async (account) => {
 const syncAnalyticsForUser = async (client, userId, options = {}) => {
     const lookbackDays = options.lookbackDays ?? constants_1.ANALYTICS_SYNC_LOOKBACK_DAYS;
     const publishedSince = new Date(Date.now() - lookbackDays * 24 * 60 * 60 * 1000).toISOString();
+    const publishedSinceMs = new Date(publishedSince).getTime();
     const [accountsResult, postsResult] = await Promise.all([
         client
             .from('social_accounts')
@@ -816,8 +818,7 @@ const syncAnalyticsForUser = async (client, userId, options = {}) => {
             .eq('user_id', userId)
             .eq('status', 'published')
             .not('external_post_id', 'is', null)
-            .gte('published_at', publishedSince)
-            .order('published_at', { ascending: false }),
+            .order('updated_at', { ascending: false }),
     ]);
     if (accountsResult.error) {
         throw new Error(accountsResult.error.message || 'Failed to load Meta accounts for analytics sync');
@@ -831,6 +832,10 @@ const syncAnalyticsForUser = async (client, userId, options = {}) => {
     const socialAccountById = new Map(socialAccounts.map((account) => [account.id, account]));
     const posts = (postsResult.data ?? [])
         .map((row) => toSyncScheduledPost(row))
+        .filter((post) => {
+        const publishedAtMs = post.publishedAt ? new Date(post.publishedAt).getTime() : NaN;
+        return Number.isFinite(publishedAtMs) && publishedAtMs >= publishedSinceMs;
+    })
         .filter((post) => options.postIds?.length ? options.postIds.includes(post.id) : true)
         .filter((post) => socialAccountById.has(post.socialAccountId));
     const summary = {
@@ -870,6 +875,39 @@ const syncAnalyticsForUser = async (client, userId, options = {}) => {
         }
     }
     await (0, runtimeCache_service_1.invalidateAnalyticsRuntimeCache)(userId);
+    const updatedPlatforms = [
+        ...new Set(posts
+            .map((post) => normalizePlatform(post.platform))
+            .filter((platform) => Boolean(platform))),
+    ];
+    const updatedContentIds = [
+        ...new Set(posts
+            .map((post) => post.contentId)
+            .filter((contentId) => Boolean(contentId))),
+    ];
+    const updatedPostIds = posts.map((post) => post.id);
+    if (options.awaitLearning) {
+        await (0, analyticsLearning_service_1.refreshAnalyticsLearningForUser)(client, userId, {
+            triggerSource: 'analytics-sync',
+            platforms: updatedPlatforms,
+            contentIds: updatedContentIds,
+            scheduledPostIds: updatedPostIds,
+        });
+    }
+    else {
+        void (0, analyticsLearning_service_1.enqueueAnalyticsLearningJob)({
+            userId,
+            triggerSource: 'analytics-sync',
+            platforms: updatedPlatforms,
+            contentIds: updatedContentIds,
+            scheduledPostIds: updatedPostIds,
+        }).catch((error) => {
+            console.warn('[analytics-learning] failed to enqueue learning job after analytics sync', {
+                userId,
+                error: error instanceof Error ? error.message : String(error),
+            });
+        });
+    }
     return summary;
 };
 exports.syncAnalyticsForUser = syncAnalyticsForUser;

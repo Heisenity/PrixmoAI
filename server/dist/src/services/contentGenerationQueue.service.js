@@ -10,6 +10,7 @@ const requestCancellation_1 = require("../lib/requestCancellation");
 const queueNames_1 = require("../queues/queueNames");
 const workerOptions_1 = require("../queues/workerOptions");
 const jobRuntime_service_1 = require("./jobRuntime.service");
+const trendIntelligence_service_1 = require("./trendIntelligence.service");
 let contentQueue = null;
 let contentWorker = null;
 let contentWorkerIdleTimer = null;
@@ -75,8 +76,33 @@ const startContentGenerationWorker = () => {
                 progress: 10,
                 message: 'Preparing content generation.',
             });
+            await job.updateProgress(25);
+            await (0, jobRuntime_service_1.updateJobRuntime)(job.id, {
+                progress: 25,
+                message: 'Researching live web and social trends.',
+            });
+            const trendIntelligence = await (0, trendIntelligence_service_1.collectRealtimeTrendIntelligence)({
+                purpose: 'caption-generation',
+                userId: job.data.userId,
+                brandProfile: job.data.brandProfile,
+                productInput: job.data.input,
+                brandMemories: job.data.brandMemories,
+                signal,
+            }).catch((error) => {
+                if (error instanceof requestCancellation_1.RequestCancelledError) {
+                    throw error;
+                }
+                console.warn('[content-generation] live trend research failed; continuing without it.', {
+                    jobId: job.id,
+                    userId: job.data.userId,
+                    error: error instanceof Error ? error.message : String(error),
+                });
+                return null;
+            });
             const result = await (0, gemini_1.generateContentPackWithFallback)(job.data.brandProfile, job.data.input, {
                 includeReelScript: job.data.includeReelScript,
+                brandMemories: job.data.brandMemories,
+                trendIntelligence,
                 signal,
                 onProviderChange: async (provider) => {
                     await (0, jobRuntime_service_1.updateJobRuntime)(job.id, {
@@ -112,7 +138,7 @@ const startContentGenerationWorker = () => {
     contentWorker.on('drained', scheduleContentWorkerIdleShutdown);
 };
 exports.startContentGenerationWorker = startContentGenerationWorker;
-const enqueueContentGenerationJob = async (data, signal) => {
+const enqueueContentGenerationJob = async (data, signal, onQueued) => {
     if (!redis_1.isRedisConfigured) {
         throw new Error('Redis is not configured. Set REDIS_URL (or UPSTASH_REDIS_URL) before generating content.');
     }
@@ -129,8 +155,10 @@ const enqueueContentGenerationJob = async (data, signal) => {
             userId: data.userId,
             productName: data.input.productName,
             includeReelScript: data.includeReelScript,
+            brandMemoryCount: data.brandMemories.length,
         });
         await (0, jobRuntime_service_1.setJobQueued)(job.id, queueNames_1.QUEUE_NAMES.contentGenerate, 'Queued for generation.', data.userId);
+        await onQueued?.(job.id);
         const result = await (0, jobRuntime_service_1.waitForQueueJobResult)(job, queueEvents, signal);
         console.info('[content-generation] job completed', {
             jobId: job.id,

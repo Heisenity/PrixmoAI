@@ -6,10 +6,12 @@ export const GenerationBlackHoleLoader = ({
   label,
   className,
   verboseMessages,
+  preferLatestVerboseMessage = false,
 }: {
   label: string;
   className?: string;
   verboseMessages?: string[];
+  preferLatestVerboseMessage?: boolean;
 }) => {
   const sanitizedVerboseMessages = useMemo(
     () => verboseMessages?.map((message) => message.trim()).filter(Boolean) ?? [],
@@ -19,11 +21,15 @@ export const GenerationBlackHoleLoader = ({
   const [activeVerboseIndex, setActiveVerboseIndex] = useState(0);
 
   useEffect(() => {
-    setActiveVerboseIndex(0);
-  }, [verboseSignature]);
+    setActiveVerboseIndex(
+      preferLatestVerboseMessage
+        ? Math.max(0, sanitizedVerboseMessages.length - 1)
+        : 0
+    );
+  }, [preferLatestVerboseMessage, sanitizedVerboseMessages.length, verboseSignature]);
 
   useEffect(() => {
-    if (sanitizedVerboseMessages.length <= 1) {
+    if (preferLatestVerboseMessage || sanitizedVerboseMessages.length <= 1) {
       return;
     }
 
@@ -43,7 +49,7 @@ export const GenerationBlackHoleLoader = ({
         window.clearTimeout(timeoutId);
       }
     };
-  }, [sanitizedVerboseMessages]);
+  }, [preferLatestVerboseMessage, sanitizedVerboseMessages]);
 
   const activeVerboseMessage = sanitizedVerboseMessages[activeVerboseIndex] ?? null;
   const visibleVerboseFeed = useMemo(() => {

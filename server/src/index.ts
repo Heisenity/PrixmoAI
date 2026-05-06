@@ -19,6 +19,7 @@ import {
   isMetaOAuthConfigured,
 } from "./config/constants";
 import { startAnalyticsSyncWorker } from './services/analyticsSync.service';
+import { startAnalyticsLearningWorker } from './services/analyticsLearning.service';
 import { startContentGenerationWorker } from './services/contentGenerationQueue.service';
 import { startImageGenerationWorker } from './services/imageGenerationQueue.service';
 import { startSchedulerPublisherWorker } from './services/schedulerPublisher.service';
@@ -91,6 +92,7 @@ app.listen(PORT, () => {
   if (START_BACKGROUND_WORKERS_ON_BOOT) {
     startSchedulerPublisherWorker();
     startAnalyticsSyncWorker();
+    startAnalyticsLearningWorker();
   }
   if (!isRedisConfigured) {
     console.warn(

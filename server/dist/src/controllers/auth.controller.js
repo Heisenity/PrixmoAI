@@ -3,11 +3,13 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.suggestBrandDescription = exports.suggestIndustry = exports.getMe = exports.checkUsernameAvailability = exports.saveProfile = void 0;
 const zod_1 = require("zod");
 const gemini_1 = require("../ai/gemini");
+const shared_1 = require("../ai/prompts/shared");
 const brandProfiles_1 = require("../db/queries/brandProfiles");
 const brandProfileMemory_1 = require("../db/queries/brandProfileMemory");
 const supabase_1 = require("../db/supabase");
 const dictationLanguages_1 = require("../lib/dictationLanguages");
 const username_1 = require("../lib/username");
+const brandMemory_service_1 = require("../services/brandMemory.service");
 const PROFILE_MEMORY_SNAPSHOT_KEYS = [
     'brandName',
     'fullName',
@@ -349,47 +351,6 @@ const sanitizeGeneratedBrandDescription = (value) => value
     .trim()
     .slice(0, 500)
     .trim();
-const buildConsoleTextSummary = (value, previewLength = 72) => {
-    const normalized = value?.replace(/\s+/g, ' ').trim() ?? '';
-    if (!normalized) {
-        return {
-            present: false,
-            chars: 0,
-            preview: null,
-        };
-    }
-    return {
-        present: true,
-        chars: normalized.length,
-        preview: normalized.length > previewLength
-            ? `${normalized.slice(0, previewLength).trimEnd()}...`
-            : normalized,
-    };
-};
-const summarizeIndustrySuggestionInputForConsole = (input) => ({
-    brandName: input.brandName,
-    username: input.username?.trim() || null,
-    websiteUrl: input.websiteUrl?.trim() || null,
-    description: buildConsoleTextSummary(input.description, 88),
-    businessProblem: buildConsoleTextSummary(input.suggestionText, 88),
-    socialContext: buildConsoleTextSummary(input.socialContext, 88),
-    catalogSize: input.catalog.length,
-});
-const summarizeBrandDescriptionInputForConsole = (input) => ({
-    brandName: input.brandName,
-    username: input.username?.trim() || null,
-    websiteUrl: input.websiteUrl?.trim() || null,
-    industry: input.industry.trim(),
-    primaryIndustry: input.primaryIndustry.trim(),
-    secondaryIndustries: input.secondaryIndustries,
-    secondaryCount: input.secondaryIndustries.length,
-    targetAudience: buildConsoleTextSummary(input.targetAudience, 72),
-    brandVoice: input.brandVoice.trim(),
-    socialContext: buildConsoleTextSummary(input.socialContext, 88),
-    existingDescription: buildConsoleTextSummary(input.existingDescription, 88),
-    shortInput: buildConsoleTextSummary(input.shortInput, 88),
-    language: input.language,
-});
 const slugifyUsernameSeed = (value) => (0, username_1.normalizeUsername)(value
     .replace(/[&+/]+/g, ' ')
     .replace(/\s+/g, ' ')
@@ -466,12 +427,6 @@ const filterAvailableUsernames = async (candidates, desiredUsername) => {
 const buildUsernameSuggestions = async ({ desiredUsername, brandName, fullName, emailLocalPart, }) => {
     let provider = 'fallback';
     let aiCandidates = [];
-    console.info('[auth] username suggestion started', {
-        desiredUsername,
-        brandName,
-        fullName: fullName?.trim() || null,
-        emailLocalPart: emailLocalPart?.trim() || null,
-    });
     try {
         const aiSuggestion = await (0, gemini_1.generateStructuredDataWithGroqFallback)(buildUsernameSuggestionPrompt({
             desiredUsername,
@@ -481,12 +436,6 @@ const buildUsernameSuggestions = async ({ desiredUsername, brandName, fullName, 
         }), usernameSuggestionResponseSchema, 'username-suggestion');
         provider = aiSuggestion.provider;
         aiCandidates = aiSuggestion.data.suggestions;
-        console.info('[auth] username suggestion ai candidates ready', {
-            desiredUsername,
-            provider,
-            candidateCount: aiCandidates.length,
-            candidates: aiCandidates.slice(0, 5),
-        });
     }
     catch (error) {
         console.warn('[auth] username suggestion fell back to deterministic mode', {
@@ -506,12 +455,6 @@ const buildUsernameSuggestions = async ({ desiredUsername, brandName, fullName, 
     });
     const initialAvailable = await filterAvailableUsernames([...aiCandidates, ...deterministicCandidates], desiredUsername);
     if (initialAvailable.length >= 2) {
-        console.info('[auth] username suggestion finalized', {
-            desiredUsername,
-            provider,
-            availableCount: initialAvailable.length,
-            selectedSuggestions: initialAvailable.slice(0, 2),
-        });
         return {
             suggestions: initialAvailable.slice(0, 2),
             provider,
@@ -541,12 +484,6 @@ const buildUsernameSuggestions = async ({ desiredUsername, brandName, fullName, 
             }
         }
     }
-    console.info('[auth] username suggestion finalized', {
-        desiredUsername,
-        provider: initialAvailable.length ? provider : 'fallback',
-        availableCount: extendedCandidates.length,
-        selectedSuggestions: extendedCandidates.slice(0, 2),
-    });
     return {
         suggestions: extendedCandidates.slice(0, 2),
         provider: initialAvailable.length ? provider : 'fallback',
@@ -555,15 +492,6 @@ const buildUsernameSuggestions = async ({ desiredUsername, brandName, fullName, 
 const getUsernameAvailability = async ({ accessToken, desiredUsername, brandName, fullName, userId, email, requestContext = 'system', }) => {
     const normalizedUsername = (0, username_1.normalizeUsername)(desiredUsername);
     const emailLocalPart = (0, username_1.getEmailLocalPart)(email);
-    console.info('[auth] username availability started', {
-        userId,
-        requestContext,
-        desiredUsername,
-        normalizedUsername,
-        brandName: brandName?.trim() || null,
-        fullName: fullName?.trim() || null,
-        emailLocalPart: emailLocalPart?.trim() || null,
-    });
     const persistResult = async ({ isAvailable, message, suggestions, provider, errorMessage, }) => {
         try {
             await persistUsernameRecommendationEvent({
@@ -630,12 +558,15 @@ const getUsernameAvailability = async ({ accessToken, desiredUsername, brandName
 };
 const isUsernameConflictError = (error) => error instanceof Error &&
     /duplicate key value|unique constraint|brand_profiles_username_unique_idx|username/i.test(error.message);
-const buildBrandDescriptionSuggestionPrompt = (input) => {
+const buildBrandDescriptionSuggestionPrompt = (input, brandMemories = []) => {
     const languageLabel = dictationLanguages_1.DICTATION_LANGUAGE_LABELS[input.language] ?? 'English';
     const secondaryIndustries = input.secondaryIndustries?.length
         ? input.secondaryIndustries.join(', ')
         : 'not provided';
-    return [
+    const semanticMemorySection = (0, shared_1.formatRetrievedBrandMemories)(brandMemories);
+    const socialContextChunks = (0, brandMemory_service_1.formatSemanticReferenceChunks)('Social media context', input.socialContext, 4);
+    const existingDescriptionChunks = (0, brandMemory_service_1.formatSemanticReferenceChunks)('Existing description context', input.existingDescription, 3);
+    const lines = [
         'You write polished, production-ready brand descriptions for business profiles.',
         `Write the final description in ${languageLabel}.`,
         'Use the short brand note as the primary source, then strengthen it with the supporting brand context.',
@@ -656,15 +587,29 @@ const buildBrandDescriptionSuggestionPrompt = (input) => {
         `- Secondary industries: ${secondaryIndustries}`,
         `- Target audience: ${input.targetAudience?.trim() || 'not provided'}`,
         `- Brand voice: ${input.brandVoice?.trim() || 'not provided'}`,
-        `- Social media links / bios / posts: ${input.socialContext?.trim() || 'not provided'}`,
-        `- Existing description: ${input.existingDescription?.trim() || 'not provided'}`,
         `- Short brand note: ${input.shortInput.trim()}`,
         '',
         'Return JSON only in this exact shape:',
         '{',
         '  "description": "Production-ready brand description"',
         '}',
-    ].join('\n');
+    ];
+    if (semanticMemorySection) {
+        lines.splice(lines.length - 4, 0, '', semanticMemorySection);
+    }
+    if (socialContextChunks.length > 0) {
+        lines.splice(lines.length - 4, 0, '', ...socialContextChunks);
+    }
+    else {
+        lines.splice(lines.length - 4, 0, '', '- Social media links / bios / posts: not provided');
+    }
+    if (existingDescriptionChunks.length > 0) {
+        lines.splice(lines.length - 4, 0, '', ...existingDescriptionChunks);
+    }
+    else {
+        lines.splice(lines.length - 4, 0, '', '- Existing description: not provided');
+    }
+    return lines.join('\n');
 };
 const persistIndustrySuggestionEvent = async ({ accessToken, userId, requestContext, requestBody, status, provider, responsePayload, errorMessage, }) => {
     const client = (0, supabase_1.requireUserClient)(accessToken);
@@ -768,6 +713,16 @@ const saveProfile = async (req, res) => {
         const previousProfile = await (0, brandProfiles_1.getBrandProfileByUserId)(client, req.user.id);
         const profile = await (0, brandProfiles_1.upsertBrandProfile)(client, req.user.id, toBrandProfileInput(req.body));
         await persistBrandProfileMemoryEvent(req, previousProfile, profile);
+        try {
+            await (0, brandMemory_service_1.syncBrandProfileSemanticMemory)(client, req.user.id, profile);
+        }
+        catch (memoryError) {
+            console.warn('[auth] failed to index brand profile semantic memory', {
+                userId: req.user.id,
+                profileId: profile.id,
+                error: memoryError instanceof Error ? memoryError.message : String(memoryError),
+            });
+        }
         return res.status(200).json({
             status: 'success',
             message: 'Brand profile saved successfully',
@@ -901,11 +856,6 @@ const suggestIndustry = async (req, res) => {
         });
     }
     const requestContext = req.body.requestContext ?? 'settings';
-    console.info('[auth] industry suggestion started', {
-        userId: req.user.id,
-        requestContext,
-        input: summarizeIndustrySuggestionInputForConsole(req.body),
-    });
     try {
         const aiSuggestion = await (0, gemini_1.generateStructuredDataWithFallback)(buildIndustrySuggestionPrompt(req.body), industrySuggestionResponseSchema, 'industry-suggestion');
         const primaryIndustry = aiSuggestion.data.primaryIndustry.trim();
@@ -923,9 +873,6 @@ const suggestIndustry = async (req, res) => {
             provider: aiSuggestion.provider,
             primaryIndustry,
             secondaryCount: secondaryIndustries.length,
-            secondaryIndustries,
-            reasoning: responsePayload.reasoning,
-            signals: responsePayload.signals,
         });
         try {
             await persistIndustrySuggestionEvent({
@@ -955,9 +902,6 @@ const suggestIndustry = async (req, res) => {
         console.warn('[auth] industry suggestion fell back to heuristic scoring', {
             userId: req.user.id,
             requestContext,
-            selectedPrimaryIndustry: fallbackSuggestion.primaryIndustry,
-            secondaryIndustries: fallbackSuggestion.secondaryIndustries,
-            signals: fallbackSuggestion.signals,
             error: error instanceof gemini_1.ContentGenerationProvidersExhaustedError
                 ? error.failures
                 : error instanceof Error
@@ -1005,10 +949,23 @@ const suggestBrandDescription = async (req, res) => {
     console.info('[auth] brand description suggestion started', {
         userId: req.user.id,
         requestContext,
-        input: summarizeBrandDescriptionInputForConsole(req.body),
+        language: req.body.language,
+        shortInputChars: req.body.shortInput.length,
     });
     try {
-        const aiSuggestion = await (0, gemini_1.generateStructuredDataWithGroqFallback)(buildBrandDescriptionSuggestionPrompt(req.body), brandDescriptionSuggestionResponseSchema, 'brand-description-suggestion');
+        let brandMemories = [];
+        try {
+            const client = (0, supabase_1.requireUserClient)(req.accessToken);
+            brandMemories = await (0, brandMemory_service_1.getRelevantMemoriesForBrandDescription)(client, req.user.id, req.body);
+        }
+        catch (memoryError) {
+            console.warn('[auth] failed to retrieve semantic brand memory for description', {
+                userId: req.user.id,
+                requestContext,
+                error: memoryError instanceof Error ? memoryError.message : String(memoryError),
+            });
+        }
+        const aiSuggestion = await (0, gemini_1.generateStructuredDataWithGroqFallback)(buildBrandDescriptionSuggestionPrompt(req.body, brandMemories), brandDescriptionSuggestionResponseSchema, 'brand-description-suggestion');
         const description = sanitizeGeneratedBrandDescription(aiSuggestion.data.description);
         console.info('[auth] brand description suggestion succeeded', {
             userId: req.user.id,
@@ -1016,9 +973,6 @@ const suggestBrandDescription = async (req, res) => {
             language: req.body.language,
             provider: aiSuggestion.provider,
             descriptionChars: description.length,
-            descriptionPreview: description.length > 120
-                ? `${description.slice(0, 120).trimEnd()}...`
-                : description,
         });
         try {
             await persistBrandDescriptionSuggestionEvent({

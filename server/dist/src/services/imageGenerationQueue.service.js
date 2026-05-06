@@ -10,6 +10,7 @@ const requestCancellation_1 = require("../lib/requestCancellation");
 const queueNames_1 = require("../queues/queueNames");
 const workerOptions_1 = require("../queues/workerOptions");
 const jobRuntime_service_1 = require("./jobRuntime.service");
+const trendIntelligence_service_1 = require("./trendIntelligence.service");
 let imageQueue = null;
 let imageWorker = null;
 let imageWorkerIdleTimer = null;
@@ -88,7 +89,45 @@ const startImageGenerationWorker = () => {
                 progress: 15,
                 message: 'Starting image generation.',
             });
+            await job.updateProgress(30);
+            await (0, jobRuntime_service_1.updateJobRuntime)(job.id, {
+                progress: 30,
+                message: 'Researching live visual and platform trends.',
+            });
+            const trendSeed = {
+                brandName: job.data.contentContext?.brandName ?? job.data.input.brandName ?? null,
+                useBrandName: job.data.contentContext?.useBrandName ?? job.data.input.useBrandName,
+                productName: job.data.contentContext?.productName ?? job.data.input.productName,
+                productDescription: job.data.contentContext?.productDescription ??
+                    job.data.input.productDescription ??
+                    job.data.input.prompt ??
+                    null,
+                platform: job.data.contentContext?.platform ?? null,
+                goal: job.data.contentContext?.goal ?? null,
+                tone: job.data.contentContext?.tone ?? null,
+                audience: job.data.contentContext?.audience ?? null,
+                keywords: job.data.contentContext?.keywords ?? [],
+            };
+            const trendIntelligence = await (0, trendIntelligence_service_1.collectRealtimeTrendIntelligence)({
+                purpose: 'image-generation',
+                userId: job.data.userId,
+                brandProfile: job.data.brandProfile,
+                productInput: trendSeed,
+                brandMemories: job.data.brandMemories,
+                signal,
+            }).catch((error) => {
+                if (error instanceof requestCancellation_1.RequestCancelledError) {
+                    throw error;
+                }
+                console.warn('[image-generation] live trend research failed; continuing without it.', {
+                    jobId: job.id,
+                    userId: job.data.userId,
+                    error: error instanceof Error ? error.message : String(error),
+                });
+                return null;
+            });
             const result = await (0, imageGen_1.generateProductImage)(job.data.brandProfile, job.data.input, {
+                trendIntelligence,
                 signal,
                 onProviderChange: async (provider) => {
                     await (0, jobRuntime_service_1.updateJobRuntime)(job.id, {

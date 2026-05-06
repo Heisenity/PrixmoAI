@@ -6,5 +6,6 @@ exports.QUEUE_NAMES = {
     imageGenerate: 'image.generate',
     schedulerPublish: 'scheduler.publish',
     analyticsSyncUser: 'analytics.sync.user',
+    analyticsLearningUser: 'analytics.learning.user',
     videoGenerate: 'video.generate',
 };

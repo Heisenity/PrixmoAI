@@ -12,10 +12,12 @@ import {
   HASHTAG_VARIATION_COUNT,
 } from '../config/constants';
 import type {
+  BrandMemoryMatch,
   BrandProfile,
   CaptionVariant,
   GeneratedContentPack,
   ProductInput,
+  RealtimeTrendIntelligence,
   ReelScript,
 } from '../types';
 import { buildCaptionPrompt } from './prompts/caption.prompt';
@@ -64,6 +66,8 @@ type GroqResponse = {
 
 type GenerationRequestOptions = {
   includeReelScript?: boolean;
+  brandMemories?: BrandMemoryMatch[];
+  trendIntelligence?: RealtimeTrendIntelligence | null;
   signal?: AbortSignal;
   onProviderChange?: (
     provider: GenerationProvider
@@ -86,7 +90,8 @@ type StructuredArtifactKind =
   | 'reel-script'
   | 'industry-suggestion'
   | 'brand-description-suggestion'
-  | 'username-suggestion';
+  | 'username-suggestion'
+  | 'memory-rerank';
 
 type StructuredStage =
   | 'provider-http-failure'
@@ -1172,6 +1177,8 @@ const generateCaptionsWithProvider = async (
   provider: GenerationProvider,
   brandProfile: BrandProfile | null,
   productInput: ProductInput,
+  brandMemories?: BrandMemoryMatch[],
+  trendIntelligence?: RealtimeTrendIntelligence | null,
   signal?: AbortSignal
 ): Promise<CaptionVariant[]> => {
   const startedAt = Date.now();
@@ -1181,7 +1188,12 @@ const generateCaptionsWithProvider = async (
   });
   const response = await generateStructuredResponseWithProvider(
     provider,
-    buildCaptionPrompt(brandProfile, productInput),
+    buildCaptionPrompt(
+      brandProfile,
+      productInput,
+      brandMemories,
+      trendIntelligence
+    ),
     captionResponseSchema,
     'captions',
     signal
@@ -1221,6 +1233,8 @@ const generateHashtagsWithProvider = async (
   provider: GenerationProvider,
   brandProfile: BrandProfile | null,
   productInput: ProductInput,
+  brandMemories?: BrandMemoryMatch[],
+  trendIntelligence?: RealtimeTrendIntelligence | null,
   signal?: AbortSignal
 ): Promise<string[]> => {
   const startedAt = Date.now();
@@ -1230,7 +1244,12 @@ const generateHashtagsWithProvider = async (
   });
   const response = await generateStructuredResponseWithProvider(
     provider,
-    buildHashtagPrompt(brandProfile, productInput),
+    buildHashtagPrompt(
+      brandProfile,
+      productInput,
+      brandMemories,
+      trendIntelligence
+    ),
     hashtagResponseSchema,
     'hashtags',
     signal
@@ -1258,6 +1277,8 @@ const generateReelScriptWithProvider = async (
   provider: GenerationProvider,
   brandProfile: BrandProfile | null,
   productInput: ProductInput,
+  brandMemories?: BrandMemoryMatch[],
+  trendIntelligence?: RealtimeTrendIntelligence | null,
   signal?: AbortSignal
 ): Promise<ReelScript> => {
   const startedAt = Date.now();
@@ -1267,7 +1288,12 @@ const generateReelScriptWithProvider = async (
   });
   const response = await generateStructuredResponseWithProvider(
     provider,
-    buildReelScriptPrompt(brandProfile, productInput),
+    buildReelScriptPrompt(
+      brandProfile,
+      productInput,
+      brandMemories,
+      trendIntelligence
+    ),
     reelScriptResponseSchema,
     'reel-script',
     signal
@@ -1300,17 +1326,23 @@ const generateContentPackWithProvider = async (
     provider,
     kind: 'content-pack',
     includeReelScript,
+    brandMemoryCount: options.brandMemories?.length ?? 0,
+    trendSignals: options.trendIntelligence?.topCandidates.length ?? 0,
   });
   const captionsPromise = generateCaptionsWithProvider(
     provider,
     brandProfile,
     productInput,
+    options.brandMemories,
+    options.trendIntelligence,
     signal
   );
   const hashtagsPromise = generateHashtagsWithProvider(
     provider,
     brandProfile,
     productInput,
+    options.brandMemories,
+    options.trendIntelligence,
     signal
   );
   const reelScriptPromise = includeReelScript
@@ -1321,6 +1353,8 @@ const generateContentPackWithProvider = async (
             provider,
             brandProfile,
             productInput,
+            options.brandMemories,
+            options.trendIntelligence,
             signal
           );
         } catch (error) {
@@ -1375,21 +1409,24 @@ const generateContentPackWithProvider = async (
 
 export const generateCaptions = async (
   brandProfile: BrandProfile | null,
-  productInput: ProductInput
+  productInput: ProductInput,
+  brandMemories?: BrandMemoryMatch[]
 ): Promise<CaptionVariant[]> =>
-  generateCaptionsWithProvider('gemini', brandProfile, productInput);
+  generateCaptionsWithProvider('gemini', brandProfile, productInput, brandMemories);
 
 export const generateHashtags = async (
   brandProfile: BrandProfile | null,
-  productInput: ProductInput
+  productInput: ProductInput,
+  brandMemories?: BrandMemoryMatch[]
 ): Promise<string[]> =>
-  generateHashtagsWithProvider('gemini', brandProfile, productInput);
+  generateHashtagsWithProvider('gemini', brandProfile, productInput, brandMemories);
 
 export const generateReelScript = async (
   brandProfile: BrandProfile | null,
-  productInput: ProductInput
+  productInput: ProductInput,
+  brandMemories?: BrandMemoryMatch[]
 ): Promise<ReelScript> =>
-  generateReelScriptWithProvider('gemini', brandProfile, productInput);
+  generateReelScriptWithProvider('gemini', brandProfile, productInput, brandMemories);
 
 export const hasMeaningfulReelScript = (script: ReelScript): boolean =>
   Boolean(script.hook.trim() && script.body.trim() && script.cta.trim());

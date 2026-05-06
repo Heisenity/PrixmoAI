@@ -14,6 +14,7 @@ const constants_1 = require("../config/constants");
 const meta_service_1 = require("../services/meta.service");
 const schedulerPublisher_service_1 = require("../services/schedulerPublisher.service");
 const storage_service_1 = require("../services/storage.service");
+const brandMemory_service_1 = require("../services/brandMemory.service");
 const parsePositiveInt = (value, fallback) => {
     if (typeof value !== 'string') {
         return fallback;
@@ -70,6 +71,48 @@ const toRecord = (value) => value && typeof value === 'object' && !Array.isArray
     ? value
     : {};
 const readString = (value) => typeof value === 'string' && value.trim() ? value.trim() : null;
+const readRecommendedCaptionMetadata = (value) => {
+    const metadata = toRecord(value);
+    const recommendation = toRecord(metadata.recommendedCaption);
+    const sourceKey = readString(recommendation.sourceKey);
+    const memoryType = readString(recommendation.memoryType);
+    if (!sourceKey || !memoryType) {
+        return null;
+    }
+    return {
+        sourceKey,
+        memoryType,
+        feedbackState: readString(recommendation.feedbackState),
+        selectedVariantIndex: typeof recommendation.selectedVariantIndex === 'number'
+            ? recommendation.selectedVariantIndex
+            : null,
+        wasAiRecommended: recommendation.strategy === 'ai' || recommendation.wasAiRecommended === true,
+    };
+};
+const readAcceptedCaptionMetadata = (value) => {
+    const metadata = toRecord(value);
+    const accepted = toRecord(metadata.acceptedCaption);
+    const sourceKey = readString(accepted.sourceKey);
+    const memoryType = readString(accepted.memoryType);
+    const acceptedCaption = readString(accepted.acceptedCaption);
+    if (!sourceKey || !memoryType || !acceptedCaption) {
+        return null;
+    }
+    return {
+        sourceKey,
+        memoryType,
+        acceptedCaption,
+        acceptedFeedbackEventId: readString(accepted.acceptedFeedbackEventId),
+        selectedVariantIndex: typeof accepted.selectedVariantIndex === 'number'
+            ? accepted.selectedVariantIndex
+            : null,
+        wasAiRecommended: accepted.wasAiRecommended === true,
+    };
+};
+const normalizeCaptionForComparison = (value) => (value ?? '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
 const readMetaInstagramAccountFromPage = (page) => page.instagram_business_account ?? page.connected_instagram_account ?? null;
 const readPendingFacebookPageSelectionPayload = (value) => {
     const payload = toRecord(value);
@@ -1254,6 +1297,7 @@ const addScheduleBatchItems = async (req, res) => {
                 platform: item.platform,
                 accountId: item.accountId,
                 caption: item.caption ?? null,
+                metadata: item.metadata ?? {},
                 scheduledAt: item.scheduledAt,
                 status: item.status ?? 'pending',
             }));
@@ -1292,8 +1336,9 @@ const submitScheduleBatch = async (req, res) => {
         });
     }
     try {
+        const userId = req.user.id;
         const client = (0, supabase_1.requireUserClient)(req.accessToken);
-        const detail = await (0, scheduleBatches_1.getScheduleBatchDetail)(client, req.user.id, req.params.id);
+        const detail = await (0, scheduleBatches_1.getScheduleBatchDetail)(client, userId, req.params.id);
         if (!detail) {
             return res.status(404).json({
                 status: 'fail',
@@ -1313,9 +1358,9 @@ const submitScheduleBatch = async (req, res) => {
             }
             ensureFutureDate(item.scheduledAt, 'scheduledAt');
             const socialAccount = item.socialAccount ??
-                (await (0, socialAccounts_1.getSocialAccountById)(client, req.user.id, item.socialAccountId));
+                (await (0, socialAccounts_1.getSocialAccountById)(client, userId, item.socialAccountId));
             const mediaAsset = item.mediaAsset ??
-                (await (0, scheduleBatches_1.getMediaAssetById)(client, req.user.id, item.mediaAssetId));
+                (await (0, scheduleBatches_1.getMediaAssetById)(client, userId, item.mediaAssetId));
             if (!socialAccount || !mediaAsset) {
                 throw new Error('Scheduled item is missing its linked media or social account.');
             }
@@ -1324,7 +1369,7 @@ const submitScheduleBatch = async (req, res) => {
             }
             ensureMetaScheduledPostCanPublish(item.platform, socialAccount, mediaAsset.storageUrl, mediaAsset.mediaType);
             ensureScheduledPostHasMedia(mediaAsset.storageUrl, mediaAsset.mediaType);
-            const scheduledPost = await (0, scheduledPosts_1.createScheduledPost)(client, req.user.id, {
+            const scheduledPost = await (0, scheduledPosts_1.createScheduledPost)(client, userId, {
                 socialAccountId: item.socialAccountId,
                 contentId: mediaAsset.contentId,
                 generatedImageId: mediaAsset.generatedImageId,
@@ -1341,7 +1386,7 @@ const submitScheduleBatch = async (req, res) => {
                 scheduledFor: scheduledPost.scheduledFor,
                 status: scheduledPost.status,
             });
-            const updatedItem = await (0, scheduleBatches_1.updateScheduledItem)(client, req.user.id, item.id, {
+            const updatedItem = await (0, scheduleBatches_1.updateScheduledItem)(client, userId, item.id, {
                 scheduledPostId: scheduledPost.id,
                 status: 'scheduled',
                 lastError: null,
@@ -1354,9 +1399,106 @@ const submitScheduleBatch = async (req, res) => {
                     scheduledPostId: scheduledPost.id,
                 },
             });
+            const recommendedCaption = readRecommendedCaptionMetadata(item.metadata);
+            const acceptedCaption = readAcceptedCaptionMetadata(item.metadata);
+            if (mediaAsset.contentId && recommendedCaption) {
+                await (0, brandMemory_service_1.recordBrandMemoryFeedback)(client, {
+                    userId,
+                    sourceTable: 'generated_content',
+                    sourceId: mediaAsset.contentId,
+                    sourceKey: recommendedCaption.sourceKey,
+                    memoryType: recommendedCaption.memoryType,
+                    eventType: 'scheduled',
+                    platform: item.platform,
+                    contentId: mediaAsset.contentId,
+                    generatedImageId: mediaAsset.generatedImageId,
+                    scheduledPostId: scheduledPost.id,
+                    scheduledItemId: updatedItem.id,
+                    wasAiRecommended: recommendedCaption.wasAiRecommended,
+                    metadata: {
+                        feedbackState: recommendedCaption.feedbackState,
+                        selectedVariantIndex: recommendedCaption.selectedVariantIndex,
+                        scheduledAt: item.scheduledAt,
+                    },
+                }).catch((feedbackError) => {
+                    console.warn('[scheduler-controller] failed to record scheduled caption feedback', {
+                        userId,
+                        contentId: mediaAsset.contentId,
+                        scheduledItemId: updatedItem.id,
+                        error: feedbackError instanceof Error
+                            ? feedbackError.message
+                            : String(feedbackError),
+                    });
+                });
+            }
+            if (mediaAsset.contentId && acceptedCaption) {
+                const usedSameCaptionForScheduler = normalizeCaptionForComparison(item.caption) ===
+                    normalizeCaptionForComparison(acceptedCaption.acceptedCaption);
+                await (0, brandMemory_service_1.recordBrandMemoryFeedback)(client, {
+                    userId,
+                    sourceTable: 'generated_content',
+                    sourceId: mediaAsset.contentId,
+                    sourceKey: acceptedCaption.sourceKey,
+                    memoryType: acceptedCaption.memoryType,
+                    eventType: 'scheduled',
+                    platform: item.platform,
+                    contentId: mediaAsset.contentId,
+                    generatedImageId: mediaAsset.generatedImageId,
+                    scheduledPostId: scheduledPost.id,
+                    scheduledItemId: updatedItem.id,
+                    acceptedFeedbackEventId: acceptedCaption.acceptedFeedbackEventId,
+                    usedForScheduler: true,
+                    usedSameCaptionForScheduler,
+                    wasAiRecommended: acceptedCaption.wasAiRecommended,
+                    metadata: {
+                        acceptedFlow: true,
+                        selectedVariantIndex: acceptedCaption.selectedVariantIndex,
+                        scheduledAt: item.scheduledAt,
+                        scheduledCaptionLength: (item.caption ?? '').trim().length,
+                    },
+                }).catch((feedbackError) => {
+                    console.warn('[scheduler-controller] failed to record accepted caption scheduling feedback', {
+                        userId,
+                        contentId: mediaAsset.contentId,
+                        scheduledItemId: updatedItem.id,
+                        error: feedbackError instanceof Error
+                            ? feedbackError.message
+                            : String(feedbackError),
+                    });
+                });
+            }
+            if (mediaAsset.generatedImageId) {
+                await (0, brandMemory_service_1.recordBrandMemoryFeedback)(client, {
+                    userId,
+                    sourceTable: 'generated_images',
+                    sourceId: mediaAsset.generatedImageId,
+                    sourceKey: 'image-prompt',
+                    memoryType: 'image-prompt',
+                    eventType: 'scheduled',
+                    platform: item.platform,
+                    contentId: mediaAsset.contentId,
+                    generatedImageId: mediaAsset.generatedImageId,
+                    scheduledPostId: scheduledPost.id,
+                    scheduledItemId: updatedItem.id,
+                    wasAiRecommended: false,
+                    metadata: {
+                        scheduledAt: item.scheduledAt,
+                        mediaAssetId: mediaAsset.id,
+                    },
+                }).catch((feedbackError) => {
+                    console.warn('[scheduler-controller] failed to record scheduled image feedback', {
+                        userId,
+                        generatedImageId: mediaAsset.generatedImageId,
+                        scheduledItemId: updatedItem.id,
+                        error: feedbackError instanceof Error
+                            ? feedbackError.message
+                            : String(feedbackError),
+                    });
+                });
+            }
             mirroredItems.push(updatedItem);
         }
-        const batch = await (0, scheduleBatches_1.updateScheduleBatch)(client, req.user.id, req.params.id, {
+        const batch = await (0, scheduleBatches_1.updateScheduleBatch)(client, userId, req.params.id, {
             status: 'queued',
         });
         return res.status(200).json({

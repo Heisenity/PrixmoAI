@@ -9,5 +9,7 @@ const content_schema_1 = require("../schemas/content.schema");
 const router = (0, express_1.Router)();
 router.post('/generate', auth_middleware_1.authMiddleware, planLimit_middleware_1.planLimitMiddleware, (0, validate_middleware_1.validate)(content_schema_1.generateContentSchema), content_controller_1.generateContent);
 router.get('/history', auth_middleware_1.authMiddleware, content_controller_1.getContentHistory);
+router.post('/feedback', auth_middleware_1.authMiddleware, (0, validate_middleware_1.validate)(content_schema_1.contentFeedbackSchema), content_controller_1.submitContentFeedback);
+router.post('/:id/schedule-recommendation', auth_middleware_1.authMiddleware, (0, validate_middleware_1.validate)(content_schema_1.recommendScheduleCaptionSchema), content_controller_1.recommendScheduleCaption);
 router.delete('/:id', auth_middleware_1.authMiddleware, content_controller_1.deleteContent);
 exports.default = router;

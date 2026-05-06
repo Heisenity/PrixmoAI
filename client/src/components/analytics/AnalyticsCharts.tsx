@@ -332,15 +332,31 @@ export const StackedEngagementChart = memo(({
 export const EngagementHeatmap = memo(({
   cells,
   valueLabel = 'posts',
+  muted = false,
 }: {
   cells: AnalyticsHeatmapCell[];
   valueLabel?: string;
+  muted?: boolean;
 }) => {
   const [hoveredCell, setHoveredCell] = useState<AnalyticsHeatmapCell | null>(null);
+  const formatHourLabel = (hour: number) => `${String(hour).padStart(2, '0')}:00`;
+  const valueCopy =
+    valueLabel === 'activity blocks'
+      ? hoveredCell
+        ? hoveredCell.posts === 1
+          ? '1 audience activity signal'
+          : `${hoveredCell.posts} audience activity signals`
+        : null
+      : hoveredCell
+        ? hoveredCell.posts === 1
+          ? '1 published post in this hour'
+          : `${hoveredCell.posts} published posts in this hour`
+        : null;
 
   return (
-    <div className="analytics-heatmap">
+    <div className={`analytics-heatmap ${muted ? 'analytics-heatmap--muted' : ''}`}>
       <div className="analytics-heatmap__hours">
+        <span className="analytics-heatmap__hours-spacer" aria-hidden="true" />
         {Array.from({ length: 24 }, (_, hour) => (
           <span key={hour}>{hour}</span>
         ))}
@@ -361,7 +377,9 @@ export const EngagementHeatmap = memo(({
                     style={{ opacity: 0.18 + cell.intensity * 0.82 }}
                     onMouseEnter={() => setHoveredCell(cell)}
                     onMouseLeave={() => setHoveredCell(null)}
-                    aria-label={`${cell.day} ${cell.hour}:00`}
+                    onFocus={() => setHoveredCell(cell)}
+                    onBlur={() => setHoveredCell(null)}
+                    aria-label={`${day} ${formatHourLabel(cell.hour)}`}
                   />
                 ))}
             </div>
@@ -371,13 +389,15 @@ export const EngagementHeatmap = memo(({
       {hoveredCell ? (
         <div className="analytics-chart__tooltip analytics-chart__tooltip--static">
           <strong>
-            {hoveredCell.day} {hoveredCell.hour}:00
+            {hoveredCell.day} {formatHourLabel(hoveredCell.hour)}
           </strong>
-          <span>{hoveredCell.posts} {valueLabel}</span>
+          <span>{valueCopy}</span>
           <span>
             {hoveredCell.averageEngagementRate !== null
-              ? `${hoveredCell.averageEngagementRate.toFixed(1)}% avg engagement`
-              : 'No data'}
+              ? `${hoveredCell.averageEngagementRate.toFixed(1)}% average engagement`
+              : valueLabel === 'activity blocks'
+                ? 'Audience activity has not been recorded for this hour yet.'
+                : 'PrixmoAI does not have enough engagement data for this hour yet.'}
           </span>
         </div>
       ) : null}

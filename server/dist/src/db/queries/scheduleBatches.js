@@ -39,6 +39,7 @@ const toScheduledItem = (row) => ({
     accountId: row.account_id,
     socialAccountId: row.social_account_id,
     caption: row.caption,
+    metadata: row.metadata ?? {},
     scheduledAt: row.scheduled_at,
     status: row.status,
     attemptCount: row.attempt_count,
@@ -189,6 +190,7 @@ const createScheduledItem = async (client, userId, batchId, input) => {
         account_id: input.accountId,
         social_account_id: input.socialAccountId,
         caption: input.caption ?? null,
+        metadata: input.metadata ?? {},
         scheduled_at: input.scheduledAt,
         status: input.status ?? 'pending',
         attempt_count: input.attemptCount ?? 0,
@@ -370,6 +372,7 @@ const updateScheduledItem = async (client, userId, itemId, input) => {
             ? { social_account_id: input.socialAccountId }
             : {}),
         ...(input.caption !== undefined ? { caption: input.caption } : {}),
+        ...(input.metadata !== undefined ? { metadata: input.metadata } : {}),
         ...(input.scheduledAt !== undefined ? { scheduled_at: input.scheduledAt } : {}),
         ...(input.status !== undefined ? { status: input.status } : {}),
         ...(input.attemptCount !== undefined

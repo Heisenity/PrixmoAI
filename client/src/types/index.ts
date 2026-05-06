@@ -211,8 +211,79 @@ export interface SchedulerGeneratedMediaIntent {
   prompt: string | null;
   title: string | null;
   caption: string | null;
+  captionVariants?: CaptionVariant[];
+  goal?: string | null;
+  tone?: string | null;
+  audience?: string | null;
+  keywords?: string[];
+  productName?: string | null;
+  productDescription?: string | null;
+  platform?: string | null;
   createdAt: string;
   metadata?: Record<string, unknown>;
+}
+
+export type BrandMemoryFeedbackEventType =
+  | 'accepted'
+  | 'rejected'
+  | 'regenerated'
+  | 'edited'
+  | 'scheduled'
+  | 'reused'
+  | 'performance_promoted'
+  | 'performance_demoted'
+  | 'schedule_opened';
+
+export interface BrandMemoryFeedbackEvent {
+  id: string;
+  userId: string;
+  brandProfileId: string | null;
+  sourceTable: string;
+  sourceId: string;
+  sourceKey: string;
+  memoryType: string;
+  eventType: BrandMemoryFeedbackEventType;
+  platform: string | null;
+  contentId: string | null;
+  generatedImageId: string | null;
+  scheduledPostId: string | null;
+  scheduledItemId: string | null;
+  acceptedFeedbackEventId: string | null;
+  usedForScheduler: boolean | null;
+  usedSameCaptionForScheduler: boolean | null;
+  intensity: number;
+  wasAiRecommended: boolean;
+  weightDelta: number | null;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+}
+
+export interface SchedulerAcceptedCaptionCarryover {
+  carryoverId: string;
+  contentId: string;
+  sourceKey: string;
+  selectedVariantIndex: number;
+  acceptedCaption: string;
+  platform: string | null;
+  productName: string | null;
+  goal: string | null;
+  tone: string | null;
+  audience: string | null;
+  acceptedFeedbackEventId: string | null;
+  captionVariants?: CaptionVariant[];
+  createdAt: string;
+}
+
+export interface ScheduleCaptionRecommendation {
+  recommendedCaption: string;
+  selectedVariantIndex: number;
+  sourceKey: string | null;
+  reasoning: string;
+  note: string;
+  strategy: 'ai' | 'fallback';
+  provider: 'groq' | 'gemini' | 'fallback' | null;
+  supportingMemoryIds: string[];
+  observabilityLogId: string | null;
 }
 
 export interface GenerateImageInput {
@@ -303,6 +374,7 @@ export interface ScheduledItem {
   attemptCount: number;
   lastError: string | null;
   idempotencyKey: string;
+  metadata: Record<string, unknown>;
   createdAt: string;
   updatedAt: string;
   mediaAsset?: MediaAsset;
@@ -356,6 +428,7 @@ export interface CreateScheduledItemInput {
   attemptCount?: number;
   lastError?: string | null;
   idempotencyKey?: string;
+  metadata?: Record<string, unknown>;
 }
 
 export interface UpdateScheduledItemInput
@@ -542,6 +615,14 @@ export interface AnalyticsBestTimeInsight {
   hasEnoughData: boolean;
   minimumPostsRequired: number;
   postsConsidered: number;
+  engagedPostsConsidered: number;
+  engagementCoverage: number;
+  signalStatus:
+    | 'ready'
+    | 'not-enough-posts'
+    | 'no-engagement'
+    | 'low-engagement-coverage'
+    | 'no-clear-winner';
   summary: string;
   topSlots: AnalyticsBestTimeSlot[];
   heatmap: AnalyticsHeatmapCell[];
@@ -582,6 +663,51 @@ export interface AnalyticsInsightCard {
   tone: 'positive' | 'neutral' | 'warning';
 }
 
+export interface AnalyticsLearningPattern {
+  dimension: string;
+  label: string;
+  sampleSize: number;
+  averagePerformanceScore: number;
+  lift: number;
+  supportingMetrics: Record<string, number>;
+  explanation: string;
+}
+
+export interface AnalyticsLearningProfile {
+  id: string;
+  userId: string;
+  brandProfileId: string | null;
+  platform: string;
+  profileType: string;
+  summaryText: string;
+  recommendationText: string | null;
+  metrics: Record<string, unknown>;
+  patterns: AnalyticsLearningPattern[];
+  weakPatterns: AnalyticsLearningPattern[];
+  topContentIds: string[];
+  analyticsContext: Record<string, unknown>;
+  sourceWindowStart: string | null;
+  sourceWindowEnd: string | null;
+  lastAnalyzedAt: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AnalyticsLearningDashboard {
+  summary: string;
+  topRecommendation: string | null;
+  recommendationReason: string | null;
+  recommendationAccuracy: number | null;
+  recommendationAccuracyLabel: string | null;
+  confidence: 'low' | 'medium' | 'high';
+  lastAnalyzedAt: string | null;
+  isReady: boolean;
+  postsConsidered: number;
+  minimumPostsRequired: number;
+  missingDataMessage: string | null;
+  profiles: AnalyticsLearningProfile[];
+}
+
 export interface AnalyticsPlatformComparison {
   platform: string;
   label: string;
@@ -618,6 +744,7 @@ export interface AnalyticsDashboard {
   insights: AnalyticsInsightCard[];
   platformComparison: AnalyticsPlatformComparison[];
   bestTimeToPost: AnalyticsBestTimeInsight;
+  learning: AnalyticsLearningDashboard;
 }
 
 export interface PlatformPerformanceSummary {

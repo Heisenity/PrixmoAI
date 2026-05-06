@@ -7,6 +7,7 @@ import {
   getInternalResearchSummary,
   getOverview,
   getSummary,
+  refreshAnalyticsLearning,
   syncAnalytics,
   getWeeklyComparison,
   recordAnalytics,
@@ -20,6 +21,7 @@ const router = Router();
 
 router.post('/record', authMiddleware, validate(recordAnalyticsSchema), recordAnalytics);
 router.post('/sync', authMiddleware, syncAnalytics);
+router.post('/learning/refresh', authMiddleware, refreshAnalyticsLearning);
 router.get('/dashboard', authMiddleware, getDashboard);
 router.get('/overview', authMiddleware, getOverview);
 router.get('/summary', authMiddleware, getSummary);

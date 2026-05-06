@@ -26,6 +26,10 @@ import { getBullMqConfig, isRedisConfigured } from '../lib/redis';
 import { QUEUE_NAMES } from '../queues/queueNames';
 import { getLowCommandWorkerOptions } from '../queues/workerOptions';
 import { invalidateAnalyticsRuntimeCache } from './runtimeCache.service';
+import {
+  enqueueAnalyticsLearningJob,
+  refreshAnalyticsLearningForUser,
+} from './analyticsLearning.service';
 
 type SyncSocialAccountRow = {
   id: string;
@@ -123,6 +127,7 @@ type SyncAnalyticsOptions = {
   lookbackDays?: number;
   postIds?: string[];
   socialAccountIds?: string[];
+  awaitLearning?: boolean;
 };
 
 const GRAPH_BASE_URL = `https://graph.facebook.com/${META_GRAPH_VERSION}`;
@@ -223,7 +228,7 @@ const toSyncScheduledPost = (row: SyncScheduledPostRow): SyncScheduledPost => ({
   mediaType: row.media_type ?? inferMediaTypeFromUrl(row.media_url),
   status: row.status,
   externalPostId: row.external_post_id,
-  publishedAt: row.published_at,
+  publishedAt: row.published_at ?? (row.status === 'published' ? row.updated_at : null),
   createdAt: row.created_at,
   updatedAt: row.updated_at,
 });
@@ -1254,6 +1259,7 @@ export const syncAnalyticsForUser = async (
   const publishedSince = new Date(
     Date.now() - lookbackDays * 24 * 60 * 60 * 1000
   ).toISOString();
+  const publishedSinceMs = new Date(publishedSince).getTime();
 
   const [accountsResult, postsResult] = await Promise.all([
     client
@@ -1269,8 +1275,7 @@ export const syncAnalyticsForUser = async (
       .eq('user_id', userId)
       .eq('status', 'published')
       .not('external_post_id', 'is', null)
-      .gte('published_at', publishedSince)
-      .order('published_at', { ascending: false }),
+      .order('updated_at', { ascending: false }),
   ]);
 
   if (accountsResult.error) {
@@ -1289,6 +1294,10 @@ export const syncAnalyticsForUser = async (
   const socialAccountById = new Map(socialAccounts.map((account) => [account.id, account]));
   const posts = (postsResult.data ?? [])
     .map((row) => toSyncScheduledPost(row as SyncScheduledPostRow))
+    .filter((post) => {
+      const publishedAtMs = post.publishedAt ? new Date(post.publishedAt).getTime() : NaN;
+      return Number.isFinite(publishedAtMs) && publishedAtMs >= publishedSinceMs;
+    })
     .filter((post) =>
       options.postIds?.length ? options.postIds.includes(post.id) : true
     )
@@ -1344,6 +1353,44 @@ export const syncAnalyticsForUser = async (
   }
 
   await invalidateAnalyticsRuntimeCache(userId);
+
+  const updatedPlatforms = [
+    ...new Set(
+      posts
+        .map((post) => normalizePlatform(post.platform))
+        .filter((platform): platform is 'instagram' | 'facebook' => Boolean(platform))
+    ),
+  ];
+  const updatedContentIds = [
+    ...new Set(
+      posts
+        .map((post) => post.contentId)
+        .filter((contentId): contentId is string => Boolean(contentId))
+    ),
+  ];
+  const updatedPostIds = posts.map((post) => post.id);
+
+  if (options.awaitLearning) {
+    await refreshAnalyticsLearningForUser(client, userId, {
+      triggerSource: 'analytics-sync',
+      platforms: updatedPlatforms,
+      contentIds: updatedContentIds,
+      scheduledPostIds: updatedPostIds,
+    });
+  } else {
+    void enqueueAnalyticsLearningJob({
+      userId,
+      triggerSource: 'analytics-sync',
+      platforms: updatedPlatforms,
+      contentIds: updatedContentIds,
+      scheduledPostIds: updatedPostIds,
+    }).catch((error) => {
+      console.warn('[analytics-learning] failed to enqueue learning job after analytics sync', {
+        userId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+  }
 
   return summary;
 };

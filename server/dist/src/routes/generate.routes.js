@@ -20,6 +20,7 @@ router.get('/drafts/description', auth_middleware_1.authMiddleware, (0, validate
 router.put('/drafts/description', auth_middleware_1.authMiddleware, (0, validate_middleware_1.validate)(descriptionDraft_schema_1.upsertDescriptionDraftSchema), descriptionDraft_controller_1.upsertDescriptionDraft);
 router.delete('/drafts/description', auth_middleware_1.authMiddleware, (0, validate_middleware_1.validate)(descriptionDraft_schema_1.deleteDescriptionDraftSchema), descriptionDraft_controller_1.deleteDescriptionDraft);
 router.post('/copy', auth_middleware_1.authMiddleware, planLimit_middleware_1.planLimitMiddleware, (0, validate_middleware_1.validate)(generateWorkspace_schema_1.generateConversationCopySchema), generateWorkspace_controller_1.generateWorkspaceCopy);
+router.post('/copy/stream', auth_middleware_1.authMiddleware, planLimit_middleware_1.planLimitMiddleware, (0, validate_middleware_1.validate)(generateWorkspace_schema_1.generateConversationCopySchema), generateWorkspace_controller_1.generateWorkspaceCopyStream);
 router.post('/image', auth_middleware_1.authMiddleware, (0, validate_middleware_1.validate)(generateWorkspace_schema_1.generateConversationImageSchema), planLimit_middleware_1.imagePlanLimitMiddleware, planLimit_middleware_1.imageRuntimePolicyMiddleware, generateWorkspace_controller_1.generateWorkspaceImage);
 router.post('/transcribe', auth_middleware_1.authMiddleware, (0, validate_middleware_1.validate)(transcription_schema_1.transcribeAudioSchemaRefined), transcription_controller_1.transcribeGenerateAudio);
 exports.default = router;

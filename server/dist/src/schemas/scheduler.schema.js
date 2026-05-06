@@ -132,6 +132,7 @@ exports.createScheduledItemSchema = zod_1.z.object({
     platform: socialPlatformSchema,
     accountId: zod_1.z.string().trim().min(1, 'Account ID is required'),
     caption: optionalNullableString,
+    metadata: metadataSchema,
     scheduledAt: zod_1.z.string().datetime('Invalid scheduled time'),
     status: scheduledItemStatusSchema.optional(),
 });
@@ -145,6 +146,7 @@ exports.updateScheduledItemSchema = zod_1.z
     platform: socialPlatformSchema.optional(),
     accountId: zod_1.z.string().trim().min(1).optional(),
     caption: optionalNullableString,
+    metadata: metadataSchema,
     scheduledAt: zod_1.z.string().datetime('Invalid scheduled time').optional(),
     status: scheduledItemStatusSchema.optional(),
 })

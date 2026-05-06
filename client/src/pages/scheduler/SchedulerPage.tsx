@@ -37,6 +37,7 @@ import { Card } from '../../components/ui/card';
 import { Input } from '../../components/ui/input';
 import { Select } from '../../components/ui/select';
 import { useAuth } from '../../hooks/useAuth';
+import { useContent } from '../../hooks/useContent';
 import { useScheduler } from '../../hooks/useScheduler';
 import {
   fetchMediaBlob,
@@ -44,9 +45,13 @@ import {
   isInstagramVideoRatioSupported,
   prepareInstagramCompatibleImage,
 } from '../../lib/instagramMedia';
+import { createRasterImageFileFromBlob } from '../../lib/generatedImageExport';
 import {
   clearSchedulerGeneratedMediaIntent,
+  clearSchedulerAcceptedCaptionCarryover,
+  parseSchedulerAcceptedCaptionCarryover,
   parseSchedulerGeneratedMediaIntent,
+  readSchedulerAcceptedCaptionCarryover,
   readSchedulerGeneratedMediaIntent,
   writeSchedulerGeneratedMediaIntent,
 } from '../../lib/schedulerGeneratedMedia';
@@ -66,12 +71,14 @@ import type {
   ResolvedExternalMedia,
   ScheduleBatch,
   ScheduleBatchDetail,
+  SchedulerAcceptedCaptionCarryover,
   ScheduledItem,
   ScheduledItemStatus,
   ScheduledPost,
   ScheduledPostStatus,
   SchedulerGeneratedMediaIntent,
   SchedulerMediaType,
+  ScheduleCaptionRecommendation,
   SocialAccount,
   SocialPlatform,
 } from '../../types';
@@ -178,8 +185,9 @@ const getPlatformBadgeIcon = (platform: SocialPlatform) =>
 const QUEUE_ACTION_BUFFER_MS = 4_000;
 const SCHEDULE_MIN_BUFFER_MS = 5_000;
 const SCHEDULE_TIME_VALIDATION_MESSAGE = 'Please select a future date and time.';
-const SCHEDULER_PLANNER_PERSISTENCE_TTL_MS = 6 * 60 * 60 * 1000;
+const SCHEDULER_PLANNER_PERSISTENCE_TTL_MS = 24 * 60 * 60 * 1000;
 const SCHEDULER_PLANNER_STORAGE_KEY_PREFIX = 'prixmoai.scheduler.planner.v1';
+const SCHEDULER_CAPTION_CURSOR = '▍';
 
 const queueTabs: Array<{
   id: QueueTabId;
@@ -210,6 +218,9 @@ const queueTabs: Array<{
 
 const getMinimumScheduleDateTimeValue = (nowMs: number) =>
   toDisplayDateTimeLocalValue(new Date(nowMs + SCHEDULE_MIN_BUFFER_MS));
+
+const stripSchedulerCaptionCursor = (value: string) =>
+  value.replace(new RegExp(`${SCHEDULER_CAPTION_CURSOR}$`), '');
 
 const isSchedulableDateTimeValue = (value: string, nowMs: number) => {
   const scheduledAtMs = new Date(value).getTime();
@@ -325,6 +336,7 @@ const buildResolvedMediaPreview = (
 
 type SchedulerLocationState = {
   generatedMediaIntent?: SchedulerGeneratedMediaIntent | null;
+  acceptedCaptionCarryover?: SchedulerAcceptedCaptionCarryover | null;
 };
 
 type PersistedSchedulerPlannerState = {
@@ -366,11 +378,34 @@ type PlannerAsset = {
   title: string | null;
   prompt: string | null;
   caption: string;
+  captionRecommendation: PlannerCaptionRecommendation | null;
+  acceptedCaptionAttribution: PlannerAcceptedCaptionAttribution | null;
   instagramValidationMessage: string | null;
   instagramAdjusted: boolean;
   instagramUnsupportedVideo: boolean;
   isPreviewOpen: boolean;
   slots: PlannerSlot[];
+};
+
+type PlannerCaptionRecommendation = {
+  recommendationId: string;
+  recommendedCaption: string;
+  selectedVariantIndex: number;
+  sourceKey: string | null;
+  reasoning: string;
+  note: string;
+  feedbackState: 'pending' | 'accepted' | 'rejected' | 'edited';
+  loggedEvents: string[];
+  observabilityLogId: string | null;
+};
+
+type PlannerAcceptedCaptionAttribution = {
+  sourceKey: string;
+  memoryType: string;
+  selectedVariantIndex: number;
+  acceptedCaption: string;
+  acceptedFeedbackEventId: string | null;
+  wasAiRecommended: boolean;
 };
 
 type SchedulerToastType = 'success' | 'error' | 'info' | 'warning';
@@ -534,6 +569,7 @@ const readPlannerAssetInstagramMetadata = (metadata: Record<string, unknown>) =>
 const buildPlannerAssetFromMediaAsset = ({
   mediaAsset,
   caption,
+  captionRecommendation,
   prompt,
   title,
   scheduledAt,
@@ -542,6 +578,7 @@ const buildPlannerAssetFromMediaAsset = ({
 }: {
   mediaAsset: MediaAsset;
   caption?: string | null;
+  captionRecommendation?: PlannerCaptionRecommendation | null;
   prompt?: string | null;
   title?: string | null;
   scheduledAt: string;
@@ -569,13 +606,110 @@ const buildPlannerAssetFromMediaAsset = ({
   title: title ?? mediaAsset.filename ?? null,
   prompt: prompt ?? null,
   caption: caption ?? '',
+  captionRecommendation: captionRecommendation ?? null,
+  acceptedCaptionAttribution: readPlannerAcceptedCaptionAttribution(
+    mediaAsset.metadata
+  ),
   isPreviewOpen: false,
   slots: [buildPlannerSlot(scheduledAt, defaultSocialAccountId)],
 });
 
+const buildPlannerCaptionRecommendation = (
+  recommendation: ScheduleCaptionRecommendation
+): PlannerCaptionRecommendation => ({
+  recommendationId: createLocalPlannerId(),
+  recommendedCaption: recommendation.recommendedCaption,
+  selectedVariantIndex: recommendation.selectedVariantIndex,
+  sourceKey: recommendation.sourceKey,
+  reasoning: recommendation.reasoning,
+  note: recommendation.note,
+  feedbackState: 'pending',
+  loggedEvents: [],
+  observabilityLogId: recommendation.observabilityLogId,
+});
+
+const readPlannerCaptionRecommendation = (
+  metadata: Record<string, unknown>
+): PlannerCaptionRecommendation | null => {
+  const recommendation =
+    metadata.recommendedCaption &&
+    typeof metadata.recommendedCaption === 'object' &&
+    !Array.isArray(metadata.recommendedCaption)
+      ? (metadata.recommendedCaption as Record<string, unknown>)
+      : null;
+
+  if (
+    !recommendation ||
+    typeof recommendation.sourceKey !== 'string' ||
+    typeof recommendation.selectedVariantIndex !== 'number' ||
+    typeof recommendation.note !== 'string'
+  ) {
+    return null;
+  }
+
+  return {
+    recommendationId: createLocalPlannerId(),
+    recommendedCaption:
+      typeof recommendation.recommendedCaption === 'string'
+        ? recommendation.recommendedCaption
+        : '',
+    selectedVariantIndex: recommendation.selectedVariantIndex,
+    sourceKey: recommendation.sourceKey,
+    reasoning:
+      typeof recommendation.reasoning === 'string' ? recommendation.reasoning : '',
+    note: recommendation.note,
+    feedbackState:
+      recommendation.feedbackState === 'accepted' ||
+      recommendation.feedbackState === 'rejected' ||
+      recommendation.feedbackState === 'edited'
+        ? recommendation.feedbackState
+        : 'pending',
+    loggedEvents: [],
+    observabilityLogId:
+      typeof recommendation.observabilityLogId === 'string'
+        ? recommendation.observabilityLogId
+        : null,
+  };
+};
+
+const readPlannerAcceptedCaptionAttribution = (
+  metadata: Record<string, unknown>
+): PlannerAcceptedCaptionAttribution | null => {
+  const accepted =
+    metadata.acceptedCaption &&
+    typeof metadata.acceptedCaption === 'object' &&
+    !Array.isArray(metadata.acceptedCaption)
+      ? (metadata.acceptedCaption as Record<string, unknown>)
+      : null;
+
+  if (
+    !accepted ||
+    typeof accepted.sourceKey !== 'string' ||
+    typeof accepted.memoryType !== 'string' ||
+    typeof accepted.acceptedCaption !== 'string' ||
+    typeof accepted.selectedVariantIndex !== 'number'
+  ) {
+    return null;
+  }
+
+  return {
+    sourceKey: accepted.sourceKey,
+    memoryType: accepted.memoryType,
+    selectedVariantIndex: accepted.selectedVariantIndex,
+    acceptedCaption: accepted.acceptedCaption,
+    acceptedFeedbackEventId:
+      typeof accepted.acceptedFeedbackEventId === 'string' ||
+      accepted.acceptedFeedbackEventId === null
+        ? accepted.acceptedFeedbackEventId
+        : null,
+    wasAiRecommended: accepted.wasAiRecommended === true,
+  };
+};
+
 export const SchedulerPage = () => {
   const location = useLocation();
   const { user } = useAuth();
+  const content = useContent();
   const scheduler = useScheduler();
   const [oauthError, setOauthError] = useState<string | null>(null);
   const [oauthNotice, setOauthNotice] = useState<string | null>(null);
@@ -604,6 +738,10 @@ export const SchedulerPage = () => {
   const [isPlannerDirty, setIsPlannerDirty] = useState(false);
   const [composerError, setComposerError] = useState<string | null>(null);
   const [composerNotice, setComposerNotice] = useState<string | null>(null);
+  const [activeRecommendationTyping, setActiveRecommendationTyping] = useState<{
+    assetId: string;
+    target: string;
+  } | null>(null);
   const [isMediaDragActive, setIsMediaDragActive] = useState(false);
   const [mediaUrlInputValue, setMediaUrlInputValue] = useState('');
   const [resolvedMediaPreview, setResolvedMediaPreview] =
@@ -623,6 +761,8 @@ export const SchedulerPage = () => {
   const [liveNow, setLiveNow] = useState(() => Date.now());
   const [pendingGeneratedMediaIntent, setPendingGeneratedMediaIntent] =
     useState<SchedulerGeneratedMediaIntent | null>(null);
+  const [pendingAcceptedCaptionCarryover, setPendingAcceptedCaptionCarryover] =
+    useState<SchedulerAcceptedCaptionCarryover | null>(null);
   const [appliedGeneratedMediaIntentId, setAppliedGeneratedMediaIntentId] =
     useState<string | null>(null);
   const [dismissedGeneratedMediaIntentId, setDismissedGeneratedMediaIntentId] =
@@ -706,11 +846,20 @@ export const SchedulerPage = () => {
 
     const routeState = (location.state as SchedulerLocationState | null) ?? null;
     const routeIntent = parseSchedulerGeneratedMediaIntent(routeState?.generatedMediaIntent);
+    const routeCarryover = parseSchedulerAcceptedCaptionCarryover(
+      routeState?.acceptedCaptionCarryover
+    );
     const storedGeneratedIntent = readSchedulerGeneratedMediaIntent();
+    const storedCarryover = readSchedulerAcceptedCaptionCarryover();
 
     if (routeIntent || storedGeneratedIntent) {
+      setPendingAcceptedCaptionCarryover(routeCarryover ?? storedCarryover);
       hasHydratedPersistedPlannerRef.current = true;
       return;
+    }
+
+    if (routeCarryover || storedCarryover) {
+      setPendingAcceptedCaptionCarryover(routeCarryover ?? storedCarryover);
     }
 
     const persistedPlanner = readPersistedSchedulerPlannerState(user.id);
@@ -869,6 +1018,28 @@ export const SchedulerPage = () => {
   );
 
   useEffect(() => {
+    if (
+      !pendingAcceptedCaptionCarryover ||
+      pendingGeneratedMediaIntent ||
+      plannerAssets.length > 0
+    ) {
+      return;
+    }
+
+    pushSchedulerToast({
+      type: 'info',
+      title: 'Accepted caption ready',
+      message:
+        'Add media and PrixmoAI will place your accepted caption into the planner automatically.',
+    });
+  }, [
+    pendingAcceptedCaptionCarryover,
+    pendingGeneratedMediaIntent,
+    plannerAssets.length,
+    pushSchedulerToast,
+  ]);
+
+  useEffect(() => {
     if (!plannerToast) {
       return;
     }
@@ -933,7 +1104,13 @@ export const SchedulerPage = () => {
     setOauthError(null);
   }, [oauthError, pushSchedulerToast]);
 
-  const connectedAccounts = scheduler.accounts?.items ?? [];
+  const connectedAccounts = useMemo(
+    () =>
+      (scheduler.accounts?.items ?? []).filter(
+        (account) => account.verificationStatus === 'verified'
+      ),
+    [scheduler.accounts?.items]
+  );
   const queuedPosts = scheduler.posts?.items ?? [];
   const markPlannerDirty = useCallback(() => {
     setIsPlannerDirty(true);
@@ -972,6 +1149,8 @@ export const SchedulerPage = () => {
       let mediaType: SchedulerMediaType | null = null;
       let mimeType: string | null = null;
       let fileName = fallbackFileName;
+      const shouldApplyGeneratedWatermark =
+        sourceType === 'generated' && metadata?.requiresWatermark === true;
 
       if (file) {
         mediaBlob = file;
@@ -979,16 +1158,44 @@ export const SchedulerPage = () => {
         mimeType = file.type || null;
         fileName = file.name || fallbackFileName;
       } else if (sourceUrl?.trim()) {
-        uploaded = await scheduler.importExternalMediaUrl(sourceUrl.trim(), {
-          surfaceGlobalError: false,
-        });
-        mediaBlob = await fetchMediaBlob(uploaded.sourceImageUrl);
-        mediaType = uploaded.mediaType;
-        mimeType = uploaded.contentType;
+        if (shouldApplyGeneratedWatermark) {
+          try {
+            mediaBlob = await fetchMediaBlob(sourceUrl.trim());
+            mediaType = 'image';
+            mimeType = mediaBlob.type || 'image/png';
+          } catch {
+            uploaded = await scheduler.importExternalMediaUrl(sourceUrl.trim(), {
+              surfaceGlobalError: false,
+            });
+            mediaBlob = await fetchMediaBlob(uploaded.sourceImageUrl);
+            mediaType = uploaded.mediaType;
+            mimeType = uploaded.contentType;
+          }
+        } else {
+          uploaded = await scheduler.importExternalMediaUrl(sourceUrl.trim(), {
+            surfaceGlobalError: false,
+          });
+          mediaBlob = await fetchMediaBlob(uploaded.sourceImageUrl);
+          mediaType = uploaded.mediaType;
+          mimeType = uploaded.contentType;
+        }
       }
 
       if (!mediaBlob || !mediaType) {
         throw new Error('PrixmoAI could not prepare that media asset.');
+      }
+
+      if (shouldApplyGeneratedWatermark && mediaType === 'image') {
+        const watermarkedFile = await createRasterImageFileFromBlob({
+          sourceBlob: mediaBlob,
+          fileName: `${fallbackFileName || 'generated-media'}-prixmoai-watermarked.png`,
+          watermark: true,
+        });
+        mediaBlob = watermarkedFile;
+        mediaType = 'image';
+        mimeType = watermarkedFile.type;
+        fileName = watermarkedFile.name;
+        uploaded = null;
       }
 
       const dimensions = await getMediaDimensions(mediaBlob, mediaType);
@@ -1112,6 +1319,7 @@ export const SchedulerPage = () => {
         metadata: {
           ...(metadata ?? {}),
           prompt,
+          watermarkApplied: shouldApplyGeneratedWatermark && mediaType === 'image',
           instagramPreparation,
         },
       });
@@ -1171,6 +1379,84 @@ export const SchedulerPage = () => {
 
       const availableAccounts = scheduler.accounts?.items ?? [];
       try {
+        const acceptedCaptionMetadata = readPlannerAcceptedCaptionAttribution(
+          intent.metadata ?? {}
+        );
+        const recommendation =
+          intent.contentId && !acceptedCaptionMetadata
+            ? await content
+                .recommendScheduleCaption(intent.contentId, {
+                  generatedImageId: intent.generatedImageId,
+                  requestContext: 'scheduler',
+                })
+                .catch((error) => {
+                  logSchedulerDebug('caption recommendation fallback skipped', {
+                    intentId: intent.intentId,
+                    message: error instanceof Error ? error.message : String(error),
+                  });
+                  return null;
+                })
+            : null;
+        const plannerRecommendation = recommendation
+          ? buildPlannerCaptionRecommendation(recommendation)
+          : null;
+
+        if (
+          recommendation &&
+          intent.contentId &&
+          recommendation.sourceKey
+        ) {
+          void content.submitMemoryFeedback({
+            sourceTable: 'generated_content',
+            sourceId: intent.contentId,
+            sourceKey: recommendation.sourceKey,
+            memoryType: 'generated-caption',
+            eventType: 'schedule_opened',
+            platform: intent.platform ?? null,
+            contentId: intent.contentId,
+            generatedImageId: intent.generatedImageId,
+            wasAiRecommended: true,
+            metadata: {
+              selectedVariantIndex: recommendation.selectedVariantIndex,
+              observabilityLogId: recommendation.observabilityLogId,
+            },
+          }).catch((feedbackError) => {
+            logSchedulerDebug('failed to record schedule_opened feedback', {
+              intentId: intent.intentId,
+              message:
+                feedbackError instanceof Error
+                  ? feedbackError.message
+                  : String(feedbackError),
+            });
+          });
+        }
+
+        if (intent.generatedImageId) {
+          void content.submitMemoryFeedback({
+            sourceTable: 'generated_images',
+            sourceId: intent.generatedImageId,
+            sourceKey: 'image-prompt',
+            memoryType: 'image-prompt',
+            eventType: 'schedule_opened',
+            platform: intent.platform ?? null,
+            contentId: intent.contentId,
+            generatedImageId: intent.generatedImageId,
+            wasAiRecommended: false,
+            metadata: {
+              intentId: intent.intentId,
+              requestContext: 'scheduler',
+            },
+          }).catch((feedbackError) => {
+            logSchedulerDebug('failed to record generated image schedule_opened feedback', {
+              intentId: intent.intentId,
+              message:
+                feedbackError instanceof Error
+                  ? feedbackError.message
+                  : String(feedbackError),
+            });
+          });
+        }
+
         const mediaAsset = await createPreparedPlannerMediaAsset({
           sourceType: 'generated',
           sourceUrl: intent.mediaUrl,
@@ -1181,6 +1467,30 @@ export const SchedulerPage = () => {
           generatedImageId: intent.generatedImageId,
           metadata: {
             conversationId: intent.conversationId,
+            recommendedCaption: recommendation
+              ? {
+                  sourceKey: recommendation.sourceKey,
+                  memoryType: 'generated-caption',
+                  selectedVariantIndex: recommendation.selectedVariantIndex,
+                  reasoning: recommendation.reasoning,
+                  note: recommendation.note,
+                  strategy: recommendation.strategy,
+                  observabilityLogId: recommendation.observabilityLogId,
+                  feedbackState: 'pending',
+                }
+              : null,
+            acceptedCaption: acceptedCaptionMetadata
+              ? {
+                  sourceKey: acceptedCaptionMetadata.sourceKey,
+                  memoryType: acceptedCaptionMetadata.memoryType,
+                  selectedVariantIndex:
+                    acceptedCaptionMetadata.selectedVariantIndex,
+                  acceptedCaption: acceptedCaptionMetadata.acceptedCaption,
+                  acceptedFeedbackEventId:
+                    acceptedCaptionMetadata.acceptedFeedbackEventId,
+                  wasAiRecommended: acceptedCaptionMetadata.wasAiRecommended,
+                }
+              : null,
             ...(intent.metadata ?? {}),
           },
         });
@@ -1193,7 +1503,11 @@ export const SchedulerPage = () => {
 
         const nextAsset = buildPlannerAssetFromMediaAsset({
           mediaAsset,
-          caption: intent.caption,
+          caption:
+            acceptedCaptionMetadata?.acceptedCaption ??
+            recommendation?.recommendedCaption ??
+            intent.caption,
+          captionRecommendation: plannerRecommendation,
           prompt: intent.prompt,
           title: intent.title ?? 'Generated media',
           scheduledAt: defaultDateTime,
@@ -1214,12 +1528,20 @@ export const SchedulerPage = () => {
           mode === 'replace' ? [nextAsset] : [...current, nextAsset]
         );
         setPendingGeneratedMediaIntent(null);
+        setPendingAcceptedCaptionCarryover(null);
         setAppliedGeneratedMediaIntentId(intent.intentId);
         setDismissedGeneratedMediaIntentId(null);
         setIsPlannerDirty(true);
         setActiveBatchId(null);
         clearSchedulerGeneratedMediaIntent();
+        clearSchedulerAcceptedCaptionCarryover();
         schedulerGeneratedIntentHandledIds.add(intent.intentId);
+        if (acceptedCaptionMetadata?.acceptedCaption) {
+          setActiveRecommendationTyping({
+            assetId: nextAsset.id,
+            target: acceptedCaptionMetadata.acceptedCaption,
+          });
+        }
       } catch (generatedError) {
         logSchedulerDebug('generated media apply failed', {
           intentId: intent.intentId,
@@ -1240,7 +1562,7 @@ export const SchedulerPage = () => {
         schedulerGeneratedIntentProcessingIds.delete(intent.intentId);
       }
     },
-    [createPreparedPlannerMediaAsset, defaultDateTime, scheduler.accounts?.items]
+    [content, createPreparedPlannerMediaAsset, defaultDateTime, scheduler.accounts?.items]
   );
 
   useEffect(() => {
@@ -1411,14 +1733,26 @@ export const SchedulerPage = () => {
           defaultSocialAccountId: scheduler.accounts?.items?.[0]?.id ?? '',
           dedupeKey,
         });
+        const appliedCarryover = Boolean(pendingAcceptedCaptionCarryover);
+        const finalAsset = applyAcceptedCarryoverToAsset(nextAsset);
         logSchedulerDebug('schedule row created', {
           mediaAssetId: mediaAsset.id,
           dedupeKey,
-          slotCount: nextAsset.slots.length,
+          slotCount: finalAsset.slots.length,
           sourceType: 'url',
         });
-        setPlannerAssets((current) => [...current, nextAsset]);
-        setComposerNotice('Media link added to the planner.');
+        setPlannerAssets((current) => [...current, finalAsset]);
+        if (appliedCarryover) {
+          setPendingAcceptedCaptionCarryover(null);
+          clearSchedulerAcceptedCaptionCarryover();
+          setActiveRecommendationTyping({
+            assetId: finalAsset.id,
+            target: finalAsset.caption,
+          });
+          setComposerNotice('Accepted caption and media link added to the planner.');
+        } else {
+          setComposerNotice('Media link added to the planner.');
+        }
         markPlannerDirty();
         resetMediaUrlComposer();
       } catch (importError) {
@@ -1442,9 +1776,11 @@ export const SchedulerPage = () => {
       }
     },
     [
+      applyAcceptedCarryoverToAsset,
       createPreparedPlannerMediaAsset,
       defaultDateTime,
       markPlannerDirty,
+      pendingAcceptedCaptionCarryover,
       resetMediaUrlComposer,
       scheduler,
     ]
@@ -1639,6 +1975,80 @@ export const SchedulerPage = () => {
     [markPlannerDirty]
   );
 
+  function applyAcceptedCarryoverToAsset(asset: PlannerAsset) {
+    if (!pendingAcceptedCaptionCarryover) {
+      return asset;
+    }
+
+    const acceptedAttribution: PlannerAcceptedCaptionAttribution = {
+      sourceKey: pendingAcceptedCaptionCarryover.sourceKey,
+      memoryType: 'generated-caption',
+      selectedVariantIndex: pendingAcceptedCaptionCarryover.selectedVariantIndex,
+      acceptedCaption: pendingAcceptedCaptionCarryover.acceptedCaption,
+      acceptedFeedbackEventId:
+        pendingAcceptedCaptionCarryover.acceptedFeedbackEventId ?? null,
+      wasAiRecommended: true,
+    };
+
+    return {
+      ...asset,
+      caption: pendingAcceptedCaptionCarryover.acceptedCaption,
+      acceptedCaptionAttribution: acceptedAttribution,
+    };
+  }
+
+  useEffect(() => {
+    if (!activeRecommendationTyping) {
+      return;
+    }
+
+    const target = stripSchedulerCaptionCursor(activeRecommendationTyping.target).trim();
+
+    if (!target) {
+      setActiveRecommendationTyping(null);
+      return;
+    }
+
+    let cursor = 0;
+    const step = target.length > 320 ? 3 : target.length > 180 ? 2 : 1;
+
+    setPlannerAssets((current) =>
+      current.map((asset) =>
+        asset.id === activeRecommendationTyping.assetId
+          ? {
+              ...asset,
+              caption: SCHEDULER_CAPTION_CURSOR,
+            }
+          : asset
+      )
+    );
+
+    const timer = window.setInterval(() => {
+      cursor = Math.min(target.length, cursor + step);
+
+      setPlannerAssets((current) =>
+        current.map((asset) =>
+          asset.id === activeRecommendationTyping.assetId
+            ? {
+                ...asset,
+                caption:
+                  cursor >= target.length
+                    ? target
+                    : `${target.slice(0, cursor)}${SCHEDULER_CAPTION_CURSOR}`,
+              }
+            : asset
+        )
+      );
+
+      if (cursor >= target.length) {
+        window.clearInterval(timer);
+        setActiveRecommendationTyping(null);
+      }
+    }, 18);
+
+    return () => window.clearInterval(timer);
+  }, [activeRecommendationTyping]);
+
   const toggleAssetPreview = (assetId: string) => {
     setPlannerAssets((current) =>
       current.map((asset) =>
@@ -1650,10 +2060,217 @@ export const SchedulerPage = () => {
   };
 
   const updateAssetCaption = (assetId: string, caption: string) => {
+    if (activeRecommendationTyping?.assetId === assetId) {
+      setActiveRecommendationTyping(null);
+    }
+
+    const normalizedCaption = stripSchedulerCaptionCursor(caption);
+
     mutatePlannerAssets((current) =>
-      current.map((asset) => (asset.id === assetId ? { ...asset, caption } : asset))
+      current.map((asset) =>
+        asset.id === assetId
+          ? {
+              ...asset,
+              caption: normalizedCaption,
+              captionRecommendation:
+                asset.captionRecommendation &&
+                normalizedCaption.trim() &&
+                normalizedCaption.trim() !==
+                  asset.captionRecommendation.recommendedCaption.trim() &&
+                asset.captionRecommendation.feedbackState !== 'rejected'
+                  ? {
+                      ...asset.captionRecommendation,
+                      feedbackState: 'edited',
+                    }
+                  : asset.captionRecommendation,
+            }
+          : asset
+      )
     );
   };
+
+  const submitCaptionRecommendationFeedback = useCallback(
+    async (
+      asset: PlannerAsset,
+      eventType: 'accepted' | 'rejected' | 'edited'
+    ) => {
+      if (
+        !asset.contentId ||
+        !asset.captionRecommendation?.sourceKey ||
+        asset.captionRecommendation.loggedEvents.includes(eventType)
+      ) {
+        return;
+      }
+
+      await content.submitMemoryFeedback({
+        sourceTable: 'generated_content',
+        sourceId: asset.contentId,
+        sourceKey: asset.captionRecommendation.sourceKey,
+        memoryType: 'generated-caption',
+        eventType,
+        platform: null,
+        contentId: asset.contentId,
+        generatedImageId: asset.generatedImageId,
+        wasAiRecommended: true,
+        metadata: {
+          selectedVariantIndex: asset.captionRecommendation.selectedVariantIndex,
+          observabilityLogId: asset.captionRecommendation.observabilityLogId,
+          captionLength: stripSchedulerCaptionCursor(asset.caption).trim().length,
+        },
+      });
+    },
+    [content]
+  );
+
+  const acceptRecommendedCaption = useCallback(
+    async (assetId: string) => {
+      const asset = plannerAssets.find((entry) => entry.id === assetId);
+
+      if (!asset?.captionRecommendation) {
+        return;
+      }
+
+      setActiveRecommendationTyping({
+        assetId,
+        target: asset.captionRecommendation.recommendedCaption,
+      });
+      mutatePlannerAssets((current) =>
+        current.map((entry) =>
+          entry.id === assetId
+            ? {
+                ...entry,
+                caption: SCHEDULER_CAPTION_CURSOR,
+                captionRecommendation: entry.captionRecommendation
+                  ? {
+                      ...entry.captionRecommendation,
+                      feedbackState: 'accepted',
+                      loggedEvents: entry.captionRecommendation.loggedEvents.includes(
+                        'accepted'
+                      )
+                        ? entry.captionRecommendation.loggedEvents
+                        : [...entry.captionRecommendation.loggedEvents, 'accepted'],
+                    }
+                  : null,
+              }
+            : entry
+        )
+      );
+
+      try {
+        await submitCaptionRecommendationFeedback(asset, 'accepted');
+      } catch (error) {
+        setComposerError(
+          error instanceof Error
+            ? error.message
+            : 'Failed to record caption acceptance.'
+        );
+      }
+    },
+    [
+      mutatePlannerAssets,
+      plannerAssets,
+      submitCaptionRecommendationFeedback,
+    ]
+  );
+
+  const rejectRecommendedCaption = useCallback(
+    async (assetId: string) => {
+      const asset = plannerAssets.find((entry) => entry.id === assetId);
+
+      if (!asset?.captionRecommendation) {
+        return;
+      }
+
+      if (activeRecommendationTyping?.assetId === assetId) {
+        setActiveRecommendationTyping(null);
+      }
+      mutatePlannerAssets((current) =>
+        current.map((entry) =>
+          entry.id === assetId
+            ? {
+                ...entry,
+                caption: '',
+                captionRecommendation: entry.captionRecommendation
+                  ? {
+                      ...entry.captionRecommendation,
+                      feedbackState: 'rejected',
+                      loggedEvents: entry.captionRecommendation.loggedEvents.includes(
+                        'rejected'
+                      )
+                        ? entry.captionRecommendation.loggedEvents
+                        : [...entry.captionRecommendation.loggedEvents, 'rejected'],
+                    }
+                  : null,
+              }
+            : entry
+        )
+      );
+
+      try {
+        await submitCaptionRecommendationFeedback(asset, 'rejected');
+      } catch (error) {
+        setComposerError(
+          error instanceof Error
+            ? error.message
+            : 'Failed to record caption rejection.'
+        );
+      }
+    },
+    [
+      activeRecommendationTyping?.assetId,
+      mutatePlannerAssets,
+      plannerAssets,
+      submitCaptionRecommendationFeedback,
+    ]
+  );
+
+  const markRecommendedCaptionEdited = useCallback(
+    async (assetId: string) => {
+      const asset = plannerAssets.find((entry) => entry.id === assetId);
+
+      if (
+        activeRecommendationTyping?.assetId === assetId ||
+        !asset?.captionRecommendation ||
+        asset.captionRecommendation.feedbackState !== 'edited' ||
+        asset.captionRecommendation.loggedEvents.includes('edited') ||
+        !stripSchedulerCaptionCursor(asset.caption).trim() ||
+        stripSchedulerCaptionCursor(asset.caption).trim() ===
+          asset.captionRecommendation.recommendedCaption.trim()
+      ) {
+        return;
+      }
+
+      mutatePlannerAssets((current) =>
+        current.map((entry) =>
+          entry.id === assetId && entry.captionRecommendation
+            ? {
+                ...entry,
+                captionRecommendation: {
+                  ...entry.captionRecommendation,
+                  loggedEvents: [...entry.captionRecommendation.loggedEvents, 'edited'],
+                },
+              }
+            : entry
+        )
+      );
+
+      try {
+        await submitCaptionRecommendationFeedback(asset, 'edited');
+      } catch (error) {
+        setComposerError(
+          error instanceof Error
+            ? error.message
+            : 'Failed to record caption edit feedback.'
+        );
+      }
+    },
+    [
+      activeRecommendationTyping?.assetId,
+      mutatePlannerAssets,
+      plannerAssets,
+      submitCaptionRecommendationFeedback,
+    ]
+  );
 
   const addSlotToAsset = (assetId: string) => {
     mutatePlannerAssets((current) =>
@@ -1819,6 +2436,12 @@ export const SchedulerPage = () => {
           title: mediaAsset.filename ?? null,
           prompt: readMetadataValue(mediaAsset.metadata, 'prompt'),
           caption: items.find((item) => item.caption?.trim())?.caption ?? '',
+          captionRecommendation: readPlannerCaptionRecommendation(
+            firstItem.metadata ?? {}
+          ),
+          acceptedCaptionAttribution: readPlannerAcceptedCaptionAttribution(
+            firstItem.metadata ?? {}
+          ),
           isPreviewOpen: false,
           slots: items.map((item) => ({
             id: createLocalPlannerId(),
@@ -1968,6 +2591,37 @@ export const SchedulerPage = () => {
           platform: account.platform,
           accountId: account.accountId,
           caption: asset.caption.trim() || null,
+          metadata: {
+            ...(asset.captionRecommendation
+              ? {
+                  recommendedCaption: {
+                    sourceKey: asset.captionRecommendation.sourceKey,
+                    memoryType: 'generated-caption',
+                    selectedVariantIndex: asset.captionRecommendation.selectedVariantIndex,
+                    reasoning: asset.captionRecommendation.reasoning,
+                    note: asset.captionRecommendation.note,
+                    feedbackState: asset.captionRecommendation.feedbackState,
+                    observabilityLogId: asset.captionRecommendation.observabilityLogId,
+                    wasAiRecommended: true,
+                  },
+                }
+              : {}),
+            ...(asset.acceptedCaptionAttribution
+              ? {
+                  acceptedCaption: {
+                    sourceKey: asset.acceptedCaptionAttribution.sourceKey,
+                    memoryType: asset.acceptedCaptionAttribution.memoryType,
+                    selectedVariantIndex:
+                      asset.acceptedCaptionAttribution.selectedVariantIndex,
+                    acceptedCaption: asset.acceptedCaptionAttribution.acceptedCaption,
+                    acceptedFeedbackEventId:
+                      asset.acceptedCaptionAttribution.acceptedFeedbackEventId,
+                    wasAiRecommended:
+                      asset.acceptedCaptionAttribution.wasAiRecommended,
+                  },
+                }
+              : {}),
+          },
           scheduledAt: toIsoStringFromDisplayDateTimeLocalValue(slot.scheduledAt),
           status: 'pending' as const,
         };
@@ -1989,6 +2643,9 @@ export const SchedulerPage = () => {
       setComposerNotice(null);
 
       const createdAssets: PlannerAsset[] = [];
+      let acceptedCarryoverAssetId: string | null = null;
+      let acceptedCarryoverCaption: string | null = null;
+      let acceptedCarryoverApplied = false;
       const skippedDuplicateCount = { value: 0 };
 
       for (const file of files) {
@@ -2040,25 +2697,55 @@ export const SchedulerPage = () => {
           defaultSocialAccountId: defaultPlannerAccountId,
           dedupeKey,
         });
+        const finalAsset =
+          acceptedCarryoverApplied || !pendingAcceptedCaptionCarryover
+            ? nextAsset
+            : applyAcceptedCarryoverToAsset(nextAsset);
         logSchedulerDebug('schedule row created', {
           mediaAssetId: mediaAsset.id,
           dedupeKey,
-          slotCount: nextAsset.slots.length,
+          slotCount: finalAsset.slots.length,
           sourceType: 'upload',
         });
 
-        createdAssets.push(nextAsset);
+        if (
+          !acceptedCarryoverApplied &&
+          pendingAcceptedCaptionCarryover &&
+          finalAsset.acceptedCaptionAttribution
+        ) {
+          acceptedCarryoverApplied = true;
+          acceptedCarryoverAssetId = finalAsset.id;
+          acceptedCarryoverCaption = finalAsset.caption;
+        }
+
+        createdAssets.push(finalAsset);
       }
 
       clearSchedulerGeneratedMediaIntent();
       setDismissedGeneratedMediaIntentId(null);
       if (createdAssets.length) {
         setPlannerAssets((current) => [...current, ...createdAssets]);
-        setComposerNotice(
-          createdAssets.length === 1
-            ? `${createdAssets[0]?.filename || 'Media'} added to the batch.`
-            : `${createdAssets.length} media assets added to the batch.`
-        );
+        if (acceptedCarryoverApplied) {
+          setPendingAcceptedCaptionCarryover(null);
+          clearSchedulerAcceptedCaptionCarryover();
+          if (acceptedCarryoverAssetId && acceptedCarryoverCaption) {
+            setActiveRecommendationTyping({
+              assetId: acceptedCarryoverAssetId,
+              target: acceptedCarryoverCaption,
+            });
+          }
+          setComposerNotice(
+            createdAssets.length === 1
+              ? 'Accepted caption and media added to the planner.'
+              : 'Accepted caption and uploaded media added to the planner.'
+          );
+        } else {
+          setComposerNotice(
+            createdAssets.length === 1
+              ? `${createdAssets[0]?.filename || 'Media'} added to the batch.`
+              : `${createdAssets.length} media assets added to the batch.`
+          );
+        }
         markPlannerDirty();
       } else if (skippedDuplicateCount.value > 0) {
         setComposerNotice(null);
@@ -2859,11 +3546,38 @@ export const SchedulerPage = () => {
 
                     <label className="field field--full">
                       <span className="field__label">Caption</span>
+                      {asset.captionRecommendation ? (
+                        <div className="scheduler-caption-recommendation">
+                          <div className="scheduler-caption-recommendation__copy">
+                            <strong>PrixmoAI recommendation</strong>
+                            <span>{asset.captionRecommendation.note}</span>
+                          </div>
+                          <div className="scheduler-caption-recommendation__actions">
+                            <button
+                              type="button"
+                              className="scheduler-caption-recommendation__button scheduler-caption-recommendation__button--accept"
+                              onClick={() => void acceptRecommendedCaption(asset.id)}
+                            >
+                              <Check size={14} />
+                              <span>Accept</span>
+                            </button>
+                            <button
+                              type="button"
+                              className="scheduler-caption-recommendation__button scheduler-caption-recommendation__button--reject"
+                              onClick={() => void rejectRecommendedCaption(asset.id)}
+                            >
+                              <X size={14} />
+                              <span>Reject</span>
+                            </button>
+                          </div>
+                        </div>
+                      ) : null}
                       <textarea
                         className="field__control field__control--textarea"
                         rows={4}
                         value={asset.caption}
                         onChange={(event) => updateAssetCaption(asset.id, event.target.value)}
+                        onBlur={() => void markRecommendedCaptionEdited(asset.id)}
                         placeholder="Write one caption for every slot on this asset."
                       />
                     </label>
@@ -2999,15 +3713,28 @@ export const SchedulerPage = () => {
                         <span>{account ? getAccountDisplayName(account) : 'Channel not selected'}</span>
                       </div>
                     </div>
-                    <span>
+                    <div className="scheduler-bulk-matrix__schedule">
+                      <strong>
+                        {slot.scheduledAt
+                          ? formatDateTime(
+                              toIsoStringFromDisplayDateTimeLocalValue(slot.scheduledAt)
+                            )
+                          : 'No time selected'}
+                      </strong>
+                      <span>
+                        {account
+                          ? getPlatformLabel(account.platform)
+                          : 'Choose a connected channel'}
+                      </span>
+                    </div>
+                    <p className="scheduler-bulk-matrix__caption">
                       {slot.scheduledAt
-                        ? formatDateTime(
-                            toIsoStringFromDisplayDateTimeLocalValue(slot.scheduledAt)
-                          )
-                        : 'No time selected'}
-                    </span>
-                    <span>{asset.caption?.trim() || 'No caption yet'}</span>
-                    <QueueStatusBadge status={slot.status} />
+                        ? asset.caption?.trim() || 'No caption yet'
+                        : asset.caption?.trim() || 'Add a time to finish this row.'}
+                    </p>
+                    <div className="scheduler-bulk-matrix__status">
+                      <QueueStatusBadge status={slot.status} />
+                    </div>
                   </div>
                 ))}
               </div>

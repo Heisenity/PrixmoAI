@@ -22,7 +22,7 @@ import {
   X,
 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
-import { NavLink } from 'react-router-dom';
+import { NavLink, useNavigate } from 'react-router-dom';
 import { CaptionList } from '../../components/generate/CaptionList';
 import { DictationTextareaField } from '../../components/generate/DictationTextareaField';
 import { GenerationBlackHoleLoader } from '../../components/generate/GenerationBlackHoleLoader';
@@ -45,7 +45,12 @@ import { useGenerateWorkspace } from '../../hooks/useGenerateWorkspace';
 import { useAuth } from '../../hooks/useAuth';
 import { useAnalytics } from '../../hooks/useAnalytics';
 import { useUpgradePrompt } from '../../hooks/useUpgradePrompt';
+import { apiRequest } from '../../lib/axios';
 import { getAvatarCandidates } from '../../lib/profile';
+import {
+  writeSchedulerAcceptedCaptionCarryover,
+  writeSchedulerGeneratedMediaIntent,
+} from '../../lib/schedulerGeneratedMedia';
 import { getUserFacingTimeZone } from '../../lib/timezone';
 import { getOverallUsageSummary } from '../../lib/usage';
 import { APP_NAME } from '../../lib/constants';
@@ -59,12 +64,15 @@ import {
 } from '../../lib/constants';
 import { formatDateTime, splitKeywords } from '../../lib/utils';
 import type {
+  BrandMemoryFeedbackEvent,
   CaptionVariant,
+  GenerateContentInput,
   GenerateConversation,
   GenerateConversationAsset,
   GenerateConversationMessage,
   GeneratedImage as GeneratedImageRecord,
   ReelScript as ReelScriptType,
+  SchedulerAcceptedCaptionCarryover,
   SchedulerGeneratedMediaIntent,
 } from '../../types';
 
@@ -140,6 +148,9 @@ const createDefaultImageForm = (useBrandName = false) => ({
   sourceImageUrl: '',
   prompt: '',
 });
+
+const DESCRIPTION_REQUIRED_MESSAGE =
+  'Description is mandatory. (A detailed description will create better results.)';
 
 const GENERATE_SIDEBAR_COLLAPSED_STORAGE_KEY =
   'prixmoai.generate.sidebarCollapsed';
@@ -970,12 +981,67 @@ const hydrateImageInput = (message: GenerateConversationMessage) => {
   };
 };
 
+const getAssistantCopyFeedbackMeta = (message: GenerateConversationMessage) => {
+  const metadata = toRecord(message.metadata);
+  const copyAsset = message.assets.find((asset) => asset.assetType === 'copy');
+  const contentId =
+    typeof metadata.contentId === 'string'
+      ? metadata.contentId
+      : copyAsset && typeof copyAsset.payload.contentId === 'string'
+        ? copyAsset.payload.contentId
+        : null;
+  const platform =
+    copyAsset && typeof copyAsset.payload.platform === 'string'
+      ? copyAsset.payload.platform
+      : null;
+
+  return {
+    contentId,
+    platform,
+  };
+};
+
+const buildCaptionTextForScheduler = (caption: CaptionVariant) =>
+  [caption.hook, caption.mainCopy, caption.cta].filter(Boolean).join('\n\n').trim();
+
 const AssistantAssets = ({
+  message,
   assets,
   showImageWatermark,
+  onCaptionFeedback,
+  onCaptionReuse,
+  feedbackResetToken,
+  onRegenerateAllRejected,
+  isRegeneratingAllRejected = false,
 }: {
+  message: GenerateConversationMessage;
   assets: GenerateConversationAsset[];
   showImageWatermark: boolean;
+  onCaptionFeedback?: (input: {
+    contentId: string;
+    platform: string | null;
+    sourceKey: string;
+    eventType: 'accepted' | 'rejected';
+    captionText: string;
+    selectedVariantIndex: number;
+    scheduleIntent: SchedulerGeneratedMediaIntent | null;
+    captionVariants: CaptionVariant[];
+    productName: string | null;
+    goal: string | null;
+    tone: string | null;
+    audience: string | null;
+  }) => void | Promise<void>;
+  onCaptionReuse?: (input: {
+    contentId: string;
+    platform: string | null;
+    sourceKey: string;
+  }) => void | Promise<void>;
+  feedbackResetToken?: string | null;
+  onRegenerateAllRejected?: (input: GenerateContentInput & {
+    contentId: string;
+    captionCount: number;
+  }) => void | Promise<void>;
+  isRegeneratingAllRejected?: boolean;
 }) => {
   const copyAsset = assets.find((asset) => asset.assetType === 'copy');
   const hashtagAsset = assets.find((asset) => asset.assetType === 'hashtags');
@@ -1003,11 +1069,41 @@ const AssistantAssets = ({
         prompt: null,
         title: 'Generated image',
         caption: null,
+        captionVariants: captions,
+        goal:
+          copyAsset && typeof copyAsset.payload.goal === 'string'
+            ? copyAsset.payload.goal
+            : null,
+        tone:
+          copyAsset && typeof copyAsset.payload.tone === 'string'
+            ? copyAsset.payload.tone
+            : null,
+        audience:
+          copyAsset && typeof copyAsset.payload.audience === 'string'
+            ? copyAsset.payload.audience
+            : null,
+        keywords:
+          copyAsset && Array.isArray(copyAsset.payload.keywords)
+            ? toStringArray(copyAsset.payload.keywords)
+            : [],
+        productName:
+          copyAsset && typeof copyAsset.payload.productName === 'string'
+            ? copyAsset.payload.productName
+            : null,
+        productDescription:
+          copyAsset && typeof copyAsset.payload.productDescription === 'string'
+            ? copyAsset.payload.productDescription
+            : null,
+        platform:
+          copyAsset && typeof copyAsset.payload.platform === 'string'
+            ? copyAsset.payload.platform
+            : null,
         createdAt: image.createdAt,
         metadata: {
           backgroundStyle: image.backgroundStyle,
           provider: image.provider ?? null,
           sourceImageUrl: image.sourceImageUrl,
+          requiresWatermark: showImageWatermark,
         },
       }
     : null;
@@ -1016,9 +1112,109 @@ const AssistantAssets = ({
     return null;
   }
 
+  const copyFeedbackMeta = getAssistantCopyFeedbackMeta(message);
+  const feedbackContentId = copyFeedbackMeta.contentId;
+  const feedbackResetSourceKey = feedbackContentId
+    ? feedbackResetToken
+        ?.slice(feedbackContentId.length + 2)
+        ?.split('::')[0] ?? null
+    : null;
+  const feedbackResetKey =
+    feedbackContentId &&
+    feedbackResetToken?.startsWith(`${feedbackContentId}::`)
+      ? feedbackResetSourceKey
+      : null;
+
   return (
     <div className="generate-chat__assistant-assets">
-      {captions.length ? <CaptionList captions={captions} /> : null}
+      {captions.length ? (
+        <CaptionList
+          captions={captions}
+          feedbackResetKey={feedbackResetKey}
+          onRegenerateAllRejected={
+            feedbackContentId && copyAsset
+              ? () =>
+                  onRegenerateAllRejected?.({
+                    contentId: feedbackContentId,
+                    captionCount: captions.length,
+                    useBrandName:
+                      copyAsset.payload.useBrandName === true ||
+                      (typeof copyAsset.payload.brandName === 'string' &&
+                        copyAsset.payload.brandName.trim().length > 0),
+                    productName:
+                      typeof copyAsset.payload.productName === 'string'
+                        ? copyAsset.payload.productName
+                        : '',
+                    productDescription:
+                      typeof copyAsset.payload.productDescription === 'string'
+                        ? copyAsset.payload.productDescription
+                        : '',
+                    platform:
+                      typeof copyAsset.payload.platform === 'string'
+                        ? copyAsset.payload.platform
+                        : undefined,
+                    goal:
+                      typeof copyAsset.payload.goal === 'string'
+                        ? copyAsset.payload.goal
+                        : undefined,
+                    tone:
+                      typeof copyAsset.payload.tone === 'string'
+                        ? copyAsset.payload.tone
+                        : undefined,
+                    audience:
+                      typeof copyAsset.payload.audience === 'string'
+                        ? copyAsset.payload.audience
+                        : undefined,
+                    keywords: Array.isArray(copyAsset.payload.keywords)
+                      ? toStringArray(copyAsset.payload.keywords)
+                      : [],
+                  })
+              : undefined
+          }
+          isRegeneratingAllRejected={isRegeneratingAllRejected}
+          onFeedback={
+            feedbackContentId
+              ? (sourceKey, eventType, caption, index) =>
+                  onCaptionFeedback?.({
+                    contentId: feedbackContentId,
+                    platform: copyFeedbackMeta.platform,
+                    sourceKey,
+                    eventType,
+                    captionText: buildCaptionTextForScheduler(caption),
+                    selectedVariantIndex: index + 1,
+                    scheduleIntent,
+                    captionVariants: captions,
+                    productName:
+                      copyAsset && typeof copyAsset.payload.productName === 'string'
+                        ? copyAsset.payload.productName
+                        : null,
+                    goal:
+                      copyAsset && typeof copyAsset.payload.goal === 'string'
+                        ? copyAsset.payload.goal
+                        : null,
+                    tone:
+                      copyAsset && typeof copyAsset.payload.tone === 'string'
+                        ? copyAsset.payload.tone
+                        : null,
+                    audience:
+                      copyAsset && typeof copyAsset.payload.audience === 'string'
+                        ? copyAsset.payload.audience
+                        : null,
+                  })
+              : undefined
+          }
+          onReuse={
+            feedbackContentId
+              ? (sourceKey) =>
+                  onCaptionReuse?.({
+                    contentId: feedbackContentId,
+                    platform: copyFeedbackMeta.platform,
+                    sourceKey,
+                  })
+              : undefined
+          }
+        />
+      ) : null}
       {hashtags.length ? <HashtagDisplay hashtags={hashtags} /> : null}
       {reelScript ? <ReelScript script={reelScript} /> : null}
       {image ? (
@@ -1037,7 +1233,8 @@ export const GeneratePage = () => {
   const { subscription, catalog, isLoading: isBillingLoading } = useBilling();
   const { overview, isLoading: isAnalyticsLoading } = useAnalytics();
   const { profile } = useBrandProfile();
-  const { signOut, user } = useAuth();
+  const { signOut, token, user } = useAuth();
+  const navigate = useNavigate();
   const threadEndRef = useRef<HTMLDivElement | null>(null);
   const accountMenuRef = useRef<HTMLDivElement | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -1061,6 +1258,14 @@ export const GeneratePage = () => {
     useState(0);
   const [imageDescriptionHistoryCommitSignal, setImageDescriptionHistoryCommitSignal] =
     useState(0);
+  const [acceptedCaptionSchedulerPrompt, setAcceptedCaptionSchedulerPrompt] = useState<{
+    carryover: SchedulerAcceptedCaptionCarryover;
+    scheduleIntent: SchedulerGeneratedMediaIntent | null;
+  } | null>(null);
+  const [captionFeedbackResetToken, setCaptionFeedbackResetToken] = useState<
+    string | null
+  >(null);
+  const [isRegeneratingRejectedSet, setIsRegeneratingRejectedSet] = useState(false);
   const [isAccountMenuOpen, setIsAccountMenuOpen] = useState(false);
   const [contentButtonProgress, setContentButtonProgress] = useState(0);
   const [isContentButtonCompleting, setIsContentButtonCompleting] = useState(false);
@@ -1073,12 +1278,310 @@ export const GeneratePage = () => {
   const contentButtonMotionProfileRef = useRef<GenerateButtonMotionProfile>(
     createGenerateButtonMotionProfile('copy')
   );
-  const avatarCandidates = getAvatarCandidates(
-    profile?.avatarUrl,
-    user?.user_metadata && typeof user.user_metadata === 'object'
-      ? (user.user_metadata as Record<string, unknown>)
-      : null
-  );
+  const avatarCandidates = useMemo(() => {
+    const metadataSources: Array<Record<string, unknown> | null> = [
+      user?.user_metadata && typeof user.user_metadata === 'object'
+        ? (user.user_metadata as Record<string, unknown>)
+        : null,
+      ...(user?.identities ?? []).map((identity) =>
+        identity.identity_data && typeof identity.identity_data === 'object'
+          ? (identity.identity_data as Record<string, unknown>)
+          : null
+      ),
+    ];
+
+    return getAvatarCandidates(profile?.avatarUrl, metadataSources);
+  }, [profile?.avatarUrl, user?.identities, user?.user_metadata]);
+
+  const latestCopyFeedbackContext = useMemo(() => {
+    const messages = workspace.activeThread?.messages ?? [];
+
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      const message = messages[index];
+      const copyAsset = message.assets.find((asset) => asset.assetType === 'copy');
+      const copyFeedbackMeta = getAssistantCopyFeedbackMeta(message);
+
+      if (!copyFeedbackMeta.contentId || !copyAsset) {
+        continue;
+      }
+
+      const payload = copyAsset.payload;
+      const captionCount = Array.isArray(payload.captions)
+        ? toCaptionVariants(payload.captions).length
+        : 0;
+
+      return {
+        contentId: copyFeedbackMeta.contentId,
+        captionCount,
+        platform: typeof payload.platform === 'string' ? payload.platform : null,
+        goal: typeof payload.goal === 'string' ? payload.goal : null,
+        tone: typeof payload.tone === 'string' ? payload.tone : null,
+        audience: typeof payload.audience === 'string' ? payload.audience : null,
+      };
+    }
+
+    return null;
+  }, [workspace.activeThread]);
+
+  const submitGenerateMemoryFeedback = async (input: {
+    sourceId: string;
+    sourceKey: string;
+    memoryType: string;
+    eventType:
+      | 'accepted'
+      | 'rejected'
+      | 'regenerated'
+      | 'reused';
+    platform?: string | null;
+    contentId?: string | null;
+    metadata?: Record<string, unknown>;
+  }) => {
+    if (!token) {
+      return null;
+    }
+
+    return await apiRequest<BrandMemoryFeedbackEvent | null>('/api/content/feedback', {
+      method: 'POST',
+      token,
+      body: {
+        sourceTable: 'generated_content',
+        sourceId: input.sourceId,
+        sourceKey: input.sourceKey,
+        memoryType: input.memoryType,
+        eventType: input.eventType,
+        platform: input.platform ?? null,
+        contentId: input.contentId ?? input.sourceId,
+        wasAiRecommended:
+          input.eventType === 'accepted' || input.eventType === 'reused',
+        metadata: input.metadata ?? {},
+      },
+    });
+  };
+
+  const handleCaptionFeedback = async (input: {
+    contentId: string;
+    platform: string | null;
+    sourceKey: string;
+    eventType: 'accepted' | 'rejected';
+    captionText: string;
+    selectedVariantIndex: number;
+    scheduleIntent: SchedulerGeneratedMediaIntent | null;
+    captionVariants: CaptionVariant[];
+    productName: string | null;
+    goal: string | null;
+    tone: string | null;
+    audience: string | null;
+  }) => {
+    if (!input.contentId) {
+      return;
+    }
+
+    const carryoverId = `${input.contentId}:${input.sourceKey}:${Date.now()}`;
+    const carryover: SchedulerAcceptedCaptionCarryover = {
+      carryoverId,
+      contentId: input.contentId,
+      sourceKey: input.sourceKey,
+      selectedVariantIndex: input.selectedVariantIndex,
+      acceptedCaption: input.captionText.trim(),
+      platform: input.platform,
+      productName: input.productName,
+      goal: input.goal,
+      tone: input.tone,
+      audience: input.audience,
+      acceptedFeedbackEventId: null,
+      captionVariants: input.captionVariants,
+      createdAt: new Date().toISOString(),
+    };
+
+    const buildAcceptedScheduleIntent = (
+      acceptedFeedbackEventId: string | null
+    ): SchedulerGeneratedMediaIntent | null =>
+      input.scheduleIntent
+      ? {
+          ...input.scheduleIntent,
+          caption: input.captionText.trim(),
+          metadata: {
+            ...(input.scheduleIntent.metadata ?? {}),
+            acceptedCaption: {
+              sourceKey: input.sourceKey,
+              memoryType: 'generated-caption',
+              selectedVariantIndex: input.selectedVariantIndex,
+              acceptedCaption: input.captionText.trim(),
+              acceptedFeedbackEventId,
+              wasAiRecommended: true,
+            },
+          },
+        }
+      : null;
+
+    if (input.eventType === 'accepted' && input.captionText.trim()) {
+      setAcceptedCaptionSchedulerPrompt({
+        carryover,
+        scheduleIntent: buildAcceptedScheduleIntent(null),
+      });
+    }
+
+    let feedbackEvent: BrandMemoryFeedbackEvent | null = null;
+
+    try {
+      feedbackEvent = await submitGenerateMemoryFeedback({
+        sourceId: input.contentId,
+        sourceKey: input.sourceKey,
+        memoryType: 'generated-caption',
+        eventType: input.eventType,
+        platform: input.platform,
+        contentId: input.contentId,
+        metadata: {
+          requestContext: 'generate-page',
+          interactionSurface: 'caption-card',
+          selectedVariantIndex: input.selectedVariantIndex,
+        },
+      });
+    } catch (error) {
+      console.warn('[generate-page] failed to record caption feedback', {
+        contentId: input.contentId,
+        sourceKey: input.sourceKey,
+        eventType: input.eventType,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+
+    if (input.eventType !== 'accepted' || !input.captionText.trim()) {
+      return;
+    }
+
+    setAcceptedCaptionSchedulerPrompt((current) => {
+      if (!current || current.carryover.carryoverId !== carryoverId) {
+        return current;
+      }
+
+      return {
+        carryover: {
+          ...current.carryover,
+          acceptedFeedbackEventId: feedbackEvent?.id ?? null,
+        },
+        scheduleIntent: buildAcceptedScheduleIntent(feedbackEvent?.id ?? null),
+      };
+    });
+  };
+
+  const handleCaptionReuse = async (input: {
+    contentId: string;
+    platform: string | null;
+    sourceKey: string;
+  }) => {
+    if (!input.contentId) {
+      return;
+    }
+
+    try {
+      await submitGenerateMemoryFeedback({
+        sourceId: input.contentId,
+        sourceKey: input.sourceKey,
+        memoryType: 'generated-caption',
+        eventType: 'reused',
+        platform: input.platform,
+        contentId: input.contentId,
+        metadata: {
+          requestContext: 'generate-page',
+          interactionSurface: 'copy',
+        },
+      });
+    } catch (error) {
+      console.warn('[generate-page] failed to record caption reuse', {
+        contentId: input.contentId,
+        sourceKey: input.sourceKey,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  };
+
+  const regenerateRejectedCaptionSet = async (
+    input: GenerateContentInput & {
+      contentId: string;
+      captionCount: number;
+    }
+  ) => {
+    if (isRegeneratingRejectedSet) {
+      return;
+    }
+
+    setIsRegeneratingRejectedSet(true);
+    setAcceptedCaptionSchedulerPrompt(null);
+
+    if (input.contentId && input.captionCount > 0) {
+      Array.from({ length: input.captionCount }).forEach((_, index) => {
+        void submitGenerateMemoryFeedback({
+          sourceId: input.contentId,
+          sourceKey: `caption-${index + 1}`,
+          memoryType: 'generated-caption',
+          eventType: 'regenerated',
+          platform: input.platform ?? null,
+          contentId: input.contentId,
+          metadata: {
+            requestContext: 'generate-page',
+            interactionSurface: 'all-rejected-regenerate',
+            allVariantsRejected: true,
+            goal: input.goal ?? null,
+            tone: input.tone ?? null,
+            audience: input.audience ?? null,
+          },
+        }).catch((error) => {
+          console.warn('[generate-page] failed to record all-rejected regeneration', {
+            contentId: input.contentId,
+            sourceKey: `caption-${index + 1}`,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        });
+      });
+    }
+
+    const refinementNote =
+      'Previous caption variations were rejected. Create a clearly stronger set with more distinct hooks, fresher phrasing, sharper platform fit, and clearer CTA alignment. Avoid repeating the earlier wording.';
+    const refinedDescription = input.productDescription?.trim()
+      ? `${input.productDescription.trim()}\n\n${refinementNote}`
+      : refinementNote;
+
+    try {
+      await workspace.generateCopy({
+        ...input,
+        productDescription: refinedDescription,
+      });
+    } catch {
+      return;
+    } finally {
+      setIsRegeneratingRejectedSet(false);
+    }
+  };
+
+  const closeAcceptedCaptionSchedulerPrompt = () => {
+    if (acceptedCaptionSchedulerPrompt) {
+      setCaptionFeedbackResetToken(
+        `${acceptedCaptionSchedulerPrompt.carryover.contentId}::${acceptedCaptionSchedulerPrompt.carryover.sourceKey}::${Date.now()}`
+      );
+    }
+    setAcceptedCaptionSchedulerPrompt(null);
+  };
+
+  const useAcceptedCaptionInScheduler = () => {
+    if (!acceptedCaptionSchedulerPrompt) {
+      return;
+    }
+
+    if (acceptedCaptionSchedulerPrompt.scheduleIntent) {
+      writeSchedulerGeneratedMediaIntent(acceptedCaptionSchedulerPrompt.scheduleIntent);
+    } else {
+      writeSchedulerAcceptedCaptionCarryover(acceptedCaptionSchedulerPrompt.carryover);
+    }
+
+    navigate('/app/scheduler', {
+      state: {
+        generatedMediaIntent: acceptedCaptionSchedulerPrompt.scheduleIntent,
+        acceptedCaptionCarryover: acceptedCaptionSchedulerPrompt.carryover,
+      },
+    });
+    setAcceptedCaptionSchedulerPrompt(null);
+  };
 
   useEffect(() => {
     if (!workspace.activeThread) {
@@ -1422,8 +1925,10 @@ export const GeneratePage = () => {
   const roundedContentButtonProgress = Math.round(contentButtonProgress);
   const activeButtonMotionProfile = contentButtonMotionProfileRef.current;
   const activeContentVerboseMessages = workspace.isGeneratingCopy
-    ? CONTENT_GENERATION_VERBOSE_MESSAGES_BY_PHASE[workspace.copyGenerationPhase] ??
-      CONTENT_GENERATION_VERBOSE_MESSAGES_BY_PHASE.writing
+    ? workspace.copyGenerationVerboseMessages.length
+      ? workspace.copyGenerationVerboseMessages
+      : CONTENT_GENERATION_VERBOSE_MESSAGES_BY_PHASE[workspace.copyGenerationPhase] ??
+        CONTENT_GENERATION_VERBOSE_MESSAGES_BY_PHASE.writing
     : CONTENT_GENERATION_VERBOSE_MESSAGES_BY_PHASE.idle;
   const displayedContentButtonProgress =
     isContentButtonAnimating &&
@@ -1577,6 +2082,11 @@ export const GeneratePage = () => {
       return;
     }
 
+    if (!contentForm.productDescription.trim()) {
+      workspace.setError(DESCRIPTION_REQUIRED_MESSAGE);
+      return;
+    }
+
     try {
       await workspace.generateCopy({
         ...contentForm,
@@ -1603,6 +2113,11 @@ export const GeneratePage = () => {
 
     if (!imageForm.productName.trim()) {
       workspace.setError('Add a product or offer name before generating an image.');
+      return;
+    }
+
+    if (!imageForm.productDescription.trim()) {
+      workspace.setError(DESCRIPTION_REQUIRED_MESSAGE);
       return;
     }
 
@@ -1647,6 +2162,39 @@ export const GeneratePage = () => {
   };
 
   const regenerateCopy = () => {
+    if (!contentForm.productDescription.trim()) {
+      workspace.setError(DESCRIPTION_REQUIRED_MESSAGE);
+      return;
+    }
+
+    if (latestCopyFeedbackContext?.contentId && latestCopyFeedbackContext.captionCount > 0) {
+      Array.from({ length: latestCopyFeedbackContext.captionCount }).forEach(
+        (_, index) => {
+          void submitGenerateMemoryFeedback({
+            sourceId: latestCopyFeedbackContext.contentId,
+            sourceKey: `caption-${index + 1}`,
+            memoryType: 'generated-caption',
+            eventType: 'regenerated',
+            platform: latestCopyFeedbackContext.platform,
+            contentId: latestCopyFeedbackContext.contentId,
+            metadata: {
+              requestContext: 'generate-page',
+              interactionSurface: 'regenerate',
+              goal: latestCopyFeedbackContext.goal,
+              tone: latestCopyFeedbackContext.tone,
+              audience: latestCopyFeedbackContext.audience,
+            },
+          }).catch((error) => {
+            console.warn('[generate-page] failed to record caption regeneration', {
+              contentId: latestCopyFeedbackContext.contentId,
+              sourceKey: `caption-${index + 1}`,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          });
+        }
+      );
+    }
+
     void workspace
       .generateCopy({
         ...contentForm,
@@ -1661,6 +2209,11 @@ export const GeneratePage = () => {
   };
 
   const regenerateImage = () => {
+    if (!imageForm.productDescription.trim()) {
+      workspace.setError(DESCRIPTION_REQUIRED_MESSAGE);
+      return;
+    }
+
     void workspace
       .generateImage({
         ...imageForm,
@@ -2005,7 +2558,6 @@ export const GeneratePage = () => {
                   <div className="generate-chat__account-title">
                     <strong>{profile?.fullName || 'Workspace Owner'}</strong>
                   </div>
-                  <span>{profile?.industry || 'Open workspace options'}</span>
                   <div className="generate-chat__account-usage">
                     <span>{usageSummary}</span>
                   </div>
@@ -2056,27 +2608,33 @@ export const GeneratePage = () => {
                       (message.assets.length > 0 || Boolean(message.content))
                   )
                   .map((message) => (
-                  <div
-                    key={message.id}
-                    className="generate-chat__message generate-chat__message--assistant"
-                  >
-                    <div className="generate-chat__message-bubble">
-                      <div className="generate-chat__message-meta">
-                        <span>PrixmoAI</span>
-                        <time dateTime={message.createdAt}>
-                          {formatMessageTimestamp(message.createdAt)}
-                        </time>
+                      <div
+                        key={message.id}
+                        className="generate-chat__message generate-chat__message--assistant"
+                      >
+                        <div className="generate-chat__message-bubble">
+                          <div className="generate-chat__message-meta">
+                            <span>PrixmoAI</span>
+                            <time dateTime={message.createdAt}>
+                              {formatMessageTimestamp(message.createdAt)}
+                            </time>
+                          </div>
+                          {!message.assets.length && message.content ? (
+                            <p>{message.content}</p>
+                          ) : null}
+                          <AssistantAssets
+                            message={message}
+                            assets={message.assets}
+                            showImageWatermark={shouldWatermarkImages}
+                            onCaptionFeedback={handleCaptionFeedback}
+                            onCaptionReuse={handleCaptionReuse}
+                            feedbackResetToken={captionFeedbackResetToken}
+                            onRegenerateAllRejected={regenerateRejectedCaptionSet}
+                            isRegeneratingAllRejected={isRegeneratingRejectedSet}
+                          />
+                        </div>
                       </div>
-                      {!message.assets.length && message.content ? (
-                        <p>{message.content}</p>
-                      ) : null}
-                      <AssistantAssets
-                        assets={message.assets}
-                        showImageWatermark={shouldWatermarkImages}
-                      />
-                    </div>
-                  </div>
-                ))
+                    ))
               ) : (
                 <div className="generate-chat__thread-placeholder">
                   <strong>No output yet</strong>
@@ -2100,6 +2658,10 @@ export const GeneratePage = () => {
                         workspace.isGeneratingCopy
                           ? activeContentVerboseMessages
                           : undefined
+                      }
+                      preferLatestVerboseMessage={
+                        workspace.isGeneratingCopy &&
+                        workspace.copyGenerationVerboseMessages.length > 0
                       }
                     />
                   </div>
@@ -2583,6 +3145,61 @@ export const GeneratePage = () => {
           </Card>
         </div>
       </div>
+      {acceptedCaptionSchedulerPrompt ? (
+        <div
+          className="generate-accept-scheduler-dialog"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Use accepted caption in scheduler"
+        >
+          <button
+            type="button"
+            className="generate-accept-scheduler-dialog__backdrop"
+            onClick={closeAcceptedCaptionSchedulerPrompt}
+            aria-label="Close scheduler prompt"
+          />
+          <div className="generate-accept-scheduler-dialog__panel">
+            <div className="generate-accept-scheduler-dialog__header">
+              <div>
+                <p className="section-eyebrow">Caption accepted</p>
+                <h3>Use this caption in Scheduler?</h3>
+              </div>
+              <button
+                type="button"
+                className="generated-image-card__action"
+                onClick={closeAcceptedCaptionSchedulerPrompt}
+                aria-label="Close scheduler prompt"
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <p className="generate-accept-scheduler-dialog__copy">
+              PrixmoAI can carry this accepted caption into Scheduler so you can post
+              the same variation without rebuilding it.
+            </p>
+            <div className="generate-accept-scheduler-dialog__preview">
+              <p>{acceptedCaptionSchedulerPrompt.carryover.acceptedCaption}</p>
+            </div>
+            <div className="generate-accept-scheduler-dialog__actions">
+              <button
+                type="button"
+                className="caption-feedback-button"
+                onClick={closeAcceptedCaptionSchedulerPrompt}
+              >
+                Not now
+              </button>
+              <button
+                type="button"
+                className="caption-feedback-button caption-feedback-button--accepted"
+                onClick={useAcceptedCaptionInScheduler}
+              >
+                <CalendarClock size={15} />
+                Use in Scheduler
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 };

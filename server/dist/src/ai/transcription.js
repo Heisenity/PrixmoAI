@@ -50,11 +50,11 @@ const MIME_EXTENSION_MAP = {
 const LANGUAGE_TRANSCRIPTION_GUIDES = {
     bn: {
         languageName: 'Bengali',
-        prompt: 'বাংলা speech-to-text। বাংলা লিখো। YouTube, Facebook, Instagram, API, Node.js-এর মতো spoken English শব্দ ইংরেজিতেই রাখো। অনুবাদ নয়। না/খালি/শুধু/বাদ/remove/only/without নির্দেশ ঠিক রাখো।',
-        cleanupPrompt: 'বাংলা ASR টেক্সট। শুধু স্পষ্ট বানান, spacing, খুব দরকারি ন্যূনতম punctuation, আর clear overlap repetition ঠিক করো। একই শব্দ, একই অর্থ, একই order রাখো। YouTube, Facebook, Instagram, API, Node.js-এর মতো spoken English শব্দ ইংরেজিতেই রাখো। unsure হলে original শব্দ রাখো।',
+        prompt: 'বাংলা/Banglish speech-to-text। বাংলা grammar/common words বাংলা লিপিতে লিখো, কিন্তু user যদি English creative/style/category word বলে সেটি English রাখো: crime, cult, thriller, content, poster, fifties, cinema, vintage, style, hero, inspired। YouTube, Facebook, Instagram, API, Node.js-এর মতো brand/platform/technical শব্দও English রাখো। অনুবাদ নয়। না/খালি/শুধু/বাদ/remove/only/without নির্দেশ ঠিক রাখো।',
+        cleanupPrompt: 'বাংলা/Banglish ASR টেক্সট। স্পষ্ট বানান, spacing, খুব দরকারি ন্যূনতম punctuation, phonetic ASR ভুল, আর clear overlap repetition ঠিক করো। Bengali grammar/common words বাংলা করো: জেটা -> যেটা, সাম্নে -> সামনে, ছবী -> ছবি। কিন্তু spoken English creative words English রাখো বা ফিরিয়ে দাও: খ্রাইম/ক্রাইম -> crime, কল্ট/কাল্ট -> cult, থ্রিলার/থ্রিলের -> thriller, কন্টেন্ট -> content, পোস্টার/পোস্টের -> poster, ফিফটিজ -> fifties, ইন্সপায়ার্ড/ইন্স্পারের -> inspired, সিনেমা/সিনমা -> cinema when used as an English creative word। একই অর্থ ও order রাখো। unsure হলে original শব্দ রাখো।',
         contextLabel: 'সাম্প্রতিক প্রসঙ্গ',
         vocabularyLabel: 'সাম্প্রতিক শব্দ',
-        cleanupSystemPrompt: 'তুমি বাংলা verbatim transcript normalizer। শুধু obvious spelling, spacing, minimal punctuation, আর overlap repeat ঠিক করো। meaning, word order, negation, include/exclude instruction বদলাবে না। code-mixed English platform বা technical শব্দকে জোর করে বাংলা করো না। unsure হলে original শব্দ রাখো।',
+        cleanupSystemPrompt: 'তুমি বাংলা/Banglish verbatim transcript normalizer। obvious spelling, spacing, minimal punctuation, Bengali phonetic ASR ভুল, আর overlap repeat ঠিক করো। বাংলা grammar/common words বাংলা লিপিতে রাখো, কিন্তু user-এর spoken English creative/style/category words English-এ রাখো; সেগুলো জোর করে বাংলা অনুবাদ করবে না। meaning, word order, negation, include/exclude instruction বদলাবে না। unsure হলে original শব্দ রাখো।',
     },
     hi: {
         languageName: 'Hindi',
@@ -172,7 +172,7 @@ const dedupeImmediateRepeatedPhrases = (value) => {
     while (index < tokens.length) {
         let consumedOverlap = false;
         const maxPhraseLength = Math.min(12, Math.floor((tokens.length - index) / 2));
-        for (let phraseLength = maxPhraseLength; phraseLength >= 3; phraseLength -= 1) {
+        for (let phraseLength = maxPhraseLength; phraseLength >= 2; phraseLength -= 1) {
             const firstPhrase = tokens.slice(index, index + phraseLength).join(' ');
             const secondPhrase = tokens
                 .slice(index + phraseLength, index + phraseLength * 2)
@@ -490,6 +490,19 @@ const shouldNormalizeScript = (value, language) => {
     const latinRatio = latinChars / letterLikeChars;
     return targetScriptRatio < 0.55 && latinRatio > 0.2;
 };
+const getCleanupScriptInstruction = (language, scriptName) => {
+    if (language === 'en') {
+        return null;
+    }
+    if (language === 'bn') {
+        return [
+            'Use Bengali script for Bengali grammar/common words.',
+            'Keep clearly spoken English creative, platform, product, style, category, and technical terms in English.',
+            'Do not force English words like crime, cult, thriller, content, poster, cinema, vintage, style, hero, or inspired into Bengali script.',
+        ].join(' ');
+    }
+    return `Only ${scriptName}.`;
+};
 const buildCleanupPrompt = (language, transcript) => {
     const guide = LANGUAGE_TRANSCRIPTION_GUIDES[language];
     const scriptGuide = LANGUAGE_SCRIPT_GUIDES[language];
@@ -498,7 +511,7 @@ const buildCleanupPrompt = (language, transcript) => {
     }
     return [
         guide.cleanupPrompt,
-        language === 'en' ? null : `Only ${scriptGuide.name}.`,
+        getCleanupScriptInstruction(language, scriptGuide.name),
         'Preserve meaning, wording, and word order exactly.',
         'Fix only obvious spelling, script, spacing, duplicate overlap, and very minimal punctuation.',
         'Do not replace words, paraphrase, reorder, beautify, or improve grammar.',
@@ -520,7 +533,7 @@ const buildConservativeCleanupPrompt = (language, transcript) => {
     }
     return [
         guide.cleanupPrompt,
-        language === 'en' ? null : `Only ${scriptGuide.name}.`,
+        getCleanupScriptInstruction(language, scriptGuide.name),
         'Preserve meaning, clause order, and content words exactly.',
         'Correct only obvious spelling, script, spacing, duplicate overlap, and only minimal punctuation if clearly needed.',
         language === 'bn'
@@ -616,11 +629,64 @@ const hasRepeatedTokenRun = (value, minRunLength = 3) => {
     return false;
 };
 const hasSuspiciousNumericWordAttachment = (value) => /(?:[\u09E6-\u09EF0-9][\u09E6-\u09EF0-9]+[\p{L}]+|[\p{L}]+[\u09E6-\u09EF0-9]{2,})/u.test(normalizeTranscriptText(value));
+const replaceStandaloneToken = (value, tokenPattern, replacement) => value.replace(new RegExp(`(^|[^\\p{L}\\p{N}])(?:${tokenPattern})(?=$|[^\\p{L}\\p{N}])`, 'giu'), (_match, prefix) => `${prefix}${replacement}`);
+const removeBengaliSpeechJunkTail = (value) => normalizeTranscriptText(value)
+    .replace(/(?:,?\s*)?(?:fortunately|unfortunately|com|\.com|come)(?:[,.\s]*)$/iu, '')
+    .trim();
 const normalizeBengaliBrands = (value) => value
     .replace(/ইন্স্টা(?:গ্রাম|গরাম)|ইন্স্টারাম|ইনস্টাগ্রাম|ইন্স্টাগরাম/giu, 'Instagram')
     .replace(/ফেস্বুক|ফেসবুক|ফেইসবুক|ফেজবুক/giu, 'Facebook')
     .replace(/যূটুপে?|যূটুবে?|ইউটিউব|ইউটুপ|ইউটুব|যুটুব|যুটুবে?/giu, 'YouTube')
     .replace(/আইফন|আইফোন/giu, 'iPhone');
+const normalizeBengaliSpeechArtifacts = (value) => {
+    let normalized = normalizeTranscriptText(value)
+        .replace(/\bVintage\s+style[-\s]?e\b/giu, 'vintage style-এ')
+        .replace(/\bVintage\s+style\b/giu, 'vintage style')
+        .replace(/\bCrime\s+cult\s+thriller\b/giu, 'crime cult thriller')
+        .replace(/\bCrime\s+thriller\b/giu, 'crime thriller')
+        .replace(/\bBeng(?:a|o|ou)l(?:i|y|ee)?\s+Cinema\b/giu, 'Bengali cinema')
+        .replace(/\bBengourney\b/giu, 'Bengali')
+        .replace(/\bCinema\s+Beng(?:a|o|ou)l(?:i|y|ee)?\b/giu, 'Bengali cinema')
+        .replace(/\bBangla\s+Cinema\b/giu, 'Bangla cinema')
+        .replace(/\bBengali\s+cinema\b/giu, 'Bengali cinema')
+        .replace(/Cinemaortunately/giu, 'cinema')
+        .replace(/\b(crime|cult|thriller|content|poster|fifties|cinema|vintage|style|hero|inspired)\b/giu, (term) => term.toLowerCase());
+    normalized = normalized
+        .replace(/(?:পোষ্ট|পোস্ট|বোস্ট|বোষ্ট|পোষ্টার|পোস্টার|পোষ্টের|পোস্টের)\s+এর/giu, 'poster-এর')
+        .replace(/(?:পোষ্টারের|পোস্টারের|পোষ্টের|পোস্টের)(?=$|[^\p{L}\p{N}])/giu, 'poster-এর')
+        .replace(/(?:পোষ্টার|পোস্টার)(?=$|[^\p{L}\p{N}])/giu, 'poster');
+    normalized = replaceStandaloneToken(normalized, 'খ্রাইম|ক্রাইম', 'crime');
+    normalized = replaceStandaloneToken(normalized, 'কল্ট|কাল্ট', 'cult');
+    normalized = replaceStandaloneToken(normalized, 'থ্রিলেরের|থ্রিলারের', 'thriller-এর');
+    normalized = replaceStandaloneToken(normalized, 'থ্রিলার|থ্রিলের', 'thriller');
+    normalized = replaceStandaloneToken(normalized, 'কন্টেন্ট', 'content');
+    normalized = replaceStandaloneToken(normalized, 'ফিফটিজ', 'fifties');
+    normalized = replaceStandaloneToken(normalized, 'ইন্স্পারের|ইন্সপারের|ইন্সপায়ার্ড|ইন্সপায়ার্ড|ইন্সপায়ার|ইন্সপায়ার', 'inspired');
+    normalized = replaceStandaloneToken(normalized, 'ভিন্টেজ', 'vintage');
+    normalized = replaceStandaloneToken(normalized, 'স্টাইল', 'style');
+    normalized = replaceStandaloneToken(normalized, 'হিরো', 'hero');
+    normalized = replaceStandaloneToken(normalized, 'সিনমাল|সিনমা|সিনেমাল', 'cinema');
+    normalized = replaceStandaloneToken(normalized, 'বোষ্ট|পোষ্ট|বোস্ট|পোস্ট্', 'post');
+    normalized = replaceStandaloneToken(normalized, 'জেটা', 'যেটা');
+    normalized = replaceStandaloneToken(normalized, 'সাম্নে', 'সামনে');
+    normalized = replaceStandaloneToken(normalized, 'ছবী', 'ছবি');
+    normalized = replaceStandaloneToken(normalized, 'তারোর|তারর', 'তার');
+    normalized = replaceStandaloneToken(normalized, 'সাতে', 'সাথে');
+    normalized = replaceStandaloneToken(normalized, 'বেঙ্গোলী|বেঙ্গলি|বেঙ্গলী|বেঙ্গালী', 'Bengali');
+    normalized = replaceStandaloneToken(normalized, 'বানেয়|বানেয়|বানিয়ে|বানিয়ে', 'বানিয়ে');
+    normalized = normalized
+        .replace(/বাংলা\s+সিনেমা(?:\s+বাংলা\s+সিনেমা)+/giu, 'বাংলা সিনেমা')
+        .replace(/বাংলা\s+cinema(?:\s+বাংলা\s+cinema)+/giu, 'বাংলা cinema')
+        .replace(/Bengali\s+cinema(?:\s+Bengali\s+cinema)+/giu, 'Bengali cinema')
+        .replace(/Bangla\s+cinema(?:\s+Bangla\s+cinema)+/giu, 'Bangla cinema')
+        .replace(/poster-এর\s+এর/giu, 'poster-এর')
+        .replace(/post-এর\s+এর/giu, 'post-এর')
+        .replace(/পোস্টের\s+বান[িী](?=$|[^\p{L}\p{N}])/giu, 'পোস্টের ব্যানার')
+        .replace(/(^|[^\p{L}\p{N}])ব্যানার\s+বান[িী]\s+দাও/giu, (_match, prefix) => `${prefix}ব্যানার দাও`)
+        .replace(/তার\s+সাথে\s+পূর(?=$|[^\p{L}\p{N}])/giu, 'তার সাথে পুরো')
+        .replace(/সিনেমাটা\s+বাংলা\s*,?\s*(?:আর\s+এই\s+সিনেমাটা\s+)?বাংলা\s+সিনেমা/giu, 'সিনেমাটা বাংলা সিনেমা');
+    return removeBengaliSpeechJunkTail(normalized);
+};
 const splitBengaliClauses = (value) => normalizeTranscriptText(value)
     .split(/[,.!?;:।\n]+/u)
     .map((clause) => clause.trim())
@@ -650,7 +716,7 @@ const buildBengaliVerifierPrompt = (rawTranscript, cleanedTranscript, previousCo
     'Raw ASR-কে source of truth ধরে কেবল স্পষ্ট spelling, spacing, repeated overlap, number-word corruption, এবং obvious ASR noise ঠিক করো।',
     'Meaning, word order, intent, এবং content words বদলাবে না।',
     'Repeated same-token spam বা clear gibberish tail থাকলে remove করতে পারো।',
-    'YouTube, Facebook, Instagram, API, Node.js-এর মতো spoken English শব্দ ইংরেজিতেই রাখতে পারো।',
+    'crime, cult, thriller, content, poster, cinema, vintage, style, hero, inspired, YouTube, Facebook, Instagram, API, Node.js-এর মতো spoken English শব্দ ইংরেজিতেই রাখো।',
     'If unsure, keep the original wording from raw ASR.',
     previousContext
         ? ['Preview context for continuity:', normalizeTranscriptText(previousContext)].join('\n')
@@ -659,7 +725,7 @@ const buildBengaliVerifierPrompt = (rawTranscript, cleanedTranscript, previousCo
     normalizeTranscriptText(rawTranscript),
     'Current cleaned transcript:',
     normalizeTranscriptText(cleanedTranscript),
-    'Return only the verified Bengali transcript.',
+    'Return only the verified Bengali/Banglish transcript.',
 ]
     .filter(Boolean)
     .join('\n');
@@ -714,11 +780,11 @@ const shouldRejectBengaliCleanupDrift = (rawTranscript, cleanedTranscript, needs
         const distance = levenshteinDistance(rawToken, cleanedToken);
         const maxLength = Math.max(rawToken.length, cleanedToken.length, 1);
         const distanceRatio = distance / maxLength;
-        if (distanceRatio > 0.42) {
+        if (distanceRatio > 0.62) {
             return true;
         }
     }
-    return changedTokenCount / Math.max(1, normalizedRawTokens.length) > 0.22;
+    return changedTokenCount / Math.max(1, normalizedRawTokens.length) > 0.45;
 };
 const shouldRejectConservativeCleanupDrift = (rawTranscript, cleanedTranscript, language, needsScriptRecovery) => {
     if (!CONSERVATIVE_FINAL_CLEANUP_LANGUAGES.has(language) || needsScriptRecovery) {
@@ -991,13 +1057,7 @@ const shouldUseModelCleanup = ({ stage, language, transcript, previousContext, s
         return false;
     }
     if (language === 'bn') {
-        return Boolean(normalizeTranscriptText(transcript) &&
-            (hasRepeatedTokenRun(transcript) ||
-                hasSuspiciousNumericWordAttachment(transcript) ||
-                scriptMismatch ||
-                (previousContext &&
-                    countTranscriptTokens(previousContext) >= 4 &&
-                    estimateComparableTokenOverlap(transcript, previousContext) < 0.35)));
+        return true;
     }
     if (scriptMismatch) {
         return true;
@@ -1063,7 +1123,8 @@ const normalizeScriptConfusables = (value, language) => {
 };
 const applyLanguageCorrections = (value, language) => {
     const baseline = normalizeScriptConfusables(normalizeTranscriptText(value), language);
-    const dedupedImmediate = dedupeImmediateRepeatedPhrases(baseline);
+    const speechArtifactNormalized = language === 'bn' ? normalizeBengaliSpeechArtifacts(baseline) : baseline;
+    const dedupedImmediate = dedupeImmediateRepeatedPhrases(speechArtifactNormalized);
     const trailingCollapsed = collapseRepeatedTrailingSpan(dedupedImmediate);
     const semanticallyDeduped = language === 'bn'
         ? removeSemanticRepetition(trailingCollapsed)
@@ -1076,7 +1137,10 @@ const applyLanguageCorrections = (value, language) => {
     if (baseline !== normalizeTranscriptText(value)) {
         appliedRuleIds.push('normalize-script-confusables');
     }
-    if (dedupedImmediate !== baseline) {
+    if (speechArtifactNormalized !== baseline) {
+        appliedRuleIds.push('normalize-bengali-speech-artifacts');
+    }
+    if (dedupedImmediate !== speechArtifactNormalized) {
         appliedRuleIds.push('dedupe-immediate-repeat');
     }
     if (trailingCollapsed !== dedupedImmediate) {
