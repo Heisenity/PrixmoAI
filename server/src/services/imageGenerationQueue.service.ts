@@ -217,7 +217,7 @@ export const startImageGenerationWorker = () => {
               await updateJobRuntime(job.id!, {
                 currentProvider: provider,
                 progress: 55,
-                message: `Generating with ${provider}.`,
+                message: 'Building the image from your prompt and visual direction.',
               });
               await job.updateProgress(55);
             },

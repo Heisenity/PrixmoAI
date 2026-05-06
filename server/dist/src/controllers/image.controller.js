@@ -239,7 +239,7 @@ const generateImage = async (req, res) => {
         });
         return res.status(200).json({
             status: 'success',
-            message: `Image generated successfully using ${result.provider}`,
+            message: 'Image generated successfully.',
             data: {
                 ...image,
                 provider: result.provider,

@@ -189,7 +189,7 @@ export const startContentGenerationWorker = () => {
               await updateJobRuntime(job.id!, {
                 currentProvider: provider,
                 progress: 45,
-                message: `Generating with ${provider}.`,
+                message: 'Writing the content with the latest brand and brief signals.',
               });
               await job.updateProgress(45);
             },

@@ -692,7 +692,7 @@ export const generateWorkspaceCopy = async (
       phase: 'stitching',
       progress: 78,
       provider,
-      message: `Generated the content with ${provider}. Saving the result now.`,
+      message: 'Content is ready. Saving the result now.',
     });
     console.info('[workspace-copy] Queue job resolved', {
       userId: req.user.id,
@@ -1236,7 +1236,7 @@ export const generateWorkspaceImage = async (
 
     return res.status(200).json({
       status: 'success',
-      message: `Image generated successfully using ${result.provider}`,
+      message: 'Image generated successfully.',
       data: thread,
       meta: {
         jobId,

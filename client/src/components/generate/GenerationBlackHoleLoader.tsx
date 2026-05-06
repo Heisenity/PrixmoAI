@@ -2,6 +2,13 @@ import { useEffect, useMemo, useState } from 'react';
 import { BlackHoleCanvas } from '../home/BlackHoleCanvas';
 import { cn } from '../../lib/utils';
 
+const sanitizeGenerationStatusMessage = (message: string) =>
+  message
+    .replace(/\bGenerating with\s+(?:gemini|groq|pixazo|tavily|apify)\.?/giu, 'Generating your result.')
+    .replace(/\bGenerated the content with\s+(?:gemini|groq)\.?/giu, 'Content is ready.')
+    .replace(/\bImage generated successfully using\s+(?:gemini|groq|pixazo)\.?/giu, 'Image generated successfully.')
+    .trim();
+
 export const GenerationBlackHoleLoader = ({
   label,
   className,
@@ -14,7 +21,10 @@ export const GenerationBlackHoleLoader = ({
   preferLatestVerboseMessage?: boolean;
 }) => {
   const sanitizedVerboseMessages = useMemo(
-    () => verboseMessages?.map((message) => message.trim()).filter(Boolean) ?? [],
+    () =>
+      verboseMessages
+        ?.map((message) => sanitizeGenerationStatusMessage(message.trim()))
+        .filter(Boolean) ?? [],
     [verboseMessages]
   );
   const verboseSignature = sanitizedVerboseMessages.join('||');
