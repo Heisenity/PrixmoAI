@@ -9,19 +9,32 @@ export const PlanCard = ({
   plan,
   currentPlan,
   isCheckingOut,
+  isSuperAdminPreview = false,
   onCheckout,
 }: {
   plan: BillingPlan;
   currentPlan: PlanType;
   isCheckingOut?: boolean;
+  isSuperAdminPreview?: boolean;
   onCheckout: (plan: Exclude<PlanType, 'free'>) => void;
 }) => {
   const display = PLAN_CARD_DISPLAY[plan.id];
   const isCurrentPlan = currentPlan === plan.id;
-  const ctaLabel = isCheckingOut ? 'Opening checkout...' : display.cta;
+  const ctaLabel = isSuperAdminPreview
+    ? 'Payment disabled for SA'
+    : isCheckingOut
+      ? 'Opening checkout...'
+      : display.cta;
 
   return (
-    <Card glow={plan.id !== 'free'} className={cn('plan-card', `plan-card--${plan.id}`)}>
+    <Card
+      glow={plan.id !== 'free' && !isSuperAdminPreview}
+      className={cn(
+        'plan-card',
+        `plan-card--${plan.id}`,
+        isSuperAdminPreview && 'plan-card--muted'
+      )}
+    >
       <div className="plan-card__top">
         <div>
           <p className="plan-card__label">{display.name}</p>
@@ -65,7 +78,9 @@ export const PlanCard = ({
           variant={plan.id === 'basic' ? 'primary' : 'secondary'}
           size="lg"
           className="plan-card__cta"
-          disabled={!plan.checkoutEnabled || isCheckingOut || isCurrentPlan}
+          disabled={
+            !plan.checkoutEnabled || isCheckingOut || isCurrentPlan || isSuperAdminPreview
+          }
           onClick={() => onCheckout(plan.id as Exclude<PlanType, 'free'>)}
         >
           {ctaLabel}

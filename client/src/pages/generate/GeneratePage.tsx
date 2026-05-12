@@ -52,6 +52,13 @@ import {
   writeSchedulerGeneratedMediaIntent,
 } from '../../lib/schedulerGeneratedMedia';
 import { getUserFacingTimeZone } from '../../lib/timezone';
+import {
+  SUPER_ADMIN_TESTING_TIER_EVENT,
+  isSuperAdminUser,
+  normalizeSuperAdminTestingTier,
+  readStoredSuperAdminTestingTier,
+  writeStoredSuperAdminTestingTier,
+} from '../../lib/superAdmin';
 import { getOverallUsageSummary } from '../../lib/usage';
 import { APP_NAME } from '../../lib/constants';
 import { UpgradePrompt } from '../../components/shared/UpgradePrompt';
@@ -1247,6 +1254,10 @@ export const GeneratePage = () => {
   const [editingConversationId, setEditingConversationId] = useState<string | null>(
     null
   );
+  const showSuperAdminBadge = isSuperAdminUser(user);
+  const [superAdminTestingTier, setSuperAdminTestingTier] = useState(() =>
+    readStoredSuperAdminTestingTier()
+  );
   const [draftTitle, setDraftTitle] = useState('');
   const [pendingDeleteConversation, setPendingDeleteConversation] =
     useState<GenerateConversation | null>(null);
@@ -1683,6 +1694,34 @@ export const GeneratePage = () => {
   }, [isAccountMenuOpen]);
 
   useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    const syncTestingTier = () => {
+      setSuperAdminTestingTier(readStoredSuperAdminTestingTier());
+    };
+
+    const handleTierChange = (event: Event) => {
+      const customEvent = event as CustomEvent<string | undefined>;
+      setSuperAdminTestingTier(
+        normalizeSuperAdminTestingTier(customEvent.detail ?? null)
+      );
+    };
+
+    window.addEventListener(SUPER_ADMIN_TESTING_TIER_EVENT, handleTierChange);
+    window.addEventListener('storage', syncTestingTier);
+
+    return () => {
+      window.removeEventListener(
+        SUPER_ADMIN_TESTING_TIER_EVENT,
+        handleTierChange
+      );
+      window.removeEventListener('storage', syncTestingTier);
+    };
+  }, []);
+
+  useEffect(() => {
     contentButtonProgressRef.current = contentButtonProgress;
   }, [contentButtonProgress]);
 
@@ -1952,6 +1991,10 @@ export const GeneratePage = () => {
     activeWorkspace
   );
   const currentPlan = subscription?.plan ?? catalog?.currentSubscription.plan ?? 'free';
+  const showSuperAdminPlanSelector =
+    isSuperAdminUser(user) ||
+    subscription?.metadata?.superAdmin === true ||
+    catalog?.currentSubscription.metadata?.superAdmin === true;
   const planDetails = PLAN_DASHBOARD_DETAILS[currentPlan];
   const isUsageLoading = isBillingLoading || isAnalyticsLoading;
   const usageSummary = getOverallUsageSummary({
@@ -2250,7 +2293,14 @@ export const GeneratePage = () => {
           <div className="generate-chat__brand">
             <div className="generate-chat__brand-mark">
               <span className="topbar__brand-dot" />
-              {!isConversationSidebarCollapsed ? <strong>{APP_NAME}</strong> : null}
+              {!isConversationSidebarCollapsed ? (
+                <>
+                  <strong>{APP_NAME}</strong>
+                  {showSuperAdminBadge ? (
+                    <span className="super-admin-chip super-admin-chip--brand">SA</span>
+                  ) : null}
+                </>
+              ) : null}
             </div>
             {!isConversationSidebarCollapsed ? <p>Conversation memory</p> : null}
           </div>
@@ -2494,10 +2544,37 @@ export const GeneratePage = () => {
               <div className="generate-chat__account-menu-header">
                 <div className="generate-chat__account-menu-header-row">
                   <strong>{profile?.fullName || 'Workspace Owner'}</strong>
-                  <CurrentPlanBadge
-                    plan={currentPlan}
-                    className="generate-chat__plan-badge"
-                  />
+                  {showSuperAdminPlanSelector ? (
+                    <label
+                      className="sidebar__plan-select"
+                      htmlFor="generate-super-admin-tier"
+                      title="Switch SA testing tier"
+                    >
+                      <select
+                        id="generate-super-admin-tier"
+                        value={superAdminTestingTier}
+                        onChange={(event) => {
+                          const nextPlan = normalizeSuperAdminTestingTier(
+                            event.target.value
+                          );
+                          setSuperAdminTestingTier(nextPlan);
+                          writeStoredSuperAdminTestingTier(nextPlan);
+                        }}
+                      >
+                        <option value="free">Free</option>
+                        <option value="basic">Basic</option>
+                        <option value="pro">Pro</option>
+                      </select>
+                      <span className="sidebar__plan-select-icon" aria-hidden="true">
+                        <ChevronDown size={12} />
+                      </span>
+                    </label>
+                  ) : (
+                    <CurrentPlanBadge
+                      plan={currentPlan}
+                      className="generate-chat__plan-badge"
+                    />
+                  )}
                 </div>
                 <span>{profile?.industry || 'Open workspace options'}</span>
               </div>

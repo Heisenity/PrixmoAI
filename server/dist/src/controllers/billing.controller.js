@@ -3,9 +3,12 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.handleRazorpayWebhook = exports.cancelBillingSubscriptionController = exports.syncBillingSubscription = exports.createBillingCheckout = exports.getCurrentBillingSubscription = exports.getBillingPlanCatalog = void 0;
 const constants_1 = require("../config/constants");
 const subscriptions_1 = require("../db/queries/subscriptions");
+const content_1 = require("../db/queries/content");
+const images_1 = require("../db/queries/images");
 const supabase_1 = require("../db/supabase");
 const razorpay_service_1 = require("../services/razorpay.service");
 const runtimeCache_service_1 = require("../services/runtimeCache.service");
+const requestContext_1 = require("../lib/requestContext");
 const getDefaultFreeSubscription = (userId) => ({
     id: 'free-plan-local',
     userId,
@@ -47,18 +50,27 @@ const getBillingPlanCatalog = async (req, res) => {
     try {
         const userId = req.user.id;
         const client = getAuthenticatedClient(req);
+        const superAdminTestingPlan = (0, requestContext_1.getCurrentRequestSuperAdminTestPlan)() ?? 'default';
         if (!client) {
             return res.status(401).json({
                 status: 'fail',
                 message: 'Unauthorized',
             });
         }
-        const data = await (0, runtimeCache_service_1.getOrSetJsonCache)((0, runtimeCache_service_1.buildBillingPlansCacheKey)(userId), async () => {
+        const data = await (0, runtimeCache_service_1.getOrSetJsonCache)((0, runtimeCache_service_1.buildBillingPlansCacheKey)(userId, superAdminTestingPlan), async () => {
             const currentSubscription = (await (0, subscriptions_1.getCurrentSubscriptionByUserId)(client, userId)) ??
                 getDefaultFreeSubscription(userId);
+            const [contentGenerationsToday, imageGenerationsToday] = await Promise.all([
+                (0, content_1.getContentDailyUsageCount)(client, userId),
+                (0, images_1.getImageDailyUsageCount)(client, userId),
+            ]);
             return {
                 currentSubscription,
                 plans: (0, razorpay_service_1.getBillingPlans)(),
+                usageSnapshot: {
+                    contentGenerationsToday,
+                    imageGenerationsToday,
+                },
             };
         });
         return res.status(200).json({
@@ -84,13 +96,14 @@ const getCurrentBillingSubscription = async (req, res) => {
     try {
         const userId = req.user.id;
         const client = getAuthenticatedClient(req);
+        const superAdminTestingPlan = (0, requestContext_1.getCurrentRequestSuperAdminTestPlan)() ?? 'default';
         if (!client) {
             return res.status(401).json({
                 status: 'fail',
                 message: 'Unauthorized',
             });
         }
-        const subscription = await (0, runtimeCache_service_1.getOrSetJsonCache)((0, runtimeCache_service_1.buildBillingSubscriptionCacheKey)(userId), async () => (await (0, subscriptions_1.getCurrentSubscriptionByUserId)(client, userId)) ??
+        const subscription = await (0, runtimeCache_service_1.getOrSetJsonCache)((0, runtimeCache_service_1.buildBillingSubscriptionCacheKey)(userId, superAdminTestingPlan), async () => (await (0, subscriptions_1.getCurrentSubscriptionByUserId)(client, userId)) ??
             getDefaultFreeSubscription(userId));
         return res.status(200).json({
             status: 'success',

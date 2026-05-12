@@ -950,6 +950,10 @@ export interface Subscription {
 export interface BillingCatalogResponse {
   currentSubscription: Subscription;
   plans: BillingPlan[];
+  usageSnapshot?: {
+    contentGenerationsToday: number;
+    imageGenerationsToday: number;
+  };
 }
 
 export interface HomeMetric {

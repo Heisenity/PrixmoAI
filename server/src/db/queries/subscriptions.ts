@@ -4,6 +4,16 @@ import {
   PLAN_LIMITS,
   type FeatureKey,
 } from '../../config/constants';
+import {
+  buildSuperAdminSubscription,
+  getEffectiveSuperAdminPlan,
+  isSuperAdminUserId,
+} from '../../lib/superAdmin';
+import {
+  getAuthenticatedRequestUserId,
+  getCurrentRequestSuperAdminTestPlan,
+  isCurrentRequestSuperAdmin,
+} from '../../lib/requestContext';
 import type {
   CreateSubscriptionInput,
   PlanType,
@@ -63,6 +73,64 @@ const toUsageTrackingEvent = (row: UsageTrackingRow): UsageTrackingEvent => ({
   metadata: toRecord(row.metadata),
 });
 
+const getScopedSuperAdminTestingPlan = (userId: string): PlanType | null => {
+  if (!isCurrentRequestSuperAdmin()) {
+    return null;
+  }
+
+  if (getAuthenticatedRequestUserId() !== userId) {
+    return null;
+  }
+
+  return getCurrentRequestSuperAdminTestPlan();
+};
+
+const buildScopedUsageTrackingMetadata = (
+  userId: string,
+  metadata: Record<string, unknown>
+) => {
+  const superAdminTestingPlan = getScopedSuperAdminTestingPlan(userId);
+
+  if (!superAdminTestingPlan) {
+    return metadata;
+  }
+
+  return {
+    ...metadata,
+    superAdminTestingPlan,
+    superAdminUsageBucket: `sa:${superAdminTestingPlan}`,
+  };
+};
+
+const buildScopedUsageTrackingIdempotencyKey = (
+  userId: string,
+  idempotencyKey?: string
+) => {
+  if (!idempotencyKey) {
+    return undefined;
+  }
+
+  const superAdminTestingPlan = getScopedSuperAdminTestingPlan(userId);
+
+  if (!superAdminTestingPlan) {
+    return idempotencyKey;
+  }
+
+  return `sa:${superAdminTestingPlan}:${idempotencyKey}`;
+};
+
+const applyUsageTrackingScope = (query: any, userId: string) => {
+  const superAdminTestingPlan = getScopedSuperAdminTestingPlan(userId);
+
+  if (!superAdminTestingPlan) {
+    return query;
+  }
+
+  return query.contains('metadata', {
+    superAdminTestingPlan,
+  });
+};
+
 export const getPlanMonthlyLimit = (plan: PlanType): number | null =>
   PLAN_LIMITS[plan];
 
@@ -107,6 +175,17 @@ export const getCurrentSubscriptionByUserId = async (
   client: AppSupabaseClient,
   userId: string
 ): Promise<Subscription | null> => {
+  if (
+    isCurrentRequestSuperAdmin() &&
+    getAuthenticatedRequestUserId() === userId
+  ) {
+    return buildSuperAdminSubscription(userId, getEffectiveSuperAdminPlan());
+  }
+
+  if (await isSuperAdminUserId(userId)) {
+    return buildSuperAdminSubscription(userId);
+  }
+
   const { data, error } = await client
     .from('subscriptions')
     .select('*')
@@ -140,11 +219,17 @@ export const recordUsageEvent = async (
   metadata: Record<string, unknown> = {},
   idempotencyKey?: string
 ): Promise<UsageTrackingEvent> => {
+  const scopedMetadata = buildScopedUsageTrackingMetadata(userId, metadata);
+  const scopedIdempotencyKey = buildScopedUsageTrackingIdempotencyKey(
+    userId,
+    idempotencyKey
+  );
+
   const payload = {
     user_id: userId,
     feature_key: featureKey,
-    metadata,
-    idempotency_key: idempotencyKey ?? null,
+    metadata: scopedMetadata,
+    idempotency_key: scopedIdempotencyKey ?? null,
   };
 
   const { data, error } = await client
@@ -153,14 +238,18 @@ export const recordUsageEvent = async (
     .select('*')
     .single();
 
-  if (error && idempotencyKey && error.code === '23505') {
-    const { data: existing, error: existingError } = await client
+  if (error && scopedIdempotencyKey && error.code === '23505') {
+    const existingQuery = applyUsageTrackingScope(
+      client
       .from('usage_tracking')
       .select('*')
       .eq('user_id', userId)
       .eq('feature_key', featureKey)
-      .eq('idempotency_key', idempotencyKey)
-      .maybeSingle();
+      .eq('idempotency_key', scopedIdempotencyKey),
+      userId
+    );
+    const { data: existing, error: existingError } =
+      await existingQuery.maybeSingle();
 
     if (existingError || !existing) {
       throw new Error(existingError?.message || 'Failed to load recorded usage');
@@ -183,13 +272,17 @@ const getUsageCountForWindow = async (
   window: 'day' | 'month'
 ): Promise<number> => {
   const { start, end } = window === 'day' ? getIstDayWindow() : getIstMonthWindow();
-  const { count, error } = await client
+  const scopedQuery = applyUsageTrackingScope(
+    client
     .from('usage_tracking')
     .select('*', { count: 'exact', head: true })
     .eq('user_id', userId)
     .eq('feature_key', featureKey)
     .gte('used_at', start)
-    .lt('used_at', end);
+    .lt('used_at', end),
+    userId
+  );
+  const { count, error } = await scopedQuery;
 
   if (error) {
     throw new Error(error.message || 'Failed to fetch usage count');

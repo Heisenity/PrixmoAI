@@ -4,12 +4,14 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
 import { APP_NAME, PRIMARY_NAV_ITEMS } from '../../lib/constants';
+import { isSuperAdminUser } from '../../lib/superAdmin';
 import { buttonClassName } from '../ui/button';
 
 export const Navbar = () => {
-  const { session, signOut } = useAuth();
+  const { session, signOut, user } = useAuth();
   const [isScrolled, setIsScrolled] = useState(false);
   const [isOpen, setIsOpen] = useState(false);
+  const showSuperAdminBadge = isSuperAdminUser(user);
 
   useEffect(() => {
     const onScroll = () => setIsScrolled(window.scrollY > 16);
@@ -46,6 +48,11 @@ export const Navbar = () => {
               <Link to="/app/generate" className="topbar__plain-link">
                 Workspace
               </Link>
+              {showSuperAdminBadge ? (
+                <span className="super-admin-chip super-admin-chip--topbar">
+                  SA (Super)
+                </span>
+              ) : null}
               <button
                 type="button"
                 className={buttonClassName('secondary', 'md', 'topbar__cta')}

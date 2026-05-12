@@ -1,5 +1,6 @@
 import { API_BASE_URL } from './constants';
 import type { ApiEnvelope, ApiErrorDetail } from '../types';
+import { getSuperAdminTestingRequestHeaders } from './superAdmin';
 
 export class ApiRequestError<T = unknown> extends Error {
   readonly status: number;
@@ -33,6 +34,33 @@ type ApiRequestOptions = {
 
 const inFlightGetRequests = new Map<string, Promise<unknown>>();
 
+const resolveRequestHeaders = (
+  options: ApiRequestOptions
+): Record<string, string> => {
+  const headers = new Headers();
+
+  if (options.body) {
+    headers.set('Content-Type', 'application/json');
+  }
+
+  if (options.token) {
+    headers.set('Authorization', `Bearer ${options.token}`);
+    const superAdminHeaders = getSuperAdminTestingRequestHeaders();
+
+    Object.entries(superAdminHeaders).forEach(([key, value]) => {
+      headers.set(key, value);
+    });
+  }
+
+  if (options.headers) {
+    new Headers(options.headers).forEach((value, key) => {
+      headers.set(key, value);
+    });
+  }
+
+  return Object.fromEntries(headers.entries());
+};
+
 const toSearchParams = (query?: ApiRequestOptions['query']) => {
   const params = new URLSearchParams();
 
@@ -62,11 +90,7 @@ const executeApiRequest = async <T>(
   try {
     response = await fetch(url, {
       method,
-      headers: {
-        ...(options.body ? { 'Content-Type': 'application/json' } : {}),
-        ...(options.token ? { Authorization: `Bearer ${options.token}` } : {}),
-        ...(options.headers ?? {}),
-      },
+      headers: resolveRequestHeaders(options),
       body: options.body ? JSON.stringify(options.body) : undefined,
       signal: options.signal,
     });
@@ -151,7 +175,7 @@ export const apiRequest = async <T>(
   const dedupeKey = JSON.stringify({
     url,
     token: options.token ?? '',
-    headers: options.headers ?? {},
+    headers: resolveRequestHeaders(options),
   });
   const existingRequest = inFlightGetRequests.get(dedupeKey) as
     | Promise<T>

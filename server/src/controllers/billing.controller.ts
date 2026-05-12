@@ -8,6 +8,8 @@ import {
   getCurrentSubscriptionByUserId,
   upsertSubscription,
 } from '../db/queries/subscriptions';
+import { getContentDailyUsageCount } from '../db/queries/content';
+import { getImageDailyUsageCount } from '../db/queries/images';
 import { requireSupabaseAdmin, requireUserClient } from '../db/supabase';
 import type {
   CancelSubscriptionInput,
@@ -31,6 +33,7 @@ import {
   invalidateBillingRuntimeCache,
 } from '../services/runtimeCache.service';
 import type { PlanType } from '../types';
+import { getCurrentRequestSuperAdminTestPlan } from '../lib/requestContext';
 
 type AuthenticatedRequest<
   Params = Record<string, string>,
@@ -95,6 +98,8 @@ export const getBillingPlanCatalog = async (
   try {
     const userId = req.user.id;
     const client = getAuthenticatedClient(req);
+    const superAdminTestingPlan =
+      getCurrentRequestSuperAdminTestPlan() ?? 'default';
 
     if (!client) {
       return res.status(401).json({
@@ -104,15 +109,24 @@ export const getBillingPlanCatalog = async (
     }
 
     const data = await getOrSetJsonCache(
-      buildBillingPlansCacheKey(userId),
+      buildBillingPlansCacheKey(userId, superAdminTestingPlan),
       async () => {
         const currentSubscription =
           (await getCurrentSubscriptionByUserId(client, userId)) ??
           getDefaultFreeSubscription(userId);
+        const [contentGenerationsToday, imageGenerationsToday] =
+          await Promise.all([
+            getContentDailyUsageCount(client, userId),
+            getImageDailyUsageCount(client, userId),
+          ]);
 
         return {
           currentSubscription,
           plans: getBillingPlans(),
+          usageSnapshot: {
+            contentGenerationsToday,
+            imageGenerationsToday,
+          },
         };
       }
     );
@@ -144,6 +158,8 @@ export const getCurrentBillingSubscription = async (
   try {
     const userId = req.user.id;
     const client = getAuthenticatedClient(req);
+    const superAdminTestingPlan =
+      getCurrentRequestSuperAdminTestPlan() ?? 'default';
 
     if (!client) {
       return res.status(401).json({
@@ -153,7 +169,7 @@ export const getCurrentBillingSubscription = async (
     }
 
     const subscription = await getOrSetJsonCache(
-      buildBillingSubscriptionCacheKey(userId),
+      buildBillingSubscriptionCacheKey(userId, superAdminTestingPlan),
       async () =>
         (await getCurrentSubscriptionByUserId(client, userId)) ??
         getDefaultFreeSubscription(userId)

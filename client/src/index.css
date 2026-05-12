@@ -165,6 +165,56 @@ img {
   display: inline-block;
 }
 
+.super-admin-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 22px;
+  padding: 0 0.62rem;
+  border-radius: 999px;
+  border: 1px solid rgba(115, 240, 213, 0.28);
+  background:
+    linear-gradient(135deg, rgba(115, 240, 213, 0.2), rgba(143, 216, 255, 0.14)),
+    rgba(7, 13, 22, 0.68);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.1),
+    0 10px 24px rgba(42, 190, 160, 0.12);
+  color: rgba(230, 255, 250, 0.96);
+  font-size: 0.62rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  line-height: 1;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.super-admin-chip--topbar {
+  min-height: 28px;
+  padding: 0 0.78rem;
+}
+
+.super-admin-chip--workspace {
+  min-height: 20px;
+  padding: 0 0.52rem;
+  font-size: 0.58rem;
+}
+
+.super-admin-chip--brand {
+  min-height: 18px;
+  padding: 0 0.42rem;
+  font-size: 0.5rem;
+  letter-spacing: 0.12em;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 6px 18px rgba(42, 190, 160, 0.1);
+}
+
+.super-admin-chip--billing {
+  min-height: 30px;
+  padding: 0 0.85rem;
+  font-size: 0.66rem;
+}
+
 .topbar__menu-button {
   display: none;
   border: 1px solid rgba(255, 255, 255, 0.12);
@@ -3723,6 +3773,58 @@ img {
   flex-shrink: 0;
 }
 
+.sidebar__plan-select {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  min-width: 84px;
+  flex-shrink: 0;
+}
+
+.sidebar__plan-select-icon {
+  position: absolute;
+  right: 0.72rem;
+  top: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(226, 240, 250, 0.8);
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+.sidebar__plan-select select {
+  width: 100%;
+  min-height: 40px;
+  padding: 0 2.1rem 0 0.85rem;
+  border-radius: 999px;
+  border: 1px solid rgba(123, 223, 193, 0.22);
+  background:
+    radial-gradient(circle at top left, rgba(126, 237, 207, 0.2), transparent 58%),
+    linear-gradient(180deg, rgba(26, 48, 55, 0.96), rgba(20, 38, 44, 0.96));
+  color: rgba(241, 248, 255, 0.95);
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: capitalize;
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  cursor: pointer;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    0 12px 22px rgba(6, 15, 22, 0.18);
+}
+
+.sidebar__plan-select select:focus {
+  outline: none;
+  border-color: rgba(115, 240, 213, 0.36);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 0 0 3px rgba(115, 240, 213, 0.12),
+    0 12px 22px rgba(6, 15, 22, 0.2);
+}
+
 .sidebar__profile-copy p {
   margin-top: 0.15rem;
   font-size: 0.78rem;
@@ -6970,6 +7072,242 @@ img {
 .billing-subscription-summary__heading h3 {
   margin: 0;
   line-height: 1.08;
+}
+
+.billing-super-admin__balance-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.95rem;
+}
+
+.billing-super-admin {
+  display: grid;
+  gap: 1rem;
+}
+
+.billing-super-admin__tester {
+  display: grid;
+  gap: 0.95rem;
+}
+
+.billing-super-admin__tester-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.billing-super-admin__tester-copy {
+  display: grid;
+  gap: 0.3rem;
+}
+
+.billing-super-admin__tester-copy strong {
+  font-size: 1.05rem;
+  line-height: 1.1;
+}
+
+.billing-super-admin__tester-copy span {
+  color: var(--text-soft);
+  line-height: 1.55;
+}
+
+.billing-super-admin__tier-select {
+  display: grid;
+  gap: 0.35rem;
+  min-width: 176px;
+}
+
+.billing-super-admin__tier-select span {
+  color: rgba(204, 222, 236, 0.72);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.billing-super-admin__tier-select select {
+  min-height: 42px;
+  padding: 0 2.4rem 0 0.95rem;
+  border-radius: 14px;
+  border: 1px solid rgba(131, 216, 255, 0.16);
+  background:
+    radial-gradient(circle at top left, rgba(131, 216, 255, 0.14), transparent 56%),
+    linear-gradient(180deg, rgba(19, 28, 39, 0.96), rgba(13, 21, 31, 0.96)),
+    rgba(255, 255, 255, 0.03);
+  color: rgba(241, 248, 255, 0.96);
+  font-size: 0.92rem;
+  font-weight: 700;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.05),
+    0 10px 20px rgba(5, 11, 19, 0.16);
+}
+
+.billing-super-admin__tier-select select:focus {
+  outline: none;
+  border-color: rgba(115, 240, 213, 0.24);
+}
+
+.billing-super-admin__access {
+  gap: 0.45rem;
+}
+
+.billing-super-admin__access-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.9rem;
+  flex-wrap: wrap;
+}
+
+.billing-super-admin__access-head strong {
+  font-size: 1.05rem;
+  line-height: 1.1;
+}
+
+.billing-super-admin__access-chip,
+.billing-super-admin__plan-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 28px;
+  padding: 0 0.8rem;
+  border-radius: 999px;
+  border: 1px solid rgba(131, 216, 255, 0.16);
+  background: rgba(131, 216, 255, 0.08);
+  color: rgba(231, 245, 255, 0.88);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.billing-super-admin__balance-card {
+  display: grid;
+  gap: 1rem;
+  padding: 1.15rem 1.15rem 1.05rem;
+  border-radius: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background:
+    radial-gradient(circle at top left, rgba(143, 216, 255, 0.08), transparent 50%),
+    rgba(255, 255, 255, 0.03);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.billing-super-admin__balance-card--feature {
+  gap: 1.1rem;
+}
+
+.billing-super-admin__behavior-strip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.8rem;
+}
+
+.billing-super-admin__behavior-pill {
+  display: grid;
+  gap: 0.26rem;
+  min-height: 72px;
+  padding: 0.9rem 0.95rem;
+  border-radius: 18px;
+  border: 1px solid rgba(131, 216, 255, 0.12);
+  background:
+    linear-gradient(180deg, rgba(18, 30, 43, 0.92), rgba(13, 21, 31, 0.82)),
+    rgba(255, 255, 255, 0.03);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    0 10px 24px rgba(4, 9, 16, 0.18);
+}
+
+.billing-super-admin__behavior-pill span {
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(190, 208, 224, 0.68);
+}
+
+.billing-super-admin__behavior-pill strong {
+  font-size: 0.96rem;
+  line-height: 1.18;
+  color: rgba(244, 250, 255, 0.96);
+}
+
+.billing-super-admin__balance-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.9rem;
+}
+
+.billing-super-admin__balance-heading {
+  display: grid;
+  gap: 0.32rem;
+}
+
+.billing-super-admin__balance-head strong {
+  font-size: 0.98rem;
+  line-height: 1.15;
+}
+
+.billing-super-admin__balance-head span,
+.billing-super-admin__balance-copy span,
+.billing-super-admin__balance-copy small {
+  color: var(--text-soft);
+}
+
+.billing-super-admin__balance-copy {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.billing-super-admin__tester-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: stretch;
+  gap: 1rem;
+}
+
+.billing-super-admin__metric-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.85rem;
+}
+
+.billing-super-admin__metric-grid--pending .billing-super-admin__metric strong {
+  opacity: 0.5;
+}
+
+.billing-super-admin__metric {
+  display: grid;
+  gap: 0.2rem;
+  padding: 0.95rem 1rem;
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.billing-super-admin__metric strong {
+  font-size: clamp(1.5rem, 2vw, 2rem);
+  line-height: 1;
+  letter-spacing: -0.05em;
+  color: rgba(245, 251, 255, 0.98);
+}
+
+.billing-super-admin__metric span {
+  font-size: 0.78rem;
+  letter-spacing: 0.02em;
+  color: rgba(198, 217, 232, 0.78);
+}
+
+.billing-super-admin__footnote {
+  line-height: 1.5;
+  font-size: 0.78rem;
+  color: rgba(186, 205, 220, 0.76);
+}
+
+.billing-super-admin__allowance-badge {
+  min-width: 170px;
+  align-self: stretch;
 }
 
 .billing-daily-allowance {
@@ -11058,6 +11396,23 @@ img {
   justify-content: center;
 }
 
+.pricing-grid--super-admin-muted .plan-card {
+  opacity: 0.52;
+}
+
+.plan-card--muted {
+  border-color: rgba(255, 255, 255, 0.07);
+  background:
+    linear-gradient(180deg, rgba(26, 31, 38, 0.94), rgba(19, 23, 30, 0.94)),
+    rgba(255, 255, 255, 0.02);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.025);
+}
+
+.plan-card--muted .plan-card__badge,
+.plan-card--muted .plan-card__cta {
+  filter: grayscale(0.3);
+}
+
 .generate-workbench {
   gap: 1rem;
 }
@@ -11554,6 +11909,10 @@ img {
   align-items: center;
   gap: 0.6rem;
   min-width: 0;
+}
+
+.generate-chat__account-title .super-admin-chip {
+  flex-shrink: 0;
 }
 
 .generate-chat__account-copy strong,
@@ -13514,6 +13873,17 @@ img {
   .generate-grid,
   .pricing-grid {
     grid-template-columns: 1fr;
+  }
+
+  .billing-super-admin__balance-grid,
+  .billing-super-admin__behavior-strip,
+  .billing-super-admin__metric-grid,
+  .billing-super-admin__tester-body {
+    grid-template-columns: 1fr;
+  }
+
+  .billing-super-admin__allowance-badge {
+    min-width: 100%;
   }
 
   .scheduler-media-preview {

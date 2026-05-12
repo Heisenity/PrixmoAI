@@ -24,9 +24,9 @@ const buildAnalyticsHistoryCacheKey = (userId, filters) => (0, exports.buildRunt
 exports.buildAnalyticsHistoryCacheKey = buildAnalyticsHistoryCacheKey;
 const invalidateAnalyticsRuntimeCache = async (userId) => (0, exports.deleteRuntimeCacheByPrefix)('analytics', userId);
 exports.invalidateAnalyticsRuntimeCache = invalidateAnalyticsRuntimeCache;
-const buildBillingPlansCacheKey = (userId) => (0, exports.buildRuntimeCacheKey)('billing', userId, 'plans');
+const buildBillingPlansCacheKey = (userId, superAdminTestingPlan = 'default') => (0, exports.buildRuntimeCacheKey)('billing', userId, 'plans', superAdminTestingPlan);
 exports.buildBillingPlansCacheKey = buildBillingPlansCacheKey;
-const buildBillingSubscriptionCacheKey = (userId) => (0, exports.buildRuntimeCacheKey)('billing', userId, 'subscription');
+const buildBillingSubscriptionCacheKey = (userId, superAdminTestingPlan = 'default') => (0, exports.buildRuntimeCacheKey)('billing', userId, 'subscription', superAdminTestingPlan);
 exports.buildBillingSubscriptionCacheKey = buildBillingSubscriptionCacheKey;
 const invalidateBillingRuntimeCache = async (userId) => (0, exports.deleteRuntimeCacheByPrefix)('billing', userId);
 exports.invalidateBillingRuntimeCache = invalidateBillingRuntimeCache;

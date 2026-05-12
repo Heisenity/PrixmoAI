@@ -16,6 +16,7 @@ import {
   DICTATION_LANGUAGE_OPTIONS,
   SUPPORTED_DICTATION_LANGUAGE_HINTS,
 } from '../../lib/dictationLanguages';
+import { getSuperAdminTestingRequestHeaders } from '../../lib/superAdmin';
 import type { AudioTranscriptionResult } from '../../types';
 
 type DictationStatus = 'idle' | 'recording' | 'transcribing' | 'error';
@@ -1363,6 +1364,7 @@ export const DictationTextareaField = ({
           headers: {
             'Content-Type': 'application/json',
             Authorization: `Bearer ${token}`,
+            ...getSuperAdminTestingRequestHeaders(),
           },
           body: JSON.stringify({
             scope,
@@ -1407,6 +1409,7 @@ export const DictationTextareaField = ({
           headers: {
             'Content-Type': 'application/json',
             Authorization: `Bearer ${token}`,
+            ...getSuperAdminTestingRequestHeaders(),
           },
           body: JSON.stringify({
             scope,

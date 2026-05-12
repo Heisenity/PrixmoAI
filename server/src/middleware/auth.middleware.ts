@@ -1,10 +1,18 @@
 import { Request, Response, NextFunction } from 'express';
 import type { User } from '@supabase/supabase-js';
 import { supabaseAuth } from '../db/supabase';
+import type { PlanType } from '../types';
+import {
+  getSuperAdminTestingPlanHeaderName,
+  isSuperAdminUser,
+  normalizeSuperAdminTestingPlan,
+} from '../lib/superAdmin';
+import { setAuthenticatedRequestContext } from '../lib/requestContext';
 
 type AuthenticatedRequest = Request & {
   user?: User;
   accessToken?: string;
+  superAdminTestingPlan?: PlanType | null;
 };
 
 const isUnverifiedEmailAuthUser = (user: User | null | undefined) => {
@@ -65,7 +73,21 @@ export const authMiddleware = async (
       });
     }
 
+    const isSuperAdminAccount = isSuperAdminUser(user);
+    const superAdminTestingPlan = isSuperAdminAccount
+      ? normalizeSuperAdminTestingPlan(
+          req.headers[getSuperAdminTestingPlanHeaderName()]
+        )
+      : null;
+
+    setAuthenticatedRequestContext({
+      authenticatedUserId: user.id,
+      isSuperAdminRequest: isSuperAdminAccount,
+      superAdminTestPlan: superAdminTestingPlan,
+    });
+
     req.user = user;
+    req.superAdminTestingPlan = superAdminTestingPlan;
     return next();
   } catch (_error) {
     return res.status(401).json({

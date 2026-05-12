@@ -14,6 +14,7 @@ import {
 } from '../../lib/generatedImageExport';
 import { formatDateTime } from '../../lib/utils';
 import { ScheduleGeneratedImageAction } from './ScheduleGeneratedImageAction';
+import { getSuperAdminTestingRequestHeaders } from '../../lib/superAdmin';
 
 export const GeneratedImage = ({
   image,
@@ -37,6 +38,7 @@ export const GeneratedImage = ({
     const response = await fetch(`${API_BASE_URL}/api/images/${image.id}/watermarked`, {
       headers: {
         Authorization: `Bearer ${token}`,
+        ...getSuperAdminTestingRequestHeaders(),
       },
       signal,
     });

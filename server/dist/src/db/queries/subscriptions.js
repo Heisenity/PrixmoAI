@@ -2,6 +2,8 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.getDailyUsageCount = exports.getMonthlyUsageCount = exports.recordUsageEvent = exports.getFeatureLimit = exports.getFeatureMonthlyLimit = exports.getCurrentSubscriptionByUserId = exports.upsertSubscription = exports.getPlanFeatureLimit = exports.getPlanMonthlyLimit = void 0;
 const constants_1 = require("../../config/constants");
+const superAdmin_1 = require("../../lib/superAdmin");
+const requestContext_1 = require("../../lib/requestContext");
 const timezone_1 = require("../../lib/timezone");
 const toRecord = (value) => value && typeof value === 'object' && !Array.isArray(value)
     ? value
@@ -26,6 +28,45 @@ const toUsageTrackingEvent = (row) => ({
     usedAt: row.used_at,
     metadata: toRecord(row.metadata),
 });
+const getScopedSuperAdminTestingPlan = (userId) => {
+    if (!(0, requestContext_1.isCurrentRequestSuperAdmin)()) {
+        return null;
+    }
+    if ((0, requestContext_1.getAuthenticatedRequestUserId)() !== userId) {
+        return null;
+    }
+    return (0, requestContext_1.getCurrentRequestSuperAdminTestPlan)();
+};
+const buildScopedUsageTrackingMetadata = (userId, metadata) => {
+    const superAdminTestingPlan = getScopedSuperAdminTestingPlan(userId);
+    if (!superAdminTestingPlan) {
+        return metadata;
+    }
+    return {
+        ...metadata,
+        superAdminTestingPlan,
+        superAdminUsageBucket: `sa:${superAdminTestingPlan}`,
+    };
+};
+const buildScopedUsageTrackingIdempotencyKey = (userId, idempotencyKey) => {
+    if (!idempotencyKey) {
+        return undefined;
+    }
+    const superAdminTestingPlan = getScopedSuperAdminTestingPlan(userId);
+    if (!superAdminTestingPlan) {
+        return idempotencyKey;
+    }
+    return `sa:${superAdminTestingPlan}:${idempotencyKey}`;
+};
+const applyUsageTrackingScope = (query, userId) => {
+    const superAdminTestingPlan = getScopedSuperAdminTestingPlan(userId);
+    if (!superAdminTestingPlan) {
+        return query;
+    }
+    return query.contains('metadata', {
+        superAdminTestingPlan,
+    });
+};
 const getPlanMonthlyLimit = (plan) => constants_1.PLAN_LIMITS[plan];
 exports.getPlanMonthlyLimit = getPlanMonthlyLimit;
 const getPlanFeatureLimit = (plan, featureKey) => constants_1.PLAN_FEATURE_LIMITS[plan][featureKey];
@@ -54,6 +95,13 @@ const upsertSubscription = async (client, input) => {
 };
 exports.upsertSubscription = upsertSubscription;
 const getCurrentSubscriptionByUserId = async (client, userId) => {
+    if ((0, requestContext_1.isCurrentRequestSuperAdmin)() &&
+        (0, requestContext_1.getAuthenticatedRequestUserId)() === userId) {
+        return (0, superAdmin_1.buildSuperAdminSubscription)(userId, (0, superAdmin_1.getEffectiveSuperAdminPlan)());
+    }
+    if (await (0, superAdmin_1.isSuperAdminUserId)(userId)) {
+        return (0, superAdmin_1.buildSuperAdminSubscription)(userId);
+    }
     const { data, error } = await client
         .from('subscriptions')
         .select('*')
@@ -73,25 +121,27 @@ const getFeatureMonthlyLimit = async (client, userId, featureKey = constants_1.F
 exports.getFeatureMonthlyLimit = getFeatureMonthlyLimit;
 exports.getFeatureLimit = exports.getFeatureMonthlyLimit;
 const recordUsageEvent = async (client, userId, featureKey, metadata = {}, idempotencyKey) => {
+    const scopedMetadata = buildScopedUsageTrackingMetadata(userId, metadata);
+    const scopedIdempotencyKey = buildScopedUsageTrackingIdempotencyKey(userId, idempotencyKey);
     const payload = {
         user_id: userId,
         feature_key: featureKey,
-        metadata,
-        idempotency_key: idempotencyKey ?? null,
+        metadata: scopedMetadata,
+        idempotency_key: scopedIdempotencyKey ?? null,
     };
     const { data, error } = await client
         .from('usage_tracking')
         .insert(payload)
         .select('*')
         .single();
-    if (error && idempotencyKey && error.code === '23505') {
-        const { data: existing, error: existingError } = await client
+    if (error && scopedIdempotencyKey && error.code === '23505') {
+        const existingQuery = applyUsageTrackingScope(client
             .from('usage_tracking')
             .select('*')
             .eq('user_id', userId)
             .eq('feature_key', featureKey)
-            .eq('idempotency_key', idempotencyKey)
-            .maybeSingle();
+            .eq('idempotency_key', scopedIdempotencyKey), userId);
+        const { data: existing, error: existingError } = await existingQuery.maybeSingle();
         if (existingError || !existing) {
             throw new Error(existingError?.message || 'Failed to load recorded usage');
         }
@@ -105,13 +155,14 @@ const recordUsageEvent = async (client, userId, featureKey, metadata = {}, idemp
 exports.recordUsageEvent = recordUsageEvent;
 const getUsageCountForWindow = async (client, userId, featureKey, window) => {
     const { start, end } = window === 'day' ? (0, timezone_1.getIstDayWindow)() : (0, timezone_1.getIstMonthWindow)();
-    const { count, error } = await client
+    const scopedQuery = applyUsageTrackingScope(client
         .from('usage_tracking')
         .select('*', { count: 'exact', head: true })
         .eq('user_id', userId)
         .eq('feature_key', featureKey)
         .gte('used_at', start)
-        .lt('used_at', end);
+        .lt('used_at', end), userId);
+    const { count, error } = await scopedQuery;
     if (error) {
         throw new Error(error.message || 'Failed to fetch usage count');
     }

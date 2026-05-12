@@ -14,6 +14,8 @@ import {
   emitUpgradePrompt,
   getUpgradePromptFromMessage,
 } from '../lib/upgradePrompt';
+import { getSuperAdminTestingRequestHeaders } from '../lib/superAdmin';
+import { emitUsageRefresh } from '../lib/usageEvents';
 import { useAuth } from './useAuth';
 import type {
   GenerateContentInput,
@@ -112,6 +114,7 @@ const readCopyGenerationStream = async ({
       'Content-Type': 'application/json',
       Accept: 'text/event-stream',
       Authorization: `Bearer ${token}`,
+      ...getSuperAdminTestingRequestHeaders(),
     },
     body: JSON.stringify(body),
     signal,
@@ -617,6 +620,7 @@ export const useGenerateWorkspace = () => {
       });
       setCopyGenerationPhase('syncing');
       await refreshConversations(nextThread.conversation.id);
+      emitUsageRefresh();
 
       return nextThread;
     } catch (generationError) {
@@ -687,6 +691,7 @@ export const useGenerateWorkspace = () => {
         },
       });
       await refreshConversations(nextThread.conversation.id);
+      emitUsageRefresh();
 
       return nextThread;
     } catch (generationError) {

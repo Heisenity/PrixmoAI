@@ -26,6 +26,8 @@ import { startSchedulerPublisherWorker } from './services/schedulerPublisher.ser
 import { formatIstTimestamp } from './lib/timezone';
 import { version } from '../package.json';
 import { isRedisConfigured } from './lib/redis';
+import { ensureConfiguredSuperAdminAccount } from './lib/superAdmin';
+import { runWithRequestContext } from './lib/requestContext';
 
 
 const app = express();
@@ -34,6 +36,16 @@ const PORT = APP_PORT;
 // 1. Security Headers
 app.use(helmet());
 app.use(cors());
+app.use((_, __, next) =>
+  runWithRequestContext(
+    {
+      authenticatedUserId: null,
+      isSuperAdminRequest: false,
+      superAdminTestPlan: null,
+    },
+    () => next()
+  )
+);
 app.post(
   '/api/billing/webhook',
   express.raw({ type: 'application/json' }),
@@ -116,4 +128,22 @@ app.listen(PORT, () => {
       '[runtime] Meta-dependent background jobs are idle until Meta OAuth credentials are configured.'
     );
   }
+
+  void ensureConfiguredSuperAdminAccount()
+    .then((result) => {
+      if (!result?.email) {
+        return;
+      }
+
+      console.log(
+        `[runtime] Super admin account ensured for ${result.email}.`
+      );
+    })
+    .catch((error) => {
+      console.warn(
+        `[runtime] Failed to ensure the configured super admin account: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
+    });
 });

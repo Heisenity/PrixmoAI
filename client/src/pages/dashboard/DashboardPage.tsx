@@ -47,10 +47,17 @@ export const DashboardPage = () => {
   const subscription = catalog?.currentSubscription;
   const activePlan = subscription?.plan ?? 'free';
   const planDetails = PLAN_DASHBOARD_DETAILS[activePlan];
+  const usageSnapshot = catalog?.usageSnapshot ?? null;
   const generationOverview = overview?.generation ?? null;
-  const hasUsageOverview = Boolean(generationOverview);
-  const contentGenerationsToday = generationOverview?.contentGenerationsToday ?? null;
-  const imageGenerationsToday = generationOverview?.imageGenerationsToday ?? null;
+  const hasUsageOverview = Boolean(usageSnapshot || generationOverview);
+  const contentGenerationsToday =
+    usageSnapshot?.contentGenerationsToday ??
+    generationOverview?.contentGenerationsToday ??
+    null;
+  const imageGenerationsToday =
+    usageSnapshot?.imageGenerationsToday ??
+    generationOverview?.imageGenerationsToday ??
+    null;
   const contentUsage = useMemo(
     () =>
       contentGenerationsToday === null
@@ -224,11 +231,11 @@ export const DashboardPage = () => {
           </div>
           <div className="dashboard-panel__body">
             <UsageMeter
-              label={planDetails.contentMeterLabel}
-              value={contentGenerationsToday}
-              limit={planDetails.contentLimit}
-              limitLabel={planDetails.contentLimitLabel}
-            />
+          label={planDetails.contentMeterLabel}
+          value={contentGenerationsToday}
+          limit={planDetails.contentLimit}
+          limitLabel={planDetails.contentLimitLabel}
+        />
             <UsageMeter
               label={planDetails.imageMeterLabel}
               value={imageGenerationsToday}

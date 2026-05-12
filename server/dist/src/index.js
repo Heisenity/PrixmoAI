@@ -25,11 +25,18 @@ const schedulerPublisher_service_1 = require("./services/schedulerPublisher.serv
 const timezone_1 = require("./lib/timezone");
 const package_json_1 = require("../package.json");
 const redis_1 = require("./lib/redis");
+const superAdmin_1 = require("./lib/superAdmin");
+const requestContext_1 = require("./lib/requestContext");
 const app = (0, express_1.default)();
 const PORT = constants_1.APP_PORT;
 // 1. Security Headers
 app.use((0, helmet_1.default)());
 app.use((0, cors_1.default)());
+app.use((_, __, next) => (0, requestContext_1.runWithRequestContext)({
+    authenticatedUserId: null,
+    isSuperAdminRequest: false,
+    superAdminTestPlan: null,
+}, () => next()));
 app.post('/api/billing/webhook', express_1.default.raw({ type: 'application/json' }), billing_controller_1.handleRazorpayWebhook);
 app.use(express_1.default.json({ limit: '80mb' }));
 app.use(express_1.default.urlencoded({ extended: true, limit: '80mb' }));
@@ -91,4 +98,14 @@ app.listen(PORT, () => {
     if (!constants_1.isMetaOAuthConfigured) {
         console.warn('[runtime] Meta-dependent background jobs are idle until Meta OAuth credentials are configured.');
     }
+    void (0, superAdmin_1.ensureConfiguredSuperAdminAccount)()
+        .then((result) => {
+        if (!result?.email) {
+            return;
+        }
+        console.log(`[runtime] Super admin account ensured for ${result.email}.`);
+    })
+        .catch((error) => {
+        console.warn(`[runtime] Failed to ensure the configured super admin account: ${error instanceof Error ? error.message : String(error)}`);
+    });
 });

@@ -14,6 +14,13 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import { APP_NAME, PLAN_DASHBOARD_DETAILS } from '../../lib/constants';
 import { getAvatarCandidates } from '../../lib/profile';
+import {
+  SUPER_ADMIN_TESTING_TIER_EVENT,
+  isSuperAdminUser,
+  normalizeSuperAdminTestingTier,
+  readStoredSuperAdminTestingTier,
+  writeStoredSuperAdminTestingTier,
+} from '../../lib/superAdmin';
 import { getOverallUsageSummary } from '../../lib/usage';
 import { cn } from '../../lib/utils';
 import { useAuth } from '../../hooks/useAuth';
@@ -44,6 +51,9 @@ export const Sidebar = ({ collapsed, onToggleCollapse }: SidebarProps) => {
   const { subscription, catalog, isLoading: isBillingLoading } = useBilling();
   const { overview, isLoading: isAnalyticsLoading } = useAnalytics();
   const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
+  const [superAdminTestingTier, setSuperAdminTestingTier] = useState(() =>
+    readStoredSuperAdminTestingTier()
+  );
   const profileMenuRef = useRef<HTMLDivElement | null>(null);
   const { prompt, dismissPrompt } = useUpgradePrompt();
   const avatarCandidates = useMemo(() => {
@@ -61,15 +71,26 @@ export const Sidebar = ({ collapsed, onToggleCollapse }: SidebarProps) => {
     return getAvatarCandidates(profile?.avatarUrl, metadataSources);
   }, [profile?.avatarUrl, user?.identities, user?.user_metadata]);
   const currentPlan = subscription?.plan ?? catalog?.currentSubscription.plan ?? 'free';
+  const showSuperAdminPlanSelector =
+    isSuperAdminUser(user) ||
+    subscription?.metadata?.superAdmin === true ||
+    catalog?.currentSubscription.metadata?.superAdmin === true;
   const planDetails = PLAN_DASHBOARD_DETAILS[currentPlan];
+  const usageSnapshot = catalog?.usageSnapshot ?? null;
   const isUsageLoading = isBillingLoading || isAnalyticsLoading;
   const usageSummary = getOverallUsageSummary({
     contentLimit: planDetails.contentLimit,
     imageLimit: planDetails.imageLimit,
-    contentUsed: overview?.generation.contentGenerationsToday ?? null,
-    imageUsed: overview?.generation.imageGenerationsToday ?? null,
+    contentUsed:
+      usageSnapshot?.contentGenerationsToday ??
+      overview?.generation.contentGenerationsToday ??
+      null,
+    imageUsed:
+      usageSnapshot?.imageGenerationsToday ??
+      overview?.generation.imageGenerationsToday ??
+      null,
     isLoading: isUsageLoading,
-    hasUsageData: Boolean(overview),
+    hasUsageData: Boolean(usageSnapshot || overview),
     usageWindowLabel: planDetails.usageWindowLabel,
   });
 
@@ -94,6 +115,34 @@ export const Sidebar = ({ collapsed, onToggleCollapse }: SidebarProps) => {
       window.removeEventListener('mousedown', handlePointerDown);
     };
   }, [isProfileMenuOpen]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    const syncTestingTier = () => {
+      setSuperAdminTestingTier(readStoredSuperAdminTestingTier());
+    };
+
+    const handleTierChange = (event: Event) => {
+      const customEvent = event as CustomEvent<string | undefined>;
+      setSuperAdminTestingTier(
+        normalizeSuperAdminTestingTier(customEvent.detail ?? null)
+      );
+    };
+
+    window.addEventListener(SUPER_ADMIN_TESTING_TIER_EVENT, handleTierChange);
+    window.addEventListener('storage', syncTestingTier);
+
+    return () => {
+      window.removeEventListener(
+        SUPER_ADMIN_TESTING_TIER_EVENT,
+        handleTierChange
+      );
+      window.removeEventListener('storage', syncTestingTier);
+    };
+  }, []);
 
   return (
     <aside className={cn('sidebar', collapsed && 'sidebar--collapsed')}>
@@ -148,7 +197,37 @@ export const Sidebar = ({ collapsed, onToggleCollapse }: SidebarProps) => {
             <div className="sidebar__profile-menu-header">
               <div className="sidebar__profile-menu-header-row">
                 <strong>{profile?.fullName || 'Workspace Owner'}</strong>
-                <CurrentPlanBadge plan={currentPlan} className="sidebar__plan-badge" />
+                {showSuperAdminPlanSelector ? (
+                  <label
+                    className="sidebar__plan-select"
+                    htmlFor="sidebar-super-admin-tier"
+                    title="Switch SA testing tier"
+                  >
+                    <select
+                      id="sidebar-super-admin-tier"
+                      value={superAdminTestingTier}
+                      onChange={(event) => {
+                        const nextPlan = normalizeSuperAdminTestingTier(
+                          event.target.value
+                        );
+                        setSuperAdminTestingTier(nextPlan);
+                        writeStoredSuperAdminTestingTier(nextPlan);
+                      }}
+                    >
+                      <option value="free">Free</option>
+                      <option value="basic">Basic</option>
+                      <option value="pro">Pro</option>
+                    </select>
+                    <span className="sidebar__plan-select-icon" aria-hidden="true">
+                      <ChevronDown size={12} />
+                    </span>
+                  </label>
+                ) : (
+                  <CurrentPlanBadge
+                    plan={currentPlan}
+                    className="sidebar__plan-badge"
+                  />
+                )}
               </div>
               <span>
                 {profile?.primaryIndustry || 'Open workspace options'}

@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useState } from 'react';
 import { apiRequest } from '../lib/axios';
+import { PRIXMOAI_USAGE_REFRESH_EVENT } from '../lib/usageEvents';
 import { useAuth } from './useAuth';
+import {
+  SUPER_ADMIN_TESTING_TIER_EVENT,
+  isSuperAdminUser,
+  normalizeSuperAdminTestingTier,
+  readStoredSuperAdminTestingTier,
+} from '../lib/superAdmin';
 import type { BillingCatalogResponse, PlanType, Subscription } from '../types';
 
 type CheckoutResponse = {
@@ -17,8 +24,11 @@ type BillingCache = {
 const BILLING_CACHE_KEY_PREFIX = 'prixmoai.billing.snapshot';
 const BILLING_CACHE_TTL_MS = 2 * 60_000;
 
-const buildBillingCacheKey = (userId: string) =>
-  `${BILLING_CACHE_KEY_PREFIX}:${userId}`;
+const buildBillingCacheKey = (
+  userId: string,
+  superAdminTestingTier?: PlanType | null
+) =>
+  `${BILLING_CACHE_KEY_PREFIX}:${userId}:${superAdminTestingTier ?? 'default'}`;
 
 const isFreshCache = (cachedAt: string, ttlMs: number) => {
   const cachedTime = new Date(cachedAt).getTime();
@@ -26,12 +36,17 @@ const isFreshCache = (cachedAt: string, ttlMs: number) => {
   return Number.isFinite(cachedTime) && Date.now() - cachedTime <= ttlMs;
 };
 
-const readBillingCache = (userId: string): BillingCache | null => {
+const readBillingCache = (
+  userId: string,
+  superAdminTestingTier?: PlanType | null
+): BillingCache | null => {
   if (typeof window === 'undefined') {
     return null;
   }
 
-  const raw = window.localStorage.getItem(buildBillingCacheKey(userId));
+  const raw = window.localStorage.getItem(
+    buildBillingCacheKey(userId, superAdminTestingTier)
+  );
 
   if (!raw) {
     return null;
@@ -57,31 +72,41 @@ const readBillingCache = (userId: string): BillingCache | null => {
   }
 };
 
-const writeBillingCache = (userId: string, value: BillingCache) => {
+const writeBillingCache = (
+  userId: string,
+  value: BillingCache,
+  superAdminTestingTier?: PlanType | null
+) => {
   if (typeof window === 'undefined') {
     return;
   }
 
   window.localStorage.setItem(
-    buildBillingCacheKey(userId),
+    buildBillingCacheKey(userId, superAdminTestingTier),
     JSON.stringify(value)
   );
 };
 
 export const useBilling = () => {
   const { token, user } = useAuth();
+  const [superAdminTestingTier, setSuperAdminTestingTier] = useState<PlanType>(() =>
+    readStoredSuperAdminTestingTier()
+  );
   const [catalog, setCatalog] = useState<BillingCatalogResponse | null>(null);
   const [subscription, setSubscription] = useState<Subscription | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isCheckingOut, setIsCheckingOut] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const effectiveSuperAdminTestingTier = isSuperAdminUser(user)
+    ? superAdminTestingTier
+    : null;
 
   const refresh = useCallback(async (options?: { force?: boolean }) => {
     if (!token || !user?.id) {
       return;
     }
 
-    const cached = readBillingCache(user.id);
+    const cached = readBillingCache(user.id, effectiveSuperAdminTestingTier);
 
     if (
       !options?.force &&
@@ -109,7 +134,7 @@ export const useBilling = () => {
         catalog: nextCatalog,
         subscription: nextSubscription,
         cachedAt: new Date().toISOString(),
-      });
+      }, effectiveSuperAdminTestingTier);
     } catch (billingError) {
       setError(
         billingError instanceof Error ? billingError.message : 'Failed to load billing'
@@ -117,7 +142,7 @@ export const useBilling = () => {
     } finally {
       setIsLoading(false);
     }
-  }, [token, user?.id]);
+  }, [effectiveSuperAdminTestingTier, token, user?.id]);
 
   useEffect(() => {
     const userId = user?.id ?? null;
@@ -130,12 +155,42 @@ export const useBilling = () => {
       return;
     }
 
-    const cached = readBillingCache(userId);
+    const cached = readBillingCache(userId, effectiveSuperAdminTestingTier);
 
     setCatalog(cached?.catalog ?? null);
     setSubscription(cached?.subscription ?? null);
     setError(null);
-  }, [token, user?.id]);
+  }, [effectiveSuperAdminTestingTier, token, user?.id]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    const syncTestingTier = () => {
+      setSuperAdminTestingTier(readStoredSuperAdminTestingTier());
+    };
+
+    const handleTierChange = (
+      event: Event
+    ) => {
+      const customEvent = event as CustomEvent<PlanType | undefined>;
+      setSuperAdminTestingTier(
+        normalizeSuperAdminTestingTier(customEvent.detail ?? null)
+      );
+    };
+
+    window.addEventListener(SUPER_ADMIN_TESTING_TIER_EVENT, handleTierChange);
+    window.addEventListener('storage', syncTestingTier);
+
+    return () => {
+      window.removeEventListener(
+        SUPER_ADMIN_TESTING_TIER_EVENT,
+        handleTierChange
+      );
+      window.removeEventListener('storage', syncTestingTier);
+    };
+  }, []);
 
   const syncSubscription = useCallback(
     async (subscriptionId?: string | null) => {
@@ -156,13 +211,13 @@ export const useBilling = () => {
           catalog,
           subscription: nextSubscription,
           cachedAt: new Date().toISOString(),
-        });
+        }, effectiveSuperAdminTestingTier);
         return nextSubscription;
       } catch {
         return null;
       }
     },
-    [token, user?.id, catalog]
+    [catalog, effectiveSuperAdminTestingTier, token, user?.id]
   );
 
   useEffect(() => {
@@ -208,6 +263,25 @@ export const useBilling = () => {
     syncSubscription,
     refresh,
   ]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !token) {
+      return;
+    }
+
+    const handleUsageRefresh = () => {
+      void refresh({ force: true });
+    };
+
+    window.addEventListener(PRIXMOAI_USAGE_REFRESH_EVENT, handleUsageRefresh);
+
+    return () => {
+      window.removeEventListener(
+        PRIXMOAI_USAGE_REFRESH_EVENT,
+        handleUsageRefresh
+      );
+    };
+  }, [refresh, token]);
 
   const startCheckout = async (plan: Exclude<PlanType, 'free'>) => {
     if (!token) {

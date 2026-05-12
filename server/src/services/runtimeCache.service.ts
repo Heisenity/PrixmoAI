@@ -67,11 +67,22 @@ export const buildAnalyticsHistoryCacheKey = (
 export const invalidateAnalyticsRuntimeCache = async (userId: string) =>
   deleteRuntimeCacheByPrefix('analytics', userId);
 
-export const buildBillingPlansCacheKey = (userId: string) =>
-  buildRuntimeCacheKey('billing', userId, 'plans');
+export const buildBillingPlansCacheKey = (
+  userId: string,
+  superAdminTestingPlan = 'default'
+) =>
+  buildRuntimeCacheKey('billing', userId, 'plans', superAdminTestingPlan);
 
-export const buildBillingSubscriptionCacheKey = (userId: string) =>
-  buildRuntimeCacheKey('billing', userId, 'subscription');
+export const buildBillingSubscriptionCacheKey = (
+  userId: string,
+  superAdminTestingPlan = 'default'
+) =>
+  buildRuntimeCacheKey(
+    'billing',
+    userId,
+    'subscription',
+    superAdminTestingPlan
+  );
 
 export const invalidateBillingRuntimeCache = async (userId: string) =>
   deleteRuntimeCacheByPrefix('billing', userId);
