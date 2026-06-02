@@ -11,17 +11,25 @@ import {
   appendScheduledItemLog,
   syncScheduledItemStatusByScheduledPostId,
 } from '../db/queries/scheduleBatches';
-import { getSocialAccountById } from '../db/queries/socialAccounts';
+import {
+  getSocialAccountById,
+  updateSocialAccount,
+} from '../db/queries/socialAccounts';
 import {
   isSupabaseAdminConfigured,
   requireSupabaseAdmin,
 } from '../db/supabase';
-import type { ScheduledPostStatus } from '../types';
+import type { ScheduledPostStatus, SocialAccount } from '../types';
 import { enqueueAnalyticsSyncJob } from './analyticsSync.service';
-import { publishScheduledMetaPost } from './meta.service';
+import { normalizeMetaFailureForUser, publishScheduledMetaPost } from './meta.service';
 import { getBullMqConfig, isRedisConfigured } from '../lib/redis';
 import { QUEUE_NAMES } from '../queues/queueNames';
 import { getLowCommandWorkerOptions } from '../queues/workerOptions';
+import {
+  logFailure,
+  logOperationalEvent,
+  recordFailureSpikeSignal,
+} from '../lib/observability';
 
 type SchedulerPublishJobData = {
   postId: string;
@@ -152,7 +160,8 @@ const hasMatchingScheduledPublishJob = async (
 const markPostFailure = async (
   postId: string,
   userId: string,
-  message: string
+  message: string,
+  payloadJson?: Record<string, unknown>
 ) => {
   const client = requireSupabaseAdmin();
 
@@ -174,9 +183,83 @@ const markPostFailure = async (
         scheduledItemId: item.id,
         eventType: 'publish_failed',
         message,
+        payloadJson,
       }).catch(() => null)
     )
   );
+};
+
+const revalidateScheduledPublishInput = async (
+  post: SchedulePublishInput
+): Promise<SchedulePublishInput | null> => {
+  if (!isSupabaseAdminConfigured) {
+    return post;
+  }
+
+  const client = requireSupabaseAdmin();
+  const livePost = await getScheduledPostById(client, post.userId, post.id);
+
+  if (!livePost) {
+    await removeExistingScheduledPublishJob(post.id);
+    logOperationalEvent(
+      'scheduler_publish_enqueue_skipped',
+      {
+        userId: post.userId,
+        queue: QUEUE_NAMES.schedulerPublish,
+        scheduledPostId: post.id,
+        reason: 'post_deleted',
+      },
+      'warn'
+    );
+    return null;
+  }
+
+  if (!['pending', 'scheduled'].includes(livePost.status)) {
+    await removeExistingScheduledPublishJob(livePost.id);
+    return null;
+  }
+
+  const socialAccount = await getSocialAccountById(
+    client,
+    livePost.userId,
+    livePost.socialAccountId
+  );
+
+  if (!socialAccount) {
+    await markPostFailure(
+      livePost.id,
+      livePost.userId,
+      'The connected account was removed before this post could publish.',
+      { reason: 'social_account_deleted' }
+    );
+    await removeExistingScheduledPublishJob(livePost.id);
+    return null;
+  }
+
+  if (
+    socialAccount.verificationStatus !== 'verified' ||
+    (socialAccount.tokenExpiresAt &&
+      new Date(socialAccount.tokenExpiresAt).getTime() <= Date.now())
+  ) {
+    await markPostFailure(
+      livePost.id,
+      livePost.userId,
+      'Reconnect this account before PrixmoAI can publish this scheduled post.',
+      {
+        reason: 'social_account_not_publishable',
+        verificationStatus: socialAccount.verificationStatus,
+      }
+    );
+    await removeExistingScheduledPublishJob(livePost.id);
+    return null;
+  }
+
+  return {
+    id: livePost.id,
+    userId: livePost.userId,
+    scheduledFor: livePost.scheduledFor,
+    status: livePost.status,
+  };
 };
 
 const processScheduledPost = async (postId: string, userId: string) => {
@@ -187,14 +270,24 @@ const processScheduledPost = async (postId: string, userId: string) => {
     return;
   }
 
+  let socialAccount: SocialAccount | null = null;
+
   try {
+    logOperationalEvent('scheduler_publish_started', {
+      userId,
+      jobId: getScheduledPublishJobId(postId),
+      queue: QUEUE_NAMES.schedulerPublish,
+      scheduledPostId: postId,
+      provider: 'meta',
+    });
+
     await syncScheduledItemStatusByScheduledPostId(client, post.id, {
       status: 'publishing',
       attemptCount: post.publishAttemptedAt ? 1 : 1,
       lastError: null,
     }).catch(() => []);
 
-    const socialAccount = await getSocialAccountById(
+    socialAccount = await getSocialAccountById(
       client,
       post.userId,
       post.socialAccountId
@@ -256,15 +349,72 @@ const processScheduledPost = async (postId: string, userId: string) => {
         error instanceof Error
           ? error.message
           : 'Immediate analytics sync failed after publishing.';
+      logFailure('scheduler_analytics_sync_enqueue_failed', error, {
+        userId: post.userId,
+        jobId: getScheduledPublishJobId(post.id),
+        queue: QUEUE_NAMES.analyticsSyncUser,
+        scheduledPostId: post.id,
+        socialAccountId: socialAccount.id,
+      });
       console.error(`[scheduler-publisher] ${message}`);
     }
   } catch (error) {
+    const normalized =
+      socialAccount?.oauthProvider === 'meta' &&
+      (socialAccount.platform === 'instagram' || socialAccount.platform === 'facebook')
+        ? normalizeMetaFailureForUser(error, socialAccount.platform)
+        : null;
     const message =
-      error instanceof Error
+      normalized?.message ||
+      (error instanceof Error
         ? error.message
-        : 'PrixmoAI could not publish that scheduled post.';
+        : 'PrixmoAI could not publish that scheduled post.');
 
-    await markPostFailure(postId, userId, message);
+    if (socialAccount && normalized?.accountStatus) {
+      await updateSocialAccount(client, socialAccount.userId, socialAccount.id, {
+        verificationStatus: normalized.accountStatus,
+      }).catch((statusError) => {
+        logFailure('scheduler_social_account_status_update_failed', statusError, {
+          userId: socialAccount?.userId,
+          socialAccountId: socialAccount?.id,
+          provider: 'meta',
+        });
+      });
+    }
+
+    logFailure('scheduler_publish_failed', error, {
+      userId,
+      jobId: getScheduledPublishJobId(postId),
+      queue: QUEUE_NAMES.schedulerPublish,
+      provider: socialAccount?.oauthProvider ?? 'unknown',
+      platform: socialAccount?.platform ?? post.platform,
+      scheduledPostId: postId,
+      socialAccountId: socialAccount?.id ?? post.socialAccountId,
+      failureKind: normalized?.kind ?? 'unknown',
+      retryable: normalized?.retryable ?? false,
+    });
+    recordFailureSpikeSignal('scheduler_publish_failed', {
+      userId,
+      queue: QUEUE_NAMES.schedulerPublish,
+      provider: socialAccount?.oauthProvider ?? 'unknown',
+    });
+
+    if (normalized?.kind === 'reconnect' || normalized?.kind === 'permission_missing') {
+      recordFailureSpikeSignal('meta_disconnect_or_permission', {
+        userId,
+        provider: 'meta',
+        platform: socialAccount?.platform ?? post.platform,
+      }, {
+        threshold: 3,
+      });
+    }
+
+    await markPostFailure(postId, userId, message, {
+      failureKind: normalized?.kind ?? 'unknown',
+      retryable: normalized?.retryable ?? false,
+      provider: socialAccount?.oauthProvider ?? null,
+      platform: socialAccount?.platform ?? post.platform,
+    });
   }
 };
 
@@ -331,24 +481,37 @@ export const scheduleScheduledPostPublish = async (
     return;
   }
 
+  const revalidatedPost = await revalidateScheduledPublishInput(post);
+
+  if (!revalidatedPost) {
+    return;
+  }
+
   if (
     options.preserveExistingSchedule &&
-    (await hasMatchingScheduledPublishJob(post.id, post.scheduledFor))
+    (await hasMatchingScheduledPublishJob(revalidatedPost.id, revalidatedPost.scheduledFor))
   ) {
     return;
   }
 
-  await removeExistingScheduledPublishJob(post.id);
+  await removeExistingScheduledPublishJob(revalidatedPost.id);
 
   await getSchedulerPublishQueue().add(
     'publish',
     {
-      postId: post.id,
-      userId: post.userId,
-      scheduledFor: post.scheduledFor,
+      postId: revalidatedPost.id,
+      userId: revalidatedPost.userId,
+      scheduledFor: revalidatedPost.scheduledFor,
     },
-    getPublishJobOptions(post.id, post.scheduledFor)
+    getPublishJobOptions(revalidatedPost.id, revalidatedPost.scheduledFor)
   );
+
+  logOperationalEvent('scheduler_publish_enqueued', {
+    userId: revalidatedPost.userId,
+    jobId: getScheduledPublishJobId(revalidatedPost.id),
+    queue: QUEUE_NAMES.schedulerPublish,
+    scheduledPostId: revalidatedPost.id,
+  });
 
   startSchedulerPublisherWorker({ hydrate: false });
 };
@@ -378,6 +541,18 @@ export const startSchedulerPublisherWorker = (
       concurrency: SCHEDULER_PUBLISH_JOB_CONCURRENCY,
     }
   );
+
+  schedulerPublishWorker.on('failed', (job, error) => {
+    logFailure('scheduler_publish_worker_failed', error, {
+      userId: job?.data.userId ?? null,
+      jobId: job?.id ?? null,
+      queue: QUEUE_NAMES.schedulerPublish,
+      scheduledPostId: job?.data.postId ?? null,
+    });
+    recordFailureSpikeSignal('scheduler_publish_worker_failed', {
+      queue: QUEUE_NAMES.schedulerPublish,
+    });
+  });
 
   if (options.hydrate !== false) {
     void hydrateScheduledPublishJobs();

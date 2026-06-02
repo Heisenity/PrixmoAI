@@ -29,6 +29,7 @@ import type {
 import { invalidateAnalyticsRuntimeCache } from './runtimeCache.service';
 import { syncAnalyticsLearningSemanticMemory } from './brandMemory.service';
 import { buildAnalyticsPerformanceScores } from '../lib/analyticsPerformance';
+import { logFailure, logOperationalEvent, recordFailureSpikeSignal } from '../lib/observability';
 
 type AnalyticsLearningJobData = {
   userId: string;
@@ -1661,6 +1662,13 @@ export const enqueueAnalyticsLearningJob = async (data: AnalyticsLearningJobData
     }
   );
 
+  logOperationalEvent('analytics_learning_job_enqueued', {
+    userId: data.userId,
+    queue: QUEUE_NAMES.analyticsLearningUser,
+    triggerSource: data.triggerSource,
+    platforms: data.platforms ?? null,
+  });
+
   startAnalyticsLearningWorker();
 };
 
@@ -1678,13 +1686,25 @@ export const startAnalyticsLearningWorker = () => {
     QUEUE_NAMES.analyticsLearningUser,
     async (job) => {
       const client = requireSupabaseAdmin();
-      return refreshAnalyticsLearningForUser(client, job.data.userId, {
-        triggerSource: job.data.triggerSource,
-        platforms: job.data.platforms,
-        contentIds: job.data.contentIds,
-        scheduledPostIds: job.data.scheduledPostIds,
-        analyticsIds: job.data.analyticsIds,
-      });
+      try {
+        return await refreshAnalyticsLearningForUser(client, job.data.userId, {
+          triggerSource: job.data.triggerSource,
+          platforms: job.data.platforms,
+          contentIds: job.data.contentIds,
+          scheduledPostIds: job.data.scheduledPostIds,
+          analyticsIds: job.data.analyticsIds,
+        });
+      } catch (error) {
+        logFailure('analytics_learning_job_failed', error, {
+          jobId: job.id,
+          userId: job.data.userId,
+          queue: QUEUE_NAMES.analyticsLearningUser,
+        });
+        recordFailureSpikeSignal('analytics_learning_job_failed', {
+          queue: QUEUE_NAMES.analyticsLearningUser,
+        });
+        throw error;
+      }
     },
     {
       ...getBullMqConfig('prixmoai:worker:analytics-learning-user'),
@@ -1695,6 +1715,13 @@ export const startAnalyticsLearningWorker = () => {
 
   analyticsLearningWorker.on('active', clearLearningWorkerIdleTimer);
   analyticsLearningWorker.on('drained', scheduleLearningWorkerIdleShutdown);
+  analyticsLearningWorker.on('failed', (job, error) => {
+    logFailure('analytics_learning_worker_failed', error, {
+      jobId: job?.id ?? null,
+      userId: job?.data.userId ?? null,
+      queue: QUEUE_NAMES.analyticsLearningUser,
+    });
+  });
 
   console.log('[analytics-learning] Worker started. Waiting for learning jobs.');
 };

@@ -34,6 +34,7 @@ import {
 } from './jobRuntime.service';
 import type { BrandProfile, BrandMemoryMatch, ProductInput } from '../types';
 import { collectRealtimeTrendIntelligence } from './trendIntelligence.service';
+import { logFailure, logOperationalEvent, recordFailureSpikeSignal } from '../lib/observability';
 
 type ResolvedGenerateImageInput = GenerateImageInput & {
   brandName?: string | null;
@@ -199,6 +200,16 @@ export const startImageGenerationWorker = () => {
               throw error;
             }
 
+            logFailure(
+              'image_trend_research_failed',
+              error,
+              {
+                jobId: job.id,
+                userId: job.data.userId,
+                queue: QUEUE_NAMES.imageGenerate,
+              },
+              'warn'
+            );
             console.warn('[image-generation] live trend research failed; continuing without it.', {
               jobId: job.id,
               userId: job.data.userId,
@@ -237,6 +248,15 @@ export const startImageGenerationWorker = () => {
           job.id!,
           error instanceof Error ? error.message : 'Image generation failed.'
         );
+        logFailure('image_generation_job_failed', error, {
+          jobId: job.id,
+          userId: job.data.userId,
+          queue: QUEUE_NAMES.imageGenerate,
+          provider: 'image-generation',
+        });
+        recordFailureSpikeSignal('image_generation_job_failed', {
+          queue: QUEUE_NAMES.imageGenerate,
+        });
         throw error;
       } finally {
         cleanup();
@@ -252,6 +272,13 @@ export const startImageGenerationWorker = () => {
 
   imageWorker.on('active', clearImageWorkerIdleTimer);
   imageWorker.on('drained', scheduleImageWorkerIdleShutdown);
+  imageWorker.on('failed', (job, error) => {
+    logFailure('image_generation_worker_failed', error, {
+      jobId: job?.id ?? null,
+      userId: job?.data.userId ?? null,
+      queue: QUEUE_NAMES.imageGenerate,
+    });
+  });
 };
 
 export const enqueueImageGenerationJob = async (
@@ -296,6 +323,13 @@ export const enqueueImageGenerationJob = async (
       'Queued for image generation.',
       params.data.userId
     );
+    logOperationalEvent('image_generation_job_queued', {
+      jobId: job.id,
+      userId: params.data.userId,
+      queue: QUEUE_NAMES.imageGenerate,
+      queueTier: params.runtimePolicy.queueTier,
+      throttleDelayMs: params.runtimePolicy.throttleDelayMs,
+    });
     await onQueued?.(job.id!);
 
     const result = await waitForQueueJobResult<GeneratedImageResult>(

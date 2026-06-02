@@ -36,7 +36,14 @@ export const MediaPreview = ({
             onError={() => setHasError(true)}
           />
         ) : (
-          <img src={src} alt={alt} onError={() => setHasError(true)} />
+          <img
+            src={src}
+            alt={alt}
+            loading="lazy"
+            decoding="async"
+            referrerPolicy="no-referrer"
+            onError={() => setHasError(true)}
+          />
         )
       ) : (
         <div className="media-preview__placeholder" role="img" aria-label={`${alt} unavailable`}>

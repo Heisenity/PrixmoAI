@@ -11,6 +11,7 @@ const queueNames_1 = require("../queues/queueNames");
 const workerOptions_1 = require("../queues/workerOptions");
 const jobRuntime_service_1 = require("./jobRuntime.service");
 const trendIntelligence_service_1 = require("./trendIntelligence.service");
+const observability_1 = require("../lib/observability");
 let imageQueue = null;
 let imageWorker = null;
 let imageWorkerIdleTimer = null;
@@ -119,6 +120,11 @@ const startImageGenerationWorker = () => {
                 if (error instanceof requestCancellation_1.RequestCancelledError) {
                     throw error;
                 }
+                (0, observability_1.logFailure)('image_trend_research_failed', error, {
+                    jobId: job.id,
+                    userId: job.data.userId,
+                    queue: queueNames_1.QUEUE_NAMES.imageGenerate,
+                }, 'warn');
                 console.warn('[image-generation] live trend research failed; continuing without it.', {
                     jobId: job.id,
                     userId: job.data.userId,
@@ -148,6 +154,15 @@ const startImageGenerationWorker = () => {
                 throw error;
             }
             await (0, jobRuntime_service_1.setJobFailed)(job.id, error instanceof Error ? error.message : 'Image generation failed.');
+            (0, observability_1.logFailure)('image_generation_job_failed', error, {
+                jobId: job.id,
+                userId: job.data.userId,
+                queue: queueNames_1.QUEUE_NAMES.imageGenerate,
+                provider: 'image-generation',
+            });
+            (0, observability_1.recordFailureSpikeSignal)('image_generation_job_failed', {
+                queue: queueNames_1.QUEUE_NAMES.imageGenerate,
+            });
             throw error;
         }
         finally {
@@ -161,6 +176,13 @@ const startImageGenerationWorker = () => {
     });
     imageWorker.on('active', clearImageWorkerIdleTimer);
     imageWorker.on('drained', scheduleImageWorkerIdleShutdown);
+    imageWorker.on('failed', (job, error) => {
+        (0, observability_1.logFailure)('image_generation_worker_failed', error, {
+            jobId: job?.id ?? null,
+            userId: job?.data.userId ?? null,
+            queue: queueNames_1.QUEUE_NAMES.imageGenerate,
+        });
+    });
 };
 exports.startImageGenerationWorker = startImageGenerationWorker;
 const enqueueImageGenerationJob = async (params, signal, onQueued) => {
@@ -177,6 +199,13 @@ const enqueueImageGenerationJob = async (params, signal, onQueued) => {
             ...getImageJobOptions(params.runtimePolicy.queueTier, params.runtimePolicy.throttleDelayMs),
         });
         await (0, jobRuntime_service_1.setJobQueued)(job.id, queueNames_1.QUEUE_NAMES.imageGenerate, 'Queued for image generation.', params.data.userId);
+        (0, observability_1.logOperationalEvent)('image_generation_job_queued', {
+            jobId: job.id,
+            userId: params.data.userId,
+            queue: queueNames_1.QUEUE_NAMES.imageGenerate,
+            queueTier: params.runtimePolicy.queueTier,
+            throttleDelayMs: params.runtimePolicy.throttleDelayMs,
+        });
         await onQueued?.(job.id);
         const result = await (0, jobRuntime_service_1.waitForQueueJobResult)(job, queueEvents, signal);
         return {

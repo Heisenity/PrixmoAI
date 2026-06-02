@@ -293,6 +293,7 @@ export interface GenerateImageInput {
   productName: string;
   productDescription?: string;
   backgroundStyle?: string;
+  backgroundPrompt?: string;
   prompt?: string;
   negativePrompt?: string;
   width?: number;

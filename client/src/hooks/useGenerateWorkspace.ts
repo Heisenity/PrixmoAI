@@ -77,6 +77,12 @@ const appendUniqueProgressMessage = (messages: string[], message: string) => {
   return [...messages, normalized].slice(-8);
 };
 
+const isStaleConversationError = (error: unknown) =>
+  error instanceof Error &&
+  /conversation not found|conversation.*no longer available|thread.*no longer available/i.test(
+    error.message
+  );
+
 const readFileAsDataUrl = (file: File): Promise<string> =>
   new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -256,6 +262,36 @@ export const useGenerateWorkspace = () => {
   const [isUploadingSource, setIsUploadingSource] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const clearActiveConversation = () => {
+    setActiveConversationId(null);
+    setActiveThread(null);
+    setError(null);
+    setActiveGenerateConversationId(null, user?.id ?? lastUserIdRef.current);
+  };
+
+  const pruneConversationFromCache = (conversationId: string | null | undefined) => {
+    const userId = user?.id ?? lastUserIdRef.current;
+
+    if (!userId || !conversationId) {
+      return;
+    }
+
+    const cached = readGenerateWorkspaceCache(userId)?.value;
+
+    if (!cached) {
+      return;
+    }
+
+    const { [conversationId]: _removedThread, ...nextThreads } = cached.threads;
+
+    writeGenerateWorkspaceCache(userId, {
+      conversations: cached.conversations.filter(
+        (conversation) => conversation.id !== conversationId
+      ),
+      threads: nextThreads,
+    });
+  };
+
   const refreshConversations = async (
     preferredConversationId?: string | null,
     options?: { silent?: boolean }
@@ -297,7 +333,20 @@ export const useGenerateWorkspace = () => {
         )
       ) {
         setActiveConversationId(null);
+        setActiveThread(null);
+        setError(null);
         setActiveGenerateConversationId(null, user?.id ?? lastUserIdRef.current);
+
+        if (userId) {
+          const cached = readGenerateWorkspaceCache(userId)?.value;
+          const { [nextActiveConversationId]: _removedThread, ...nextThreads } =
+            cached?.threads ?? {};
+
+          writeGenerateWorkspaceCache(userId, {
+            conversations: nextConversations,
+            threads: nextThreads,
+          });
+        }
       }
 
       return nextConversations;
@@ -432,14 +481,12 @@ export const useGenerateWorkspace = () => {
     }
 
     void refreshThread(activeConversationId, { silent: Boolean(cachedThread) }).catch((threadError) => {
-      if (
-        threadError instanceof Error &&
-        /conversation not found|no longer available/i.test(threadError.message)
-      ) {
-        setActiveConversationId(null);
-        setActiveThread(null);
-        setError(null);
-        setActiveGenerateConversationId(null, user?.id ?? lastUserIdRef.current);
+      if (isStaleConversationError(threadError)) {
+        setConversations((current) =>
+          current.filter((conversation) => conversation.id !== activeConversationId)
+        );
+        pruneConversationFromCache(activeConversationId);
+        clearActiveConversation();
         return;
       }
     });
@@ -461,10 +508,7 @@ export const useGenerateWorkspace = () => {
   };
 
   const startNewChat = () => {
-    setActiveConversationId(null);
-    setActiveThread(null);
-    setError(null);
-    setActiveGenerateConversationId(null, user?.id ?? lastUserIdRef.current);
+    clearActiveConversation();
   };
 
   const createConversation = async (title?: string, type?: GenerateConversation['type']) => {
@@ -564,48 +608,74 @@ export const useGenerateWorkspace = () => {
     ]);
 
     try {
-      const requestBody = {
-        conversationId: activeConversationId ?? undefined,
+      const buildRequestBody = (conversationId: string | null) => ({
+        conversationId: conversationId ?? undefined,
         ...input,
-      };
-      const nextThread = await readCopyGenerationStream({
-        token,
-        body: requestBody,
-        signal: controller.signal,
-        onProgress: (event) => {
-          setCopyGenerationPhase(mapCopyProgressPhase(event.phase));
+      });
+      const runCopyRequest = async (conversationId: string | null) =>
+        readCopyGenerationStream({
+          token,
+          body: buildRequestBody(conversationId),
+          signal: controller.signal,
+          onProgress: (event) => {
+            setCopyGenerationPhase(mapCopyProgressPhase(event.phase));
 
-          if (event.message) {
+            if (event.message) {
+              setCopyGenerationVerboseMessages((current) =>
+                appendUniqueProgressMessage(current, event.message!)
+              );
+            }
+          },
+        }).catch(async (streamError) => {
+          if (
+            streamError instanceof Error &&
+            /live generation updates are not available|unexpected end|finished without/i.test(
+              streamError.message
+            )
+          ) {
+            setCopyGenerationPhase('writing');
             setCopyGenerationVerboseMessages((current) =>
-              appendUniqueProgressMessage(current, event.message!)
+              appendUniqueProgressMessage(
+                current,
+                'Live updates were not available, so PrixmoAI is waiting for the final result.'
+              )
             );
+
+            return apiRequest<GenerateConversationThread>('/api/generate/copy', {
+              method: 'POST',
+              token,
+              body: buildRequestBody(conversationId),
+              signal: controller.signal,
+            });
           }
-        },
-      }).catch(async (streamError) => {
-        if (
-          streamError instanceof Error &&
-          /live generation updates are not available|unexpected end|finished without/i.test(
-            streamError.message
-          )
-        ) {
-          setCopyGenerationPhase('writing');
+
+          throw streamError;
+        });
+
+      let nextThread: GenerateConversationThread;
+
+      try {
+        nextThread = await runCopyRequest(activeConversationId);
+      } catch (requestError) {
+        if (activeConversationId && isStaleConversationError(requestError)) {
+          setConversations((current) =>
+            current.filter((conversation) => conversation.id !== activeConversationId)
+          );
+          pruneConversationFromCache(activeConversationId);
+          clearActiveConversation();
+          setCopyGenerationPhase('preparing');
           setCopyGenerationVerboseMessages((current) =>
             appendUniqueProgressMessage(
               current,
-              'Live updates were not available, so PrixmoAI is waiting for the final result.'
+              'That saved chat was stale, so PrixmoAI started a fresh thread.'
             )
           );
 
-          return apiRequest<GenerateConversationThread>('/api/generate/copy', {
-            method: 'POST',
-            token,
-            body: requestBody,
-            signal: controller.signal,
-          });
+          nextThread = await runCopyRequest(null);
+        } else {
+          throw requestError;
         }
-
-        throw streamError;
-      });
+      }
 
       setCopyGenerationPhase('stitching');
       setActiveConversationId(nextThread.conversation.id);
@@ -667,18 +737,33 @@ export const useGenerateWorkspace = () => {
     setIsGeneratingImage(true);
 
     try {
-      const nextThread = await apiRequest<GenerateConversationThread>(
-        '/api/generate/image',
-        {
+      const runImageRequest = (conversationId: string | null) =>
+        apiRequest<GenerateConversationThread>('/api/generate/image', {
           method: 'POST',
           token,
           body: {
-            conversationId: activeConversationId ?? undefined,
+            conversationId: conversationId ?? undefined,
             ...input,
           },
           signal: controller.signal,
+        });
+
+      let nextThread: GenerateConversationThread;
+
+      try {
+        nextThread = await runImageRequest(activeConversationId);
+      } catch (requestError) {
+        if (activeConversationId && isStaleConversationError(requestError)) {
+          setConversations((current) =>
+            current.filter((conversation) => conversation.id !== activeConversationId)
+          );
+          pruneConversationFromCache(activeConversationId);
+          clearActiveConversation();
+          nextThread = await runImageRequest(null);
+        } else {
+          throw requestError;
         }
-      );
+      }
 
       setActiveConversationId(nextThread.conversation.id);
       setActiveThread(nextThread);

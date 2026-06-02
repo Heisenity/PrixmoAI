@@ -13,6 +13,7 @@ const workerOptions_1 = require("../queues/workerOptions");
 const runtimeCache_service_1 = require("./runtimeCache.service");
 const brandMemory_service_1 = require("./brandMemory.service");
 const analyticsPerformance_1 = require("../lib/analyticsPerformance");
+const observability_1 = require("../lib/observability");
 let analyticsLearningQueue = null;
 let analyticsLearningWorker = null;
 let analyticsLearningWorkerIdleTimer = null;
@@ -1129,6 +1130,12 @@ const enqueueAnalyticsLearningJob = async (data) => {
             delay: 5000,
         },
     });
+    (0, observability_1.logOperationalEvent)('analytics_learning_job_enqueued', {
+        userId: data.userId,
+        queue: queueNames_1.QUEUE_NAMES.analyticsLearningUser,
+        triggerSource: data.triggerSource,
+        platforms: data.platforms ?? null,
+    });
     (0, exports.startAnalyticsLearningWorker)();
 };
 exports.enqueueAnalyticsLearningJob = enqueueAnalyticsLearningJob;
@@ -1142,13 +1149,26 @@ const startAnalyticsLearningWorker = () => {
     }
     analyticsLearningWorker = new bullmq_1.Worker(queueNames_1.QUEUE_NAMES.analyticsLearningUser, async (job) => {
         const client = (0, supabase_1.requireSupabaseAdmin)();
-        return (0, exports.refreshAnalyticsLearningForUser)(client, job.data.userId, {
-            triggerSource: job.data.triggerSource,
-            platforms: job.data.platforms,
-            contentIds: job.data.contentIds,
-            scheduledPostIds: job.data.scheduledPostIds,
-            analyticsIds: job.data.analyticsIds,
-        });
+        try {
+            return await (0, exports.refreshAnalyticsLearningForUser)(client, job.data.userId, {
+                triggerSource: job.data.triggerSource,
+                platforms: job.data.platforms,
+                contentIds: job.data.contentIds,
+                scheduledPostIds: job.data.scheduledPostIds,
+                analyticsIds: job.data.analyticsIds,
+            });
+        }
+        catch (error) {
+            (0, observability_1.logFailure)('analytics_learning_job_failed', error, {
+                jobId: job.id,
+                userId: job.data.userId,
+                queue: queueNames_1.QUEUE_NAMES.analyticsLearningUser,
+            });
+            (0, observability_1.recordFailureSpikeSignal)('analytics_learning_job_failed', {
+                queue: queueNames_1.QUEUE_NAMES.analyticsLearningUser,
+            });
+            throw error;
+        }
     }, {
         ...(0, redis_1.getBullMqConfig)('prixmoai:worker:analytics-learning-user'),
         ...(0, workerOptions_1.getLowCommandWorkerOptions)(),
@@ -1156,6 +1176,13 @@ const startAnalyticsLearningWorker = () => {
     });
     analyticsLearningWorker.on('active', clearLearningWorkerIdleTimer);
     analyticsLearningWorker.on('drained', scheduleLearningWorkerIdleShutdown);
+    analyticsLearningWorker.on('failed', (job, error) => {
+        (0, observability_1.logFailure)('analytics_learning_worker_failed', error, {
+            jobId: job?.id ?? null,
+            userId: job?.data.userId ?? null,
+            queue: queueNames_1.QUEUE_NAMES.analyticsLearningUser,
+        });
+    });
     console.log('[analytics-learning] Worker started. Waiting for learning jobs.');
 };
 exports.startAnalyticsLearningWorker = startAnalyticsLearningWorker;

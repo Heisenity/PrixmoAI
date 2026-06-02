@@ -237,7 +237,12 @@ export const GeneratedImage = ({
         {showWatermark && !watermarkedAssetUrl ? (
           <span className="generated-image-card__watermark">PRIXMOAI</span>
         ) : null}
-        <img src={previewUrl} alt="Generated visual preview" />
+        <img
+          src={previewUrl}
+          alt="Generated visual preview"
+          decoding="async"
+          referrerPolicy="no-referrer"
+        />
       </div>
     </Card>
     {isPreviewOpen ? (
@@ -272,7 +277,12 @@ export const GeneratedImage = ({
             {showWatermark && !watermarkedAssetUrl ? (
               <span className="generated-image-card__watermark">PRIXMOAI</span>
             ) : null}
-            <img src={previewUrl} alt="Generated visual preview" />
+            <img
+              src={previewUrl}
+              alt="Generated visual preview"
+              decoding="async"
+              referrerPolicy="no-referrer"
+            />
           </div>
         </div>
       </div>

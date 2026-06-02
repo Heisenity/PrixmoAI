@@ -203,6 +203,7 @@ const buildImagePromptSummary = (input: GenerateConversationImageInput) => {
     `Generate an image for "${input.productName}"`,
     input.sourceImageUrl ? 'Reference image attached' : null,
     input.backgroundStyle ? `Background: ${input.backgroundStyle}` : null,
+    input.backgroundPrompt ? `Custom background: ${trimText(input.backgroundPrompt, 80)}` : null,
   ].filter(Boolean);
   const description = input.productDescription
     ? trimText(input.productDescription, 140)
@@ -1181,6 +1182,7 @@ export const generateWorkspaceImage = async (
             promptUsed: result.promptUsed,
             sourceImageUrl: generationInput.sourceImageUrl ?? null,
             backgroundStyle: generationInput.backgroundStyle ?? null,
+            backgroundPrompt: generationInput.backgroundPrompt ?? null,
           },
         },
       ],

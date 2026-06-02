@@ -1,4 +1,5 @@
 import express from "express";
+import { randomUUID } from "crypto";
 import helmet from "helmet";
 import cors from "cors";
 import { errorHandler } from "./middleware/errorHandler.middleware";
@@ -36,16 +37,21 @@ const PORT = APP_PORT;
 // 1. Security Headers
 app.use(helmet());
 app.use(cors());
-app.use((_, __, next) =>
+app.use((req, res, next) => {
+  const incomingRequestId = req.header('x-request-id')?.trim();
+  const requestId = incomingRequestId || randomUUID();
+  res.setHeader('X-Request-Id', requestId);
+
   runWithRequestContext(
     {
+      requestId,
       authenticatedUserId: null,
       isSuperAdminRequest: false,
       superAdminTestPlan: null,
     },
     () => next()
-  )
-);
+  );
+});
 app.post(
   '/api/billing/webhook',
   express.raw({ type: 'application/json' }),

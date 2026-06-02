@@ -76,6 +76,14 @@ export const JOB_RUNTIME_TTL_MS = Number(
 export const JOB_CANCELLATION_TTL_MS = Number(
   process.env.JOB_CANCELLATION_TTL_MS || 30 * 60_000
 );
+export const OBSERVABILITY_ALERT_WEBHOOK_URL =
+  process.env.OBSERVABILITY_ALERT_WEBHOOK_URL || '';
+export const OBSERVABILITY_ALERT_FAILURE_THRESHOLD = Number(
+  process.env.OBSERVABILITY_ALERT_FAILURE_THRESHOLD || 5
+);
+export const OBSERVABILITY_ALERT_WINDOW_MS = Number(
+  process.env.OBSERVABILITY_ALERT_WINDOW_MS || 5 * 60_000
+);
 export const DEFAULT_GEMINI_MODEL =
   process.env.GEMINI_MODEL || 'gemini-2.5-flash';
 export const DEFAULT_GEMINI_EMBEDDING_MODEL =

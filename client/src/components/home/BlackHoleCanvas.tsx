@@ -1,9 +1,10 @@
-import { useEffect, useRef } from 'react';
+import { memo, useEffect, useRef } from 'react';
 
 type BlackHoleCanvasProps = {
   className?: string;
   particleCount?: number;
   interactive?: boolean;
+  quality?: 'balanced' | 'cinematic';
 };
 
 type Particle = {
@@ -68,8 +69,6 @@ type Star = {
 
 const TAU = Math.PI * 2;
 const TRAIL_POINTS = 12;
-const MAX_PARTICLES = 80;
-const MIN_PARTICLES = 40;
 const FRAGMENT_POOL_SIZE = 48;
 const BURST_POOL_SIZE = 10;
 const SHOCKWAVE_POOL_SIZE = 8;
@@ -137,10 +136,11 @@ const createShockwave = (): Shockwave => ({
   hue: 190,
 });
 
-export function BlackHoleCanvas({
+function BlackHoleCanvasComponent({
   className = '',
   particleCount = 30,
   interactive = false,
+  quality = 'balanced',
 }: BlackHoleCanvasProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -159,10 +159,13 @@ export function BlackHoleCanvas({
       return;
     }
 
+    const isCinematic = quality === 'cinematic';
+    const minParticles = isCinematic ? 40 : 12;
+    const maxParticles = isCinematic ? 80 : 56;
     const resolvedParticleCount = clamp(
       Math.round(particleCount),
-      MIN_PARTICLES,
-      MAX_PARTICLES,
+      minParticles,
+      maxParticles,
     );
 
     const particles = Array.from({ length: resolvedParticleCount }, createParticle);
@@ -173,6 +176,7 @@ export function BlackHoleCanvas({
 
     let rafId = 0;
     let destroyed = false;
+    let isAnimating = false;
     let width = 0;
     let height = 0;
     let pixelRatio = 1;
@@ -191,6 +195,10 @@ export function BlackHoleCanvas({
     let gravitationalParameter = 1;
     let lastTime = performance.now();
     let driftSeed = Math.random() * TAU;
+    const reducedMotionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
+    let prefersReducedMotion = reducedMotionQuery.matches;
+    let isDocumentVisible = document.visibilityState !== 'hidden';
+    let isInViewport = true;
 
     const pointer = {
       x: 0,
@@ -330,7 +338,10 @@ export function BlackHoleCanvas({
       height = Math.max(1, rect.height);
       centerX = width * 0.5;
       centerY = height * 0.5;
-      pixelRatio = Math.min(window.devicePixelRatio || 1, interactive ? 1.4 : 1.1);
+      pixelRatio = Math.min(
+        window.devicePixelRatio || 1,
+        interactive ? (isCinematic ? 1.4 : 1.15) : isCinematic ? 1.1 : 1,
+      );
       canvas.width = Math.round(width * pixelRatio);
       canvas.height = Math.round(height * pixelRatio);
       canvas.style.width = `${width}px`;
@@ -342,7 +353,10 @@ export function BlackHoleCanvas({
       gravitationalParameter = simulationRadius * simulationRadius * 11.8;
       driftSeed = Math.random() * TAU;
 
-      const starCount = Math.max(8, Math.round((width * height) / 5200));
+      const starCount = Math.max(
+        isCinematic ? 8 : 6,
+        Math.round((width * height) / (isCinematic ? 5200 : 9000)),
+      );
       stars = Array.from({ length: starCount }, () => ({
         x: randomBetween(-width * 0.42, width * 0.42),
         y: randomBetween(-height * 0.42, height * 0.42),
@@ -367,6 +381,9 @@ export function BlackHoleCanvas({
         shockwave.active = false;
       });
     };
+
+    const shouldAnimate = () =>
+      !prefersReducedMotion && isDocumentVisible && isInViewport;
 
     const lensPosition = (x: number, y: number) => {
       const dx = x - blackHoleCenterX;
@@ -449,7 +466,7 @@ export function BlackHoleCanvas({
       particle.opacity = clamp(0.12 + fadeEnvelope * 0.92, 0, 1);
 
       particle.trailTick += dt;
-      if (particle.trailTick >= 1 / 45) {
+      if (particle.trailTick >= 1 / (isCinematic ? 45 : 30)) {
         particle.trailTick = 0;
         recordTrail(particle);
       }
@@ -669,7 +686,13 @@ export function BlackHoleCanvas({
       context.arc(0, 0, diskOuterRadius, 0, TAU);
       context.fill();
 
-      const turbulenceBandCount = interactive ? 16 : 10;
+      const turbulenceBandCount = interactive
+        ? isCinematic
+          ? 16
+          : 12
+        : isCinematic
+          ? 10
+          : 6;
 
       for (let index = 0; index < turbulenceBandCount; index += 1) {
         const arcStart =
@@ -877,8 +900,26 @@ export function BlackHoleCanvas({
       drawParticles();
     };
 
+    const renderStaticFrame = () => {
+      renderFrame(performance.now());
+    };
+
+    const stopAnimation = () => {
+      if (rafId) {
+        window.cancelAnimationFrame(rafId);
+        rafId = 0;
+      }
+      isAnimating = false;
+    };
+
     const animate = (time: number) => {
       if (destroyed) {
+        return;
+      }
+
+      if (!shouldAnimate()) {
+        stopAnimation();
+        renderStaticFrame();
         return;
       }
 
@@ -898,7 +939,7 @@ export function BlackHoleCanvas({
 
       particles.forEach((particle) => updateParticle(particle, dt));
       collisionAccumulator += dt;
-      if (collisionAccumulator >= 1 / 24) {
+      if (collisionAccumulator >= (interactive || isCinematic ? 1 / 24 : 1 / 18)) {
         checkCollisions();
         collisionAccumulator = 0;
       }
@@ -908,6 +949,30 @@ export function BlackHoleCanvas({
       renderFrame(time);
 
       rafId = window.requestAnimationFrame(animate);
+    };
+
+    const startAnimation = () => {
+      if (destroyed || isAnimating || !shouldAnimate()) {
+        if (!destroyed && !shouldAnimate()) {
+          renderStaticFrame();
+        }
+        return;
+      }
+
+      isAnimating = true;
+      rafId = window.requestAnimationFrame((time) => {
+        lastTime = time;
+        animate(time);
+      });
+    };
+
+    const syncAnimationState = () => {
+      if (shouldAnimate()) {
+        startAnimation();
+      } else {
+        stopAnimation();
+        renderStaticFrame();
+      }
     };
 
     const handlePointerMove = (event: PointerEvent) => {
@@ -927,30 +992,62 @@ export function BlackHoleCanvas({
 
     const resizeObserver = new ResizeObserver(() => {
       rebuildScene();
+      if (!shouldAnimate()) {
+        renderStaticFrame();
+      }
     });
 
+    const intersectionObserver = new IntersectionObserver(
+      ([entry]) => {
+        isInViewport = entry?.isIntersecting ?? true;
+        syncAnimationState();
+      },
+      { threshold: 0.08 }
+    );
+
+    const handleVisibilityChange = () => {
+      isDocumentVisible = document.visibilityState !== 'hidden';
+      syncAnimationState();
+    };
+
+    const handleReducedMotionChange = (event: MediaQueryListEvent) => {
+      prefersReducedMotion = event.matches;
+      syncAnimationState();
+    };
+
     resizeObserver.observe(container);
+    intersectionObserver.observe(container);
     if (interactive) {
       container.addEventListener('pointermove', handlePointerMove);
       container.addEventListener('pointerleave', handlePointerLeave);
     }
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    if (typeof reducedMotionQuery.addEventListener === 'function') {
+      reducedMotionQuery.addEventListener('change', handleReducedMotionChange);
+    } else {
+      reducedMotionQuery.addListener(handleReducedMotionChange);
+    }
 
     rebuildScene();
-    rafId = window.requestAnimationFrame((time) => {
-      lastTime = time;
-      animate(time);
-    });
+    syncAnimationState();
 
     return () => {
       destroyed = true;
-      window.cancelAnimationFrame(rafId);
+      stopAnimation();
       resizeObserver.disconnect();
+      intersectionObserver.disconnect();
       if (interactive) {
         container.removeEventListener('pointermove', handlePointerMove);
         container.removeEventListener('pointerleave', handlePointerLeave);
       }
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      if (typeof reducedMotionQuery.removeEventListener === 'function') {
+        reducedMotionQuery.removeEventListener('change', handleReducedMotionChange);
+      } else {
+        reducedMotionQuery.removeListener(handleReducedMotionChange);
+      }
     };
-  }, [interactive, particleCount]);
+  }, [interactive, particleCount, quality]);
 
   return (
     <div
@@ -963,3 +1060,7 @@ export function BlackHoleCanvas({
     </div>
   );
 }
+
+export const BlackHoleCanvas = memo(BlackHoleCanvasComponent);
+
+BlackHoleCanvas.displayName = 'BlackHoleCanvas';

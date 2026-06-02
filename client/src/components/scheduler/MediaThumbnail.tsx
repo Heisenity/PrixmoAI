@@ -35,14 +35,21 @@ export const MediaThumbnail = ({
       {src && mediaType && !hasError ? (
         mediaType === 'video' ? (
           <>
-            <video src={src} muted playsInline preload="metadata" onError={() => setHasError(true)} />
+            <video src={src} muted playsInline preload="none" onError={() => setHasError(true)} />
             <span className="media-thumbnail__badge" aria-hidden="true">
               <Play size={12} fill="currentColor" />
             </span>
           </>
         ) : (
           <>
-            <img src={src} alt={alt} onError={() => setHasError(true)} />
+            <img
+              src={src}
+              alt={alt}
+              loading="lazy"
+              decoding="async"
+              referrerPolicy="no-referrer"
+              onError={() => setHasError(true)}
+            />
             <span className="media-thumbnail__badge" aria-hidden="true">
               <ImageIcon size={12} />
             </span>

@@ -1808,6 +1808,49 @@ export const SchedulerPage = () => {
   const connectedChannelsLabel = `${connectedAccounts.length} channel${
     connectedAccounts.length === 1 ? '' : 's'
   } connected`;
+
+  useEffect(() => {
+    if (!plannerAssets.length) {
+      return;
+    }
+
+    const connectedAccountIds = new Set(Object.keys(connectedAccountById));
+    let removedStaleSelection = false;
+
+    const nextPlannerAssets = plannerAssets.map((asset) => {
+      const nextSlots = asset.slots.map((slot) => {
+        if (slot.socialAccountId && !connectedAccountIds.has(slot.socialAccountId)) {
+          removedStaleSelection = true;
+          return {
+            ...slot,
+            socialAccountId: '',
+          };
+        }
+
+        return slot;
+      });
+
+      return nextSlots === asset.slots
+        ? asset
+        : {
+            ...asset,
+            slots: nextSlots,
+          };
+    });
+
+    if (!removedStaleSelection) {
+      return;
+    }
+
+    setPlannerAssets(nextPlannerAssets);
+    setIsPlannerDirty(true);
+    pushSchedulerToast({
+      type: 'warning',
+      title: 'Planner updated',
+      message: 'A disconnected channel was removed from this schedule draft.',
+    });
+  }, [connectedAccountById, plannerAssets, pushSchedulerToast]);
+
   const queueTabCounts = useMemo(
     () =>
       queueTabs.reduce<Record<QueueTabId, number>>(
@@ -3188,6 +3231,9 @@ export const SchedulerPage = () => {
                               ) || undefined
                             }
                             alt={getAccountDisplayName(account)}
+                            loading="lazy"
+                            decoding="async"
+                            referrerPolicy="no-referrer"
                           />
                         ) : (
                           <span>{getAccountInitials(account)}</span>

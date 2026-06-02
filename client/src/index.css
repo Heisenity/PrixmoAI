@@ -35,7 +35,7 @@
 
 html {
   height: 100%;
-  scroll-behavior: smooth;
+  scroll-behavior: auto;
 }
 
 body {
@@ -104,8 +104,9 @@ img {
     linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px),
     linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
   background-size: 180px 180px;
-  mask-image: radial-gradient(circle at center, black 35%, transparent 82%);
-  opacity: 0.18;
+  mask-image: radial-gradient(circle at center, black 42%, transparent 88%);
+  opacity: 0.12;
+  contain: paint;
 }
 
 .topbar {
@@ -122,13 +123,15 @@ img {
   border: 1px solid transparent;
   border-radius: 999px;
   transition: background 180ms ease, border-color 180ms ease, backdrop-filter 180ms ease;
+  backface-visibility: hidden;
+  contain: paint;
   z-index: 60;
 }
 
 .topbar--active {
-  background: rgba(7, 10, 16, 0.62);
+  background: rgba(7, 10, 16, 0.78);
   border-color: rgba(255, 255, 255, 0.08);
-  backdrop-filter: blur(18px);
+  backdrop-filter: blur(10px) saturate(1.08);
 }
 
 .topbar__brand,
@@ -3555,8 +3558,8 @@ img {
   height: 100vh;
   padding: 1rem;
   border-right: 1px solid rgba(255, 255, 255, 0.06);
-  background: rgba(7, 10, 16, 0.75);
-  backdrop-filter: blur(18px);
+  background: rgba(7, 10, 16, 0.88);
+  backdrop-filter: blur(10px) saturate(1.05);
   display: grid;
   grid-template-rows: auto 1fr auto;
   gap: 1.15rem;
@@ -3868,9 +3871,9 @@ img {
   padding: 0.85rem;
   border-radius: 24px;
   border: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(11, 16, 24, 0.96);
+  background: rgba(11, 16, 24, 0.97);
   box-shadow: 0 34px 70px rgba(0, 0, 0, 0.34);
-  backdrop-filter: blur(24px);
+  backdrop-filter: blur(12px) saturate(1.05);
 }
 
 .sidebar__profile-menu--collapsed {
@@ -3997,10 +4000,11 @@ img {
   padding: 1.6rem 1.6rem 2.6rem;
   overflow-y: auto;
   overflow-x: hidden;
-  scroll-behavior: smooth;
+  scroll-behavior: auto;
   overscroll-behavior-y: contain;
   -webkit-overflow-scrolling: touch;
   scrollbar-gutter: stable both-edges;
+  contain: paint;
 }
 
 .workspace-shell__main--generate {
@@ -5370,6 +5374,7 @@ img {
   border: 1px solid rgba(255, 255, 255, 0.06);
   color: var(--text-muted);
   flex-shrink: 0;
+  contain: paint;
 }
 
 .media-thumbnail--sm {
@@ -5421,6 +5426,7 @@ img {
     radial-gradient(circle at top, rgba(143, 216, 255, 0.08), transparent 56%),
     rgba(255, 255, 255, 0.02);
   overflow: hidden;
+  contain: paint;
 }
 
 .media-preview img {
@@ -10008,6 +10014,7 @@ img {
   overflow: hidden;
   border: 1px solid rgba(255, 255, 255, 0.08);
   background: rgba(255, 255, 255, 0.04);
+  contain: paint;
 }
 
 .analytics-table__thumb img {
@@ -10920,6 +10927,7 @@ img {
   text-align: left;
   color: inherit;
   cursor: pointer;
+  contain: paint;
 }
 
 .image-strip__item img {
@@ -12755,6 +12763,196 @@ img {
 
 .generate-chat__form-grid--tight {
   gap: 0.65rem 0.8rem;
+}
+
+.generate-chat__background-field {
+  align-content: start;
+}
+
+.generate-chat__background-field--custom {
+  grid-column: 1 / -1;
+}
+
+.generate-chat__background-shell {
+  position: relative;
+  overflow: hidden;
+  border-radius: 1.35rem;
+  border: 1px solid rgba(143, 216, 255, 0.12);
+  background:
+    radial-gradient(circle at 14% 0%, rgba(115, 240, 213, 0.1), transparent 38%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0.018)),
+    rgba(8, 13, 20, 0.74);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.045),
+    0 16px 42px rgba(2, 8, 14, 0.18);
+  transition:
+    border-color 180ms ease,
+    box-shadow 180ms ease,
+    background 180ms ease;
+}
+
+.generate-chat__background-shell:focus-within {
+  border-color: rgba(143, 216, 255, 0.34);
+  box-shadow:
+    0 0 0 4px rgba(143, 216, 255, 0.09),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    0 18px 46px rgba(2, 8, 14, 0.22);
+}
+
+.generate-chat__background-select {
+  min-height: 58px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.generate-chat__background-select:focus {
+  box-shadow: none;
+}
+
+.generate-chat__custom-background-panel {
+  display: grid;
+  gap: 0.65rem;
+  padding: 0 0.78rem 0.78rem;
+  animation: custom-background-panel-in 220ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.generate-chat__custom-background-topline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.7rem;
+  padding-top: 0.72rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+  color: rgba(200, 214, 226, 0.62);
+  font-size: 0.74rem;
+  line-height: 1.35;
+}
+
+.generate-chat__custom-background-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.38rem;
+  flex: 0 0 auto;
+  padding: 0.38rem 0.62rem;
+  border-radius: 999px;
+  border: 1px solid rgba(115, 240, 213, 0.2);
+  background:
+    linear-gradient(135deg, rgba(115, 240, 213, 0.14), rgba(143, 216, 255, 0.1)),
+    rgba(255, 255, 255, 0.035);
+  color: rgba(235, 250, 255, 0.92);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.055);
+}
+
+.generate-chat__custom-background-input {
+  width: 100%;
+  min-height: 108px;
+  resize: vertical;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 1rem;
+  padding: 0.88rem 0.95rem;
+  background:
+    radial-gradient(circle at top right, rgba(143, 216, 255, 0.075), transparent 44%),
+    rgba(3, 8, 14, 0.34);
+  color: var(--text);
+  line-height: 1.55;
+  outline: none;
+  transition:
+    border-color 180ms ease,
+    background 180ms ease,
+    box-shadow 180ms ease;
+}
+
+.generate-chat__custom-background-input::placeholder {
+  color: rgba(200, 214, 226, 0.42);
+}
+
+.generate-chat__custom-background-input:focus {
+  border-color: rgba(115, 240, 213, 0.26);
+  background:
+    radial-gradient(circle at top right, rgba(115, 240, 213, 0.09), transparent 44%),
+    rgba(3, 8, 14, 0.44);
+  box-shadow: 0 0 0 3px rgba(115, 240, 213, 0.08);
+}
+
+.generate-chat__custom-background-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.generate-chat__custom-background-apply {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.42rem;
+  min-height: 36px;
+  padding: 0 0.82rem;
+  border-radius: 999px;
+  border: 1px solid rgba(143, 216, 255, 0.18);
+  background:
+    linear-gradient(135deg, rgba(143, 216, 255, 0.14), rgba(115, 240, 213, 0.12)),
+    rgba(255, 255, 255, 0.035);
+  color: rgba(242, 250, 255, 0.94);
+  font-size: 0.84rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    0 10px 24px rgba(2, 8, 14, 0.16);
+  transition:
+    transform 180ms ease,
+    border-color 180ms ease,
+    background 180ms ease,
+    box-shadow 180ms ease,
+    color 180ms ease;
+}
+
+.generate-chat__custom-background-apply:hover {
+  transform: translateY(-1px);
+  border-color: rgba(115, 240, 213, 0.28);
+  background:
+    linear-gradient(135deg, rgba(143, 216, 255, 0.18), rgba(115, 240, 213, 0.16)),
+    rgba(255, 255, 255, 0.05);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 14px 28px rgba(2, 8, 14, 0.2);
+}
+
+.generate-chat__custom-background-apply:focus-visible {
+  outline: none;
+  border-color: rgba(115, 240, 213, 0.34);
+  box-shadow:
+    0 0 0 4px rgba(115, 240, 213, 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+.generate-chat__custom-background-apply--done {
+  border-color: rgba(115, 240, 213, 0.24);
+  background:
+    linear-gradient(135deg, rgba(115, 240, 213, 0.18), rgba(143, 216, 255, 0.14)),
+    rgba(255, 255, 255, 0.04);
+  color: rgba(235, 252, 247, 0.96);
+}
+
+.generate-chat__custom-background-hint {
+  color: rgba(200, 214, 226, 0.62);
+  font-size: 0.76rem;
+  line-height: 1.4;
+}
+
+@keyframes custom-background-panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.985);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
 }
 
 .generate-chat__textarea--compact {

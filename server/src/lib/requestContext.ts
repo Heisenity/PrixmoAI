@@ -2,6 +2,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import type { PlanType } from '../types';
 
 type RequestContext = {
+  requestId: string | null;
   authenticatedUserId: string | null;
   isSuperAdminRequest: boolean;
   superAdminTestPlan: PlanType | null;
@@ -40,3 +41,7 @@ export const isCurrentRequestSuperAdmin = () =>
 
 export const getCurrentRequestSuperAdminTestPlan = () =>
   getCurrentRequestContext()?.superAdminTestPlan ?? null;
+
+export const getCurrentRequestContextSnapshot = () => getCurrentRequestContext();
+
+export { getCurrentRequestContext };

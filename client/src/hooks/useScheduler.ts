@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { apiRequest } from '../lib/axios';
+import { ApiRequestError, apiRequest } from '../lib/axios';
 import {
   isBrowserCacheFresh,
   readBrowserCache,
@@ -84,6 +84,16 @@ const readSchedulerCache = (userId: string) =>
 
 const writeSchedulerCache = (userId: string, value: SchedulerCache) => {
   writeBrowserCache(buildSchedulerCacheKey(userId), value);
+};
+
+const isStaleSchedulerError = (error: unknown) => {
+  if (error instanceof ApiRequestError && error.status === 404) {
+    return true;
+  }
+
+  const message = error instanceof Error ? error.message : String(error);
+
+  return /not found|no longer available|expired|removed|deleted/i.test(message);
 };
 
 const META_OAUTH_POPUP_MESSAGE_TYPE = 'prixmoai:meta-oauth';
@@ -377,6 +387,38 @@ export const useScheduler = (options: UseSchedulerOptions = {}) => {
     [token, user?.id]
   );
 
+  const recoverFromStaleSchedulerState = useCallback(async () => {
+    if (!user?.id) {
+      return;
+    }
+
+    writeSchedulerCache(user.id, {
+      accounts: null,
+      posts: null,
+      items: null,
+    });
+    setAccounts(null);
+    setPosts(null);
+    setItems(null);
+    await refresh({ silent: true, force: true });
+  }, [refresh, user?.id]);
+
+  const handleSchedulerMutationError = useCallback(
+    async (mutationError: unknown, fallbackMessage: string) => {
+      const message =
+        mutationError instanceof Error ? mutationError.message : fallbackMessage;
+
+      if (isStaleSchedulerError(mutationError)) {
+        await recoverFromStaleSchedulerState();
+      }
+
+      setError(message);
+      setSchedulerStatus('error');
+      return message;
+    },
+    [recoverFromStaleSchedulerState]
+  );
+
   useEffect(() => {
     void refresh();
   }, [token, refresh]);
@@ -419,10 +461,10 @@ export const useScheduler = (options: UseSchedulerOptions = {}) => {
       await refresh({ silent: true, force: true });
       return created;
     } catch (mutationError) {
-      const message =
-        mutationError instanceof Error
-          ? mutationError.message
-          : 'Failed to connect social account';
+      const message = await handleSchedulerMutationError(
+        mutationError,
+        'Failed to connect social account'
+      );
       const upgradePrompt = getUpgradePromptFromMessage(message);
       const nextMessage = upgradePrompt?.message ?? message;
 
@@ -431,7 +473,6 @@ export const useScheduler = (options: UseSchedulerOptions = {}) => {
       }
 
       setError(nextMessage);
-      setSchedulerStatus('error');
       throw new Error(nextMessage);
     } finally {
       setIsMutating(false);
@@ -477,10 +518,10 @@ export const useScheduler = (options: UseSchedulerOptions = {}) => {
       if (popup && !popup.closed) {
         popup.close();
       }
-      const message =
-        mutationError instanceof Error
-          ? mutationError.message
-          : 'Failed to start Meta verification';
+      const message = await handleSchedulerMutationError(
+        mutationError,
+        'Failed to start Meta verification'
+      );
       const upgradePrompt = getUpgradePromptFromMessage(message);
       const nextMessage = upgradePrompt?.message ?? message;
 
@@ -489,7 +530,6 @@ export const useScheduler = (options: UseSchedulerOptions = {}) => {
       }
 
       setError(nextMessage);
-      setSchedulerStatus('error');
       throw new Error(nextMessage);
     } finally {
       setIsMutating(false);
@@ -511,12 +551,10 @@ export const useScheduler = (options: UseSchedulerOptions = {}) => {
         }
       );
     } catch (pendingError) {
-      const message =
-        pendingError instanceof Error
-          ? pendingError.message
-          : 'Failed to load Facebook Pages';
-      setError(message);
-      setSchedulerStatus('error');
+      const message = await handleSchedulerMutationError(
+        pendingError,
+        'Failed to load Facebook Pages'
+      );
       throw new Error(message);
     }
   };
@@ -547,12 +585,10 @@ export const useScheduler = (options: UseSchedulerOptions = {}) => {
       await refresh({ silent: true, force: true });
       return result;
     } catch (finalizeError) {
-      const message =
-        finalizeError instanceof Error
-          ? finalizeError.message
-          : 'Failed to connect the selected Facebook Pages';
-      setError(message);
-      setSchedulerStatus('error');
+      const message = await handleSchedulerMutationError(
+        finalizeError,
+        'Failed to connect the selected Facebook Pages'
+      );
       throw new Error(message);
     } finally {
       setIsMutating(false);
@@ -588,10 +624,10 @@ export const useScheduler = (options: UseSchedulerOptions = {}) => {
       await refresh({ silent: true, force: true });
       return created;
     } catch (mutationError) {
-      const message =
-        mutationError instanceof Error ? mutationError.message : 'Failed to create scheduled post';
-      setError(message);
-      setSchedulerStatus('error');
+      const message = await handleSchedulerMutationError(
+        mutationError,
+        'Failed to create scheduled post'
+      );
       throw new Error(message);
     } finally {
       setIsMutating(false);
@@ -613,12 +649,10 @@ export const useScheduler = (options: UseSchedulerOptions = {}) => {
         body: input,
       });
     } catch (mutationError) {
-      const message =
-        mutationError instanceof Error
-          ? mutationError.message
-          : 'Failed to create media asset';
-      setError(message);
-      setSchedulerStatus('error');
+      const message = await handleSchedulerMutationError(
+        mutationError,
+        'Failed to create media asset'
+      );
       throw new Error(message);
     } finally {
       setIsMutating(false);
@@ -642,12 +676,10 @@ export const useScheduler = (options: UseSchedulerOptions = {}) => {
       await refresh({ silent: true, force: true });
       return created;
     } catch (mutationError) {
-      const message =
-        mutationError instanceof Error
-          ? mutationError.message
-          : 'Failed to create schedule batch';
-      setError(message);
-      setSchedulerStatus('error');
+      const message = await handleSchedulerMutationError(
+        mutationError,
+        'Failed to create schedule batch'
+      );
       throw new Error(message);
     } finally {
       setIsMutating(false);
@@ -687,12 +719,10 @@ export const useScheduler = (options: UseSchedulerOptions = {}) => {
       });
       await refresh({ silent: true, force: true });
     } catch (mutationError) {
-      const message =
-        mutationError instanceof Error
-          ? mutationError.message
-          : 'Failed to delete draft';
-      setError(message);
-      setSchedulerStatus('error');
+      const message = await handleSchedulerMutationError(
+        mutationError,
+        'Failed to delete draft'
+      );
       throw new Error(message);
     } finally {
       setIsMutating(false);
@@ -759,12 +789,10 @@ export const useScheduler = (options: UseSchedulerOptions = {}) => {
       await refresh({ silent: true, force: true });
       return created;
     } catch (mutationError) {
-      const message =
-        mutationError instanceof Error
-          ? mutationError.message
-          : 'Failed to add scheduled items';
-      setError(message);
-      setSchedulerStatus('error');
+      const message = await handleSchedulerMutationError(
+        mutationError,
+        'Failed to add scheduled items'
+      );
       throw new Error(message);
     } finally {
       setIsMutating(false);
@@ -790,12 +818,10 @@ export const useScheduler = (options: UseSchedulerOptions = {}) => {
       await refresh({ silent: true, force: true });
       return result;
     } catch (mutationError) {
-      const message =
-        mutationError instanceof Error
-          ? mutationError.message
-          : 'Failed to submit schedule batch';
-      setError(message);
-      setSchedulerStatus('error');
+      const message = await handleSchedulerMutationError(
+        mutationError,
+        'Failed to submit schedule batch'
+      );
       throw new Error(message);
     } finally {
       setIsMutating(false);
@@ -819,12 +845,10 @@ export const useScheduler = (options: UseSchedulerOptions = {}) => {
       await refresh({ silent: true, force: true });
       return updated;
     } catch (mutationError) {
-      const message =
-        mutationError instanceof Error
-          ? mutationError.message
-          : 'Failed to update scheduled item';
-      setError(message);
-      setSchedulerStatus('error');
+      const message = await handleSchedulerMutationError(
+        mutationError,
+        'Failed to update scheduled item'
+      );
       throw new Error(message);
     } finally {
       setIsMutating(false);
@@ -847,12 +871,10 @@ export const useScheduler = (options: UseSchedulerOptions = {}) => {
       await refresh({ silent: true, force: true });
       return updated;
     } catch (mutationError) {
-      const message =
-        mutationError instanceof Error
-          ? mutationError.message
-          : 'Failed to cancel scheduled item';
-      setError(message);
-      setSchedulerStatus('error');
+      const message = await handleSchedulerMutationError(
+        mutationError,
+        'Failed to cancel scheduled item'
+      );
       throw new Error(message);
     } finally {
       setIsMutating(false);
@@ -875,10 +897,10 @@ export const useScheduler = (options: UseSchedulerOptions = {}) => {
       });
       await refresh({ silent: true, force: true });
     } catch (mutationError) {
-      const message =
-        mutationError instanceof Error ? mutationError.message : 'Failed to update post status';
-      setError(message);
-      setSchedulerStatus('error');
+      const message = await handleSchedulerMutationError(
+        mutationError,
+        'Failed to update post status'
+      );
       throw new Error(message);
     } finally {
       setIsMutating(false);
@@ -919,10 +941,10 @@ export const useScheduler = (options: UseSchedulerOptions = {}) => {
       await refresh({ silent: true, force: true });
       return updated;
     } catch (mutationError) {
-      const message =
-        mutationError instanceof Error ? mutationError.message : 'Failed to update scheduled post';
-      setError(message);
-      setSchedulerStatus('error');
+      const message = await handleSchedulerMutationError(
+        mutationError,
+        'Failed to update scheduled post'
+      );
       throw new Error(message);
     } finally {
       setIsMutating(false);
@@ -945,10 +967,10 @@ export const useScheduler = (options: UseSchedulerOptions = {}) => {
       await refresh({ silent: true, force: true });
       return updated;
     } catch (mutationError) {
-      const message =
-        mutationError instanceof Error ? mutationError.message : 'Failed to cancel scheduled post';
-      setError(message);
-      setSchedulerStatus('error');
+      const message = await handleSchedulerMutationError(
+        mutationError,
+        'Failed to cancel scheduled post'
+      );
       throw new Error(message);
     } finally {
       setIsMutating(false);
@@ -970,12 +992,10 @@ export const useScheduler = (options: UseSchedulerOptions = {}) => {
       });
       await refresh({ silent: true, force: true });
     } catch (mutationError) {
-      const message =
-        mutationError instanceof Error
-          ? mutationError.message
-          : 'Failed to disconnect social account';
-      setError(message);
-      setSchedulerStatus('error');
+      const message = await handleSchedulerMutationError(
+        mutationError,
+        'Failed to disconnect social account'
+      );
       throw new Error(message);
     } finally {
       setIsMutating(false);

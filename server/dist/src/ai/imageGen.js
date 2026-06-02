@@ -117,6 +117,55 @@ const buildTrendDirection = (trendIntelligence) => {
         ...trendIntelligence.insights.slice(0, 3).map((insight, index) => `- Visual signal ${index + 1}: ${insight.headline} | ${insight.explanation}`),
     ];
 };
+const BACKGROUND_STYLE_DIRECTIONS = {
+    'clean studio background': 'seamless clean studio backdrop, softbox lighting, controlled shadows, uncluttered negative space, premium commercial product photography',
+    'soft luxury shadow set': 'soft luxury shadow set with layered diffused shadows, warm high-end lighting, subtle dimensional depth, elegant premium surface treatment',
+    'editorial marble surface': 'editorial marble surface with natural veining, reflective highlights, magazine-quality styling, polished luxury still-life composition',
+    'muted gradient backdrop': 'muted gradient backdrop with smooth tonal falloff, soft atmospheric depth, refined modern color transitions, no harsh banding',
+    'minimal industrial texture': 'minimal industrial texture with refined concrete or brushed metal, clean geometry, restrained grit, premium utilitarian finish',
+    'premium showroom interior': 'premium showroom interior with curated display lighting, expensive materials, clean spatial depth, high-end retail presentation',
+    'warm lifestyle room': 'warm lifestyle room with believable natural light, tasteful decor, soft lived-in atmosphere, product placed naturally in context',
+    'luxury boutique display': 'luxury boutique display with elevated shelving, soft accent lighting, refined retail styling, elegant premium merchandising',
+    'urban street backdrop': 'urban street backdrop with controlled cinematic depth, believable street texture, tasteful blur, no distracting signage or text',
+    'nature daylight setting': 'nature daylight setting with soft natural light, organic textures, gentle depth of field, fresh outdoor premium mood',
+    'festive indian decor': 'festive Indian decor with tasteful warm lights, premium traditional accents, rich but uncluttered styling, celebratory atmosphere',
+    'modern cafe table scene': 'modern cafe table scene with warm ambient light, clean tabletop composition, lifestyle realism, tasteful depth in the background',
+    'dark cinematic spotlight': 'dark cinematic spotlight with controlled rim light, moody graphite shadows, dramatic subject separation, premium filmic contrast',
+    'pastel paper sweep': 'pastel paper sweep with smooth curved backdrop, soft studio lighting, gentle shadows, clean commercial product presentation',
+    'wooden tabletop studio': 'wooden tabletop studio with refined grain texture, warm directional light, realistic contact shadows, premium handcrafted feel',
+    'concrete wall and floor': 'concrete wall and floor with modern matte texture, clean architectural lines, soft shadow gradient, premium minimalist realism',
+    'high-end retail shelf': 'high-end retail shelf with neat product staging, soft shelf lighting, premium store ambience, clean background hierarchy',
+    'minimal tech gradient': 'minimal tech gradient with sleek blue-gray lighting, subtle futuristic depth, clean reflections, premium AI SaaS visual language',
+    'vintage film backdrop': 'vintage film backdrop with cinematic texture, tasteful retro color grading, subtle grain, old-studio atmosphere without visible text',
+    'custom background': 'custom background directed by the user, interpreted literally first, then polished into a coherent premium scene',
+};
+const normalizePromptText = (value) => typeof value === 'string' ? value.replace(/\s+/g, ' ').trim() : '';
+const buildAdvancedBackgroundDirection = (input) => {
+    const selectedStyle = normalizePromptText(input.backgroundStyle);
+    const customBackground = normalizePromptText(input.backgroundPrompt);
+    const presetDirection = BACKGROUND_STYLE_DIRECTIONS[selectedStyle.toLowerCase()] ?? selectedStyle;
+    if (customBackground) {
+        return [
+            `Background style preset: ${presetDirection || 'premium, clean, social-ready image background'}.`,
+            `User custom background request: "${customBackground}". Treat this as the highest-priority background instruction.`,
+            'Preserve every named place, era, material, object, color, mood, weather, culture, and visual reference from the custom background request.',
+            'If the custom background is vague, expand it into a specific professional scene with clear surface material, spatial depth, lighting direction, atmosphere, and color harmony.',
+            'If the preset and custom background conflict, follow the custom background and use the preset only for polish, lighting quality, and production value.',
+            'Keep the background supportive: it should make the product or subject look better without stealing focus or adding irrelevant props.',
+        ].join(' ');
+    }
+    if (presetDirection) {
+        return [
+            `Background style: ${presetDirection}.`,
+            'Make the background feel intentional and production-ready, with clear material choice, lighting direction, depth, and realistic contact shadows.',
+            'Keep the scene clean and commercially useful for social media.',
+        ].join(' ');
+    }
+    return [
+        'Background style: clean premium studio setting with modern lighting and social-ready polish.',
+        'Choose a background that fits the product category, brand tone, and target audience without inventing unrelated props.',
+    ].join(' ');
+};
 const buildImagePrompt = (brandProfile, input, trendIntelligence) => {
     const parts = [
         `Create a polished, platform-ready marketing visual for ${input.productName}.`,
@@ -132,9 +181,7 @@ const buildImagePrompt = (brandProfile, input, trendIntelligence) => {
         input.sourceImageUrl
             ? 'A source image is provided. Preserve the real subject identity, recognisable details, and key visual cues while improving composition, lighting, background, and polish.'
             : 'No source image is provided. Create a fresh hero composition centered on the subject described in the brief.',
-        input.backgroundStyle
-            ? `Background style: ${input.backgroundStyle}.`
-            : 'Background style: clean studio lighting with modern premium aesthetics.',
+        buildAdvancedBackgroundDirection(input),
         'Define a clear scene, lighting style, camera angle, mood, color palette, and product focus based on the brief.',
         'Make those visual decisions feel on-brand, audience-aware, and appropriate for the inferred business domain.',
         'Do not assume fashion, ecommerce, or any other niche unless the product input or brand profile supports it.',

@@ -11,6 +11,7 @@ const queueNames_1 = require("../queues/queueNames");
 const workerOptions_1 = require("../queues/workerOptions");
 const jobRuntime_service_1 = require("./jobRuntime.service");
 const trendIntelligence_service_1 = require("./trendIntelligence.service");
+const observability_1 = require("../lib/observability");
 let contentQueue = null;
 let contentWorker = null;
 let contentWorkerIdleTimer = null;
@@ -92,6 +93,11 @@ const startContentGenerationWorker = () => {
                 if (error instanceof requestCancellation_1.RequestCancelledError) {
                     throw error;
                 }
+                (0, observability_1.logFailure)('content_trend_research_failed', error, {
+                    jobId: job.id,
+                    userId: job.data.userId,
+                    queue: queueNames_1.QUEUE_NAMES.contentGenerate,
+                }, 'warn');
                 console.warn('[content-generation] live trend research failed; continuing without it.', {
                     jobId: job.id,
                     userId: job.data.userId,
@@ -123,6 +129,15 @@ const startContentGenerationWorker = () => {
                 throw error;
             }
             await (0, jobRuntime_service_1.setJobFailed)(job.id, error instanceof Error ? error.message : 'Content generation failed.');
+            (0, observability_1.logFailure)('content_generation_job_failed', error, {
+                jobId: job.id,
+                userId: job.data.userId,
+                queue: queueNames_1.QUEUE_NAMES.contentGenerate,
+                provider: 'content-generation',
+            });
+            (0, observability_1.recordFailureSpikeSignal)('content_generation_job_failed', {
+                queue: queueNames_1.QUEUE_NAMES.contentGenerate,
+            });
             throw error;
         }
         finally {
@@ -136,6 +151,13 @@ const startContentGenerationWorker = () => {
     });
     contentWorker.on('active', clearContentWorkerIdleTimer);
     contentWorker.on('drained', scheduleContentWorkerIdleShutdown);
+    contentWorker.on('failed', (job, error) => {
+        (0, observability_1.logFailure)('content_generation_worker_failed', error, {
+            jobId: job?.id ?? null,
+            userId: job?.data.userId ?? null,
+            queue: queueNames_1.QUEUE_NAMES.contentGenerate,
+        });
+    });
 };
 exports.startContentGenerationWorker = startContentGenerationWorker;
 const enqueueContentGenerationJob = async (data, signal, onQueued) => {
@@ -150,9 +172,10 @@ const enqueueContentGenerationJob = async (data, signal, onQueued) => {
             jobId: `content-${(0, crypto_1.randomUUID)()}`,
             ...getContentJobOptions(),
         });
-        console.info('[content-generation] job queued', {
+        (0, observability_1.logOperationalEvent)('content_generation_job_queued', {
             jobId: job.id,
             userId: data.userId,
+            queue: queueNames_1.QUEUE_NAMES.contentGenerate,
             productName: data.input.productName,
             includeReelScript: data.includeReelScript,
             brandMemoryCount: data.brandMemories.length,
@@ -160,9 +183,10 @@ const enqueueContentGenerationJob = async (data, signal, onQueued) => {
         await (0, jobRuntime_service_1.setJobQueued)(job.id, queueNames_1.QUEUE_NAMES.contentGenerate, 'Queued for generation.', data.userId);
         await onQueued?.(job.id);
         const result = await (0, jobRuntime_service_1.waitForQueueJobResult)(job, queueEvents, signal);
-        console.info('[content-generation] job completed', {
+        (0, observability_1.logOperationalEvent)('content_generation_job_completed', {
             jobId: job.id,
             userId: data.userId,
+            queue: queueNames_1.QUEUE_NAMES.contentGenerate,
             provider: result.provider,
             hasReelScript: Boolean(result.contentPack.reelScript.hook.trim()) &&
                 Boolean(result.contentPack.reelScript.body.trim()) &&

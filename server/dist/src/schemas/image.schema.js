@@ -13,6 +13,7 @@ exports.generateImageSchema = zod_1.z.object({
     productName: zod_1.z.string().trim().min(1, 'Product name is required'),
     productDescription: optionalTrimmedString(),
     backgroundStyle: optionalTrimmedString(),
+    backgroundPrompt: optionalTrimmedString(),
     prompt: optionalTrimmedString(),
     negativePrompt: optionalTrimmedString(),
     width: zod_1.z.number().int().min(256).max(1024).optional(),

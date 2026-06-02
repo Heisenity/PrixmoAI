@@ -33,6 +33,22 @@ type ApiRequestOptions = {
 };
 
 const inFlightGetRequests = new Map<string, Promise<unknown>>();
+const SAFE_GET_RETRY_STATUSES = new Set([408, 429, 502, 503, 504]);
+const GET_RETRY_ATTEMPTS = 2;
+
+const wait = (ms: number) =>
+  new Promise<void>((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
+
+const isRetryableGetError = (error: unknown) => {
+  if (error instanceof ApiRequestError) {
+    return SAFE_GET_RETRY_STATUSES.has(error.status);
+  }
+
+  const message = error instanceof Error ? error.message : String(error);
+  return /unable to reach|failed to fetch|network|load failed/i.test(message);
+};
 
 const resolveRequestHeaders = (
   options: ApiRequestOptions
@@ -161,6 +177,28 @@ const executeApiRequest = async <T>(
   return payload.data;
 };
 
+const executeApiRequestWithRetry = async <T>(
+  url: string,
+  options: ApiRequestOptions,
+  method: NonNullable<ApiRequestOptions['method']>
+) => {
+  const attempts = method === 'GET' && !options.signal ? GET_RETRY_ATTEMPTS : 1;
+
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await executeApiRequest<T>(url, options, method);
+    } catch (error) {
+      if (attempt >= attempts || !isRetryableGetError(error)) {
+        throw error;
+      }
+
+      await wait(250 * attempt);
+    }
+  }
+
+  return await executeApiRequest<T>(url, options, method);
+};
+
 export const apiRequest = async <T>(
   path: string,
   options: ApiRequestOptions = {}
@@ -169,7 +207,7 @@ export const apiRequest = async <T>(
   const url = `${API_BASE_URL}${path}${toSearchParams(options.query)}`;
 
   if (method !== 'GET' || options.signal) {
-    return executeApiRequest<T>(url, options, method);
+    return executeApiRequestWithRetry<T>(url, options, method);
   }
 
   const dedupeKey = JSON.stringify({
@@ -185,7 +223,7 @@ export const apiRequest = async <T>(
     return existingRequest;
   }
 
-  const nextRequest = executeApiRequest<T>(url, options, method).finally(() => {
+  const nextRequest = executeApiRequestWithRetry<T>(url, options, method).finally(() => {
     inFlightGetRequests.delete(dedupeKey);
   });
 

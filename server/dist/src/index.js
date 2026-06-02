@@ -4,6 +4,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = __importDefault(require("express"));
+const crypto_1 = require("crypto");
 const helmet_1 = __importDefault(require("helmet"));
 const cors_1 = __importDefault(require("cors"));
 const errorHandler_middleware_1 = require("./middleware/errorHandler.middleware");
@@ -32,11 +33,17 @@ const PORT = constants_1.APP_PORT;
 // 1. Security Headers
 app.use((0, helmet_1.default)());
 app.use((0, cors_1.default)());
-app.use((_, __, next) => (0, requestContext_1.runWithRequestContext)({
-    authenticatedUserId: null,
-    isSuperAdminRequest: false,
-    superAdminTestPlan: null,
-}, () => next()));
+app.use((req, res, next) => {
+    const incomingRequestId = req.header('x-request-id')?.trim();
+    const requestId = incomingRequestId || (0, crypto_1.randomUUID)();
+    res.setHeader('X-Request-Id', requestId);
+    (0, requestContext_1.runWithRequestContext)({
+        requestId,
+        authenticatedUserId: null,
+        isSuperAdminRequest: false,
+        superAdminTestPlan: null,
+    }, () => next());
+});
 app.post('/api/billing/webhook', express_1.default.raw({ type: 'application/json' }), billing_controller_1.handleRazorpayWebhook);
 app.use(express_1.default.json({ limit: '80mb' }));
 app.use(express_1.default.urlencoded({ extended: true, limit: '80mb' }));

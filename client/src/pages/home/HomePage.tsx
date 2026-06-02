@@ -1,7 +1,7 @@
 import {
   motion,
+  useReducedMotion,
   useScroll,
-  useSpring,
   useTransform,
 } from 'framer-motion';
 import {
@@ -300,34 +300,15 @@ const ScrollScrub = ({
   children,
   className,
 }: PropsWithChildren<{ className?: string }>) => {
-  const ref = useRef<HTMLDivElement | null>(null);
-  const { scrollYProgress } = useScroll({
-    target: ref,
-    offset: ['start 95%', 'end 35%'],
-  });
-
-  const smoothProgress = useSpring(scrollYProgress, {
-    stiffness: 45,
-    damping: 32,
-    mass: 1.4,
-  });
-
-  const opacity = useTransform(smoothProgress, [0, 0.25, 0.75, 1], [0, 1, 1, 0.98]);
-  const scale = useTransform(smoothProgress, [0, 1], [0.98, 1]);
-  const y = useTransform(smoothProgress, [0, 1], [24, 0]);
-  const rotateX = useTransform(smoothProgress, [0, 1], [2, 0]);
+  const prefersReducedMotion = useReducedMotion();
 
   return (
     <motion.div
-      ref={ref}
       className={cn('scrub-card-shell', className)}
-      style={{
-        opacity,
-        scale,
-        y,
-        rotateX,
-        transformPerspective: 1000,
-      }}
+      initial={prefersReducedMotion ? false : { opacity: 0, y: 12, scale: 0.992 }}
+      whileInView={prefersReducedMotion ? undefined : { opacity: 1, y: 0, scale: 1 }}
+      viewport={{ once: true, amount: 0.1 }}
+      transition={{ duration: 0.34, ease: [0.22, 1, 0.36, 1] }}
     >
       {children}
     </motion.div>
@@ -362,6 +343,7 @@ export const HomePage = () => {
   const { session, signInWithOAuth, isConfigured } = useAuth();
   const [authPending, setAuthPending] = useState<OAuthProvider | null>(null);
   const [authError, setAuthError] = useState<string | null>(null);
+  const prefersReducedMotion = useReducedMotion();
 
   const { scrollYProgress } = useScroll({
     target: heroRef,
@@ -369,72 +351,49 @@ export const HomePage = () => {
   });
   const { scrollYProgress: showcaseScrollYProgress } = useScroll({
     target: showcaseRef,
-    offset: ['start 92%', 'end 8%'],
+    offset: ['start 96%', 'end 14%'],
   });
 
   const orbitRotate = useTransform(scrollYProgress, [0, 1], [0, 160]);
   const orbitScale = useTransform(scrollYProgress, [0, 0.8, 1], [1, 1.05, 0.96]);
   const heroVoidY = useTransform(scrollYProgress, [0, 1], ['0%', '6%']);
-  const showcaseScroll = useSpring(showcaseScrollYProgress, {
-    stiffness: 40,
-    damping: 28,
-    mass: 1.2,
-  });
-  const showcaseY = useTransform(showcaseScroll, [0, 1], [64, -34]);
-  const showcaseShellScale = useTransform(showcaseScroll, [0, 1], [0.968, 1.02]);
-  const showcaseStageScale = useTransform(showcaseScroll, [0, 1], [0.92, 1.04]);
-  const showcaseStageY = useTransform(showcaseScroll, [0, 1], [52, -28]);
+  const showcaseScroll = showcaseScrollYProgress;
+  const showcaseY = useTransform(showcaseScroll, [0, 1], [22, -10]);
+  const showcaseShellScale = useTransform(showcaseScroll, [0, 1], [0.992, 1.008]);
+  const showcaseStageScale = useTransform(showcaseScroll, [0, 1], [0.985, 1.015]);
+  const showcaseStageY = useTransform(showcaseScroll, [0, 1], [18, -10]);
 
-  const showcaseSceneRawOpacity = useTransform(showcaseScroll, [0, 0.12, 0.34, 0.54], [0.28, 1, 0.42, 0.08]);
-  const showcaseSceneRawY = useTransform(showcaseScroll, [0, 1], [76, -18]);
-  const showcaseSceneRawScale = useTransform(showcaseScroll, [0, 1], [1.14, 1.02]);
+  const showcaseSceneRawOpacity = useTransform(showcaseScroll, [0, 0.14, 0.34, 0.54], [0.22, 0.88, 0.4, 0.08]);
   const showcaseSceneTransformOpacity = useTransform(
     showcaseScroll,
     [0.18, 0.4, 0.62, 0.82],
-    [0.04, 0.96, 0.5, 0.12]
+    [0.02, 0.9, 0.42, 0.08]
   );
-  const showcaseSceneTransformY = useTransform(showcaseScroll, [0, 1], [56, -28]);
-  const showcaseSceneTransformScale = useTransform(showcaseScroll, [0, 1], [1.08, 1.02]);
-  const showcaseSceneStudioOpacity = useTransform(showcaseScroll, [0.5, 0.76, 1], [0.04, 0.84, 1]);
-  const showcaseSceneStudioY = useTransform(showcaseScroll, [0, 1], [82, -34]);
-  const showcaseSceneStudioScale = useTransform(showcaseScroll, [0, 1], [1.12, 1.04]);
+  const showcaseSceneStudioOpacity = useTransform(showcaseScroll, [0.52, 0.76, 1], [0.02, 0.76, 0.96]);
 
-  const showcaseRawOpacity = useTransform(showcaseScroll, [0, 0.3, 0.58, 1], [0.86, 0.74, 0.24, 0.08]);
-  const showcaseRawY = useTransform(showcaseScroll, [0, 1], [48, -22]);
-  const showcaseRawScale = useTransform(showcaseScroll, [0, 1], [0.94, 1.04]);
-  const showcaseStudioOpacity = useTransform(showcaseScroll, [0.24, 0.56, 1], [0.08, 0.54, 0.96]);
-  const showcaseStudioY = useTransform(showcaseScroll, [0, 1], [72, -28]);
-  const showcaseStudioScale = useTransform(showcaseScroll, [0, 1], [0.9, 1.1]);
-  const showcaseFogOpacity = useTransform(showcaseScroll, [0, 0.38, 0.76, 1], [0.18, 0.42, 0.36, 0.24]);
-  const showcaseFogY = useTransform(showcaseScroll, [0, 1], [34, -46]);
+  const showcaseRawOpacity = useTransform(showcaseScroll, [0, 0.3, 0.58, 1], [0.72, 0.66, 0.22, 0.06]);
+  const showcaseStudioOpacity = useTransform(showcaseScroll, [0.26, 0.56, 1], [0.04, 0.48, 0.84]);
+  const showcaseFogOpacity = useTransform(showcaseScroll, [0, 0.38, 0.76, 1], [0.12, 0.28, 0.24, 0.16]);
 
-  const showcaseInputSpotlightOpacity = useTransform(showcaseScroll, [0, 0.18, 0.46, 1], [0.32, 0.74, 0.22, 0.12]);
-  const showcaseInputSpotlightY = useTransform(showcaseScroll, [0, 1], [22, -18]);
-  const showcaseInputSpotlightScale = useTransform(showcaseScroll, [0, 1], [0.9, 1.04]);
+  const showcaseInputSpotlightOpacity = useTransform(showcaseScroll, [0, 0.18, 0.46, 1], [0.24, 0.52, 0.18, 0.08]);
   const showcaseTransferSpotlightOpacity = useTransform(
     showcaseScroll,
     [0.18, 0.42, 0.7, 1],
-    [0.08, 0.92, 0.4, 0.18]
+    [0.04, 0.64, 0.28, 0.1]
   );
-  const showcaseTransferSpotlightY = useTransform(showcaseScroll, [0, 1], [30, -24]);
-  const showcaseTransferSpotlightScale = useTransform(showcaseScroll, [0, 1], [0.88, 1.08]);
-  const showcaseOutputSpotlightOpacity = useTransform(showcaseScroll, [0.34, 0.72, 1], [0.08, 0.82, 1]);
-  const showcaseOutputSpotlightY = useTransform(showcaseScroll, [0, 1], [36, -28]);
-  const showcaseOutputSpotlightScale = useTransform(showcaseScroll, [0, 1], [0.9, 1.1]);
+  const showcaseOutputSpotlightOpacity = useTransform(showcaseScroll, [0.34, 0.72, 1], [0.04, 0.62, 0.78]);
 
-  const showcaseInputOpacity = useTransform(showcaseScroll, [0, 0.32, 0.72, 1], [1, 1, 0.76, 0.66]);
-  const showcaseInputY = useTransform(showcaseScroll, [0, 1], [48, -18]);
-  const showcaseInputScale = useTransform(showcaseScroll, [0, 1], [0.96, 1.02]);
-  const showcaseInputMediaY = useTransform(showcaseScroll, [0, 1], [30, -18]);
-  const showcaseInputMediaScale = useTransform(showcaseScroll, [0, 1], [0.95, 1.04]);
-  const showcaseTransferOpacity = useTransform(showcaseScroll, [0, 0.28, 0.5, 0.82, 1], [0.58, 0.72, 1, 0.74, 0.58]);
-  const showcaseTransferY = useTransform(showcaseScroll, [0, 1], [30, -14]);
-  const showcaseTransferScale = useTransform(showcaseScroll, [0, 1], [0.94, 1.03]);
-  const showcaseOutputOpacity = useTransform(showcaseScroll, [0, 0.4, 0.76, 1], [0.5, 0.62, 1, 1]);
-  const showcaseOutputY = useTransform(showcaseScroll, [0, 1], [56, -22]);
-  const showcaseOutputScale = useTransform(showcaseScroll, [0, 1], [0.95, 1.05]);
-  const showcaseOutputMediaY = useTransform(showcaseScroll, [0, 1], [34, -24]);
-  const showcaseOutputMediaScale = useTransform(showcaseScroll, [0, 1], [0.96, 1.07]);
+  const showcaseInputOpacity = useTransform(showcaseScroll, [0, 0.32, 0.72, 1], [1, 1, 0.8, 0.7]);
+  const showcaseInputY = useTransform(showcaseScroll, [0, 1], [16, -8]);
+  const showcaseInputScale = useTransform(showcaseScroll, [0, 1], [0.988, 1.01]);
+  const showcaseInputMediaScale = useTransform(showcaseScroll, [0, 1], [0.99, 1.015]);
+  const showcaseTransferOpacity = useTransform(showcaseScroll, [0, 0.28, 0.5, 0.82, 1], [0.62, 0.76, 0.96, 0.78, 0.62]);
+  const showcaseTransferY = useTransform(showcaseScroll, [0, 1], [12, -8]);
+  const showcaseTransferScale = useTransform(showcaseScroll, [0, 1], [0.99, 1.012]);
+  const showcaseOutputOpacity = useTransform(showcaseScroll, [0, 0.4, 0.76, 1], [0.54, 0.66, 0.96, 0.98]);
+  const showcaseOutputY = useTransform(showcaseScroll, [0, 1], [18, -10]);
+  const showcaseOutputScale = useTransform(showcaseScroll, [0, 1], [0.988, 1.015]);
+  const showcaseOutputMediaScale = useTransform(showcaseScroll, [0, 1], [0.99, 1.02]);
 
   const handleOAuth = async (provider: OAuthProvider) => {
     if (!isConfigured) {
@@ -482,12 +441,12 @@ export const HomePage = () => {
           </motion.div>
           <motion.span
             className="blackhole__node-particle blackhole__node-particle--hero-one"
-            animate={{ rotate: 360 }}
+            animate={prefersReducedMotion ? undefined : { rotate: 360 }}
             transition={{ duration: 3.8, ease: 'linear', repeat: Number.POSITIVE_INFINITY }}
           />
           <motion.span
             className="blackhole__node-particle blackhole__node-particle--hero-two"
-            animate={{ rotate: -360 }}
+            animate={prefersReducedMotion ? undefined : { rotate: -360 }}
             transition={{ duration: 5.1, ease: 'linear', repeat: Number.POSITIVE_INFINITY }}
           />
         </motion.div>
@@ -591,47 +550,27 @@ export const HomePage = () => {
             <Card glow className="hero-showcase">
               <motion.div
                 className="hero-showcase__scene hero-showcase__scene--raw"
-                style={{
-                  opacity: showcaseSceneRawOpacity,
-                  y: showcaseSceneRawY,
-                  scale: showcaseSceneRawScale,
-                }}
+                style={{ opacity: prefersReducedMotion ? 0.5 : showcaseSceneRawOpacity }}
               />
               <motion.div
                 className="hero-showcase__scene hero-showcase__scene--transform"
-                style={{
-                  opacity: showcaseSceneTransformOpacity,
-                  y: showcaseSceneTransformY,
-                  scale: showcaseSceneTransformScale,
-                }}
+                style={{ opacity: prefersReducedMotion ? 0.44 : showcaseSceneTransformOpacity }}
               />
               <motion.div
                 className="hero-showcase__scene hero-showcase__scene--studio"
-                style={{
-                  opacity: showcaseSceneStudioOpacity,
-                  y: showcaseSceneStudioY,
-                  scale: showcaseSceneStudioScale,
-                }}
+                style={{ opacity: prefersReducedMotion ? 0.48 : showcaseSceneStudioOpacity }}
               />
               <motion.div
                 className="hero-showcase__ambient hero-showcase__ambient--raw"
-                style={{
-                  opacity: showcaseRawOpacity,
-                  y: showcaseRawY,
-                  scale: showcaseRawScale,
-                }}
+                style={{ opacity: prefersReducedMotion ? 0.4 : showcaseRawOpacity }}
               />
               <motion.div
                 className="hero-showcase__ambient hero-showcase__ambient--studio"
-                style={{
-                  opacity: showcaseStudioOpacity,
-                  y: showcaseStudioY,
-                  scale: showcaseStudioScale,
-                }}
+                style={{ opacity: prefersReducedMotion ? 0.34 : showcaseStudioOpacity }}
               />
               <motion.div
                 className="hero-showcase__ambient hero-showcase__ambient--fog"
-                style={{ opacity: showcaseFogOpacity, y: showcaseFogY }}
+                style={{ opacity: prefersReducedMotion ? 0.18 : showcaseFogOpacity }}
               />
 
               <motion.div
@@ -640,27 +579,15 @@ export const HomePage = () => {
               >
                 <motion.div
                   className="hero-showcase__spotlight hero-showcase__spotlight--input"
-                  style={{
-                    opacity: showcaseInputSpotlightOpacity,
-                    y: showcaseInputSpotlightY,
-                    scale: showcaseInputSpotlightScale,
-                  }}
+                  style={{ opacity: prefersReducedMotion ? 0.18 : showcaseInputSpotlightOpacity }}
                 />
                 <motion.div
                   className="hero-showcase__spotlight hero-showcase__spotlight--transfer"
-                  style={{
-                    opacity: showcaseTransferSpotlightOpacity,
-                    y: showcaseTransferSpotlightY,
-                    scale: showcaseTransferSpotlightScale,
-                  }}
+                  style={{ opacity: prefersReducedMotion ? 0.26 : showcaseTransferSpotlightOpacity }}
                 />
                 <motion.div
                   className="hero-showcase__spotlight hero-showcase__spotlight--output"
-                  style={{
-                    opacity: showcaseOutputSpotlightOpacity,
-                    y: showcaseOutputSpotlightY,
-                    scale: showcaseOutputSpotlightScale,
-                  }}
+                  style={{ opacity: prefersReducedMotion ? 0.22 : showcaseOutputSpotlightOpacity }}
                 />
 
                 <motion.div
@@ -677,7 +604,7 @@ export const HomePage = () => {
                   </div>
                   <motion.div
                     className="showcase-media showcase-media--input"
-                    style={{ y: showcaseInputMediaY, scale: showcaseInputMediaScale }}
+                    style={{ scale: showcaseInputMediaScale }}
                   >
                     <img
                       src="/showcase-input-product.svg"
@@ -705,7 +632,11 @@ export const HomePage = () => {
                   <span className="showcase-transfer__eyebrow">PRIXMOAI ENGINE</span>
                   <div className="showcase-transfer__visual">
                     <div className="showcase-transfer__visual-glow" />
-                    <BlackHoleCanvas className="showcase-transfer__canvas" particleCount={22} />
+                    <BlackHoleCanvas
+                      className="showcase-transfer__canvas"
+                      particleCount={40}
+                      quality="cinematic"
+                    />
                   </div>
                 </motion.div>
 
@@ -723,7 +654,7 @@ export const HomePage = () => {
                   </div>
                   <motion.div
                     className="showcase-media showcase-media--output"
-                    style={{ y: showcaseOutputMediaY, scale: showcaseOutputMediaScale }}
+                    style={{ scale: showcaseOutputMediaScale }}
                   >
                     <img
                       src="/showcase-output-product.svg"

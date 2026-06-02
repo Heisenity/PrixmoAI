@@ -100,6 +100,21 @@ export const IMAGE_BACKGROUND_OPTIONS = [
   'Editorial marble surface',
   'Muted gradient backdrop',
   'Minimal industrial texture',
+  'Premium showroom interior',
+  'Warm lifestyle room',
+  'Luxury boutique display',
+  'Urban street backdrop',
+  'Nature daylight setting',
+  'Festive Indian decor',
+  'Modern cafe table scene',
+  'Dark cinematic spotlight',
+  'Pastel paper sweep',
+  'Wooden tabletop studio',
+  'Concrete wall and floor',
+  'High-end retail shelf',
+  'Minimal tech gradient',
+  'Vintage film backdrop',
+  'Custom background',
 ] as const;
 
 export const HOME_METRICS: HomeMetric[] = [

@@ -10,6 +10,9 @@ const queueNames_1 = require("../queues/queueNames");
 const workerOptions_1 = require("../queues/workerOptions");
 const runtimeCache_service_1 = require("./runtimeCache.service");
 const analyticsLearning_service_1 = require("./analyticsLearning.service");
+const observability_1 = require("../lib/observability");
+const meta_service_1 = require("./meta.service");
+const retry_1 = require("../lib/retry");
 const GRAPH_BASE_URL = `https://graph.facebook.com/${constants_1.META_GRAPH_VERSION}`;
 const INSTAGRAM_GRAPH_BASE_URL = 'https://graph.instagram.com';
 const SYNC_DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
@@ -198,12 +201,29 @@ const fetchGraphJson = async (baseUrl, path, params) => {
     if (serialized) {
         url.search = serialized;
     }
-    const response = await fetch(url);
-    const payload = (await response.json().catch(() => ({})));
-    if (!response.ok || payload.error?.message) {
-        throw new Error(payload.error?.message || 'Meta analytics request failed.');
-    }
-    return payload;
+    return (0, retry_1.retryWithBackoff)(async () => {
+        const response = await fetch(url);
+        const payload = (await response.json().catch(() => ({})));
+        if (!response.ok || payload.error?.message) {
+            throw new meta_service_1.MetaGraphApiError(payload.error?.message || 'Meta analytics request failed.', {
+                statusCode: response.status,
+                metaType: payload.error?.type,
+                metaCode: payload.error?.code,
+                metaSubcode: payload.error?.error_subcode,
+            });
+        }
+        return payload;
+    }, {
+        shouldRetry: retry_1.isRetryableError,
+        onRetry: ({ error, attempt, nextDelayMs }) => {
+            (0, observability_1.logFailure)('analytics_graph_retry', error, {
+                provider: baseUrl.includes('instagram') ? 'instagram' : 'meta',
+                path: url.pathname,
+                attempt,
+                nextDelayMs,
+            }, 'warn');
+        },
+    });
 };
 const metaGraphFetch = (path, params) => fetchGraphJson(GRAPH_BASE_URL, path, params);
 const instagramGraphFetch = (path, params) => fetchGraphJson(INSTAGRAM_GRAPH_BASE_URL, path, params);
@@ -845,9 +865,54 @@ const syncAnalyticsForUser = async (client, userId, options = {}) => {
         accountsScanned: socialAccounts.length,
         errors: [],
     };
+    const disabledAccountIds = new Set();
+    const handleAccountSyncFailure = async (account, error, context, entityId) => {
+        if (account.platform !== 'instagram' && account.platform !== 'facebook') {
+            return error instanceof Error ? error.message : 'Analytics sync failed.';
+        }
+        const normalized = (0, meta_service_1.normalizeMetaFailureForUser)(error, account.platform);
+        (0, observability_1.logFailure)('analytics_account_sync_failed', error, {
+            userId,
+            provider: 'meta',
+            platform: account.platform,
+            socialAccountId: account.id,
+            failureKind: normalized.kind,
+            retryable: normalized.retryable,
+            context,
+            entityId,
+        });
+        (0, observability_1.recordFailureSpikeSignal)('analytics_account_sync_failed', {
+            userId,
+            provider: 'meta',
+            platform: account.platform,
+            failureKind: normalized.kind,
+        });
+        if (normalized.accountStatus) {
+            disabledAccountIds.add(account.id);
+            const { error: statusError } = await client
+                .from('social_accounts')
+                .update({
+                verification_status: normalized.accountStatus,
+            })
+                .eq('id', account.id)
+                .eq('user_id', userId);
+            if (statusError) {
+                (0, observability_1.logFailure)('analytics_account_status_update_failed', statusError, {
+                    userId,
+                    provider: 'meta',
+                    platform: account.platform,
+                    socialAccountId: account.id,
+                });
+            }
+        }
+        return normalized.message;
+    };
     for (const post of posts) {
         const account = socialAccountById.get(post.socialAccountId);
         if (!account) {
+            continue;
+        }
+        if (disabledAccountIds.has(account.id)) {
             continue;
         }
         try {
@@ -856,10 +921,14 @@ const syncAnalyticsForUser = async (client, userId, options = {}) => {
             summary.postsSynced += 1;
         }
         catch (error) {
-            summary.errors.push(`Post ${post.id}: ${error instanceof Error ? error.message : 'Analytics sync failed.'}`);
+            const message = await handleAccountSyncFailure(account, error, 'post', post.id);
+            summary.errors.push(`Post ${post.id}: ${message}`);
         }
     }
     for (const account of socialAccounts) {
+        if (disabledAccountIds.has(account.id)) {
+            continue;
+        }
         try {
             const snapshot = await fetchMetaAudienceSnapshot(account);
             if (!snapshot) {
@@ -871,7 +940,8 @@ const syncAnalyticsForUser = async (client, userId, options = {}) => {
             }
         }
         catch (error) {
-            summary.errors.push(`Audience ${account.id}: ${error instanceof Error ? error.message : 'Audience analytics sync failed.'}`);
+            const message = await handleAccountSyncFailure(account, error, 'audience', account.id);
+            summary.errors.push(`Audience ${account.id}: ${message}`);
         }
     }
     await (0, runtimeCache_service_1.invalidateAnalyticsRuntimeCache)(userId);
@@ -965,6 +1035,12 @@ const enqueueAnalyticsSyncJob = async (data) => {
             delay: 5000,
         },
     });
+    (0, observability_1.logOperationalEvent)('analytics_sync_job_enqueued', {
+        userId: data.userId,
+        queue: queueNames_1.QUEUE_NAMES.analyticsSyncUser,
+        postIds: data.postIds ?? null,
+        socialAccountIds: data.socialAccountIds ?? null,
+    });
     (0, exports.startAnalyticsSyncWorker)();
 };
 exports.enqueueAnalyticsSyncJob = enqueueAnalyticsSyncJob;
@@ -980,11 +1056,26 @@ const startAnalyticsSyncWorker = () => {
     }
     analyticsSyncUserWorker = new bullmq_1.Worker(queueNames_1.QUEUE_NAMES.analyticsSyncUser, async (job) => {
         const client = (0, supabase_1.requireSupabaseAdmin)();
-        return (0, exports.syncAnalyticsForUser)(client, job.data.userId, {
-            lookbackDays: job.data.lookbackDays,
-            postIds: job.data.postIds,
-            socialAccountIds: job.data.socialAccountIds,
-        });
+        try {
+            return await (0, exports.syncAnalyticsForUser)(client, job.data.userId, {
+                lookbackDays: job.data.lookbackDays,
+                postIds: job.data.postIds,
+                socialAccountIds: job.data.socialAccountIds,
+            });
+        }
+        catch (error) {
+            (0, observability_1.logFailure)('analytics_sync_job_failed', error, {
+                jobId: job.id,
+                userId: job.data.userId,
+                queue: queueNames_1.QUEUE_NAMES.analyticsSyncUser,
+                provider: 'meta',
+            });
+            (0, observability_1.recordFailureSpikeSignal)('analytics_sync_job_failed', {
+                queue: queueNames_1.QUEUE_NAMES.analyticsSyncUser,
+                provider: 'meta',
+            });
+            throw error;
+        }
     }, {
         ...(0, redis_1.getBullMqConfig)('prixmoai:worker:analytics-user'),
         ...(0, workerOptions_1.getLowCommandWorkerOptions)(),
@@ -992,6 +1083,14 @@ const startAnalyticsSyncWorker = () => {
     });
     analyticsSyncUserWorker.on('active', clearAnalyticsSyncWorkerIdleTimer);
     analyticsSyncUserWorker.on('drained', scheduleAnalyticsSyncWorkerIdleShutdown);
+    analyticsSyncUserWorker.on('failed', (job, error) => {
+        (0, observability_1.logFailure)('analytics_sync_worker_failed', error, {
+            jobId: job?.id ?? null,
+            userId: job?.data.userId ?? null,
+            queue: queueNames_1.QUEUE_NAMES.analyticsSyncUser,
+            provider: 'meta',
+        });
+    });
     console.log('[analytics-sync] Worker started. Waiting for sync jobs.');
 };
 exports.startAnalyticsSyncWorker = startAnalyticsSyncWorker;

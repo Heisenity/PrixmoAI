@@ -1,8 +1,22 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.getMetaOAuthFacebookPageSelectionRedirectUrl = exports.getMetaOAuthErrorRedirectUrl = exports.getMetaOAuthSuccessRedirectUrl = exports.publishScheduledMetaPost = exports.verifyClaimedMetaAccount = exports.exchangeMetaAuthorizationCode = exports.buildMetaOAuthUrl = exports.readSignedMetaOAuthState = exports.createSignedMetaOAuthState = exports.buildFacebookNoPagesMessage = void 0;
+exports.getMetaOAuthFacebookPageSelectionRedirectUrl = exports.getMetaOAuthErrorRedirectUrl = exports.getMetaOAuthSuccessRedirectUrl = exports.publishScheduledMetaPost = exports.verifyClaimedMetaAccount = exports.exchangeMetaAuthorizationCode = exports.buildMetaOAuthUrl = exports.readSignedMetaOAuthState = exports.createSignedMetaOAuthState = exports.buildFacebookNoPagesMessage = exports.normalizeMetaFailureForUser = exports.MetaGraphApiError = void 0;
 const crypto_1 = require("crypto");
 const constants_1 = require("../config/constants");
+const observability_1 = require("../lib/observability");
+const retry_1 = require("../lib/retry");
+class MetaGraphApiError extends Error {
+    constructor(message, options) {
+        super(message);
+        this.name = 'MetaGraphApiError';
+        this.statusCode = options.statusCode;
+        this.metaType = options.metaType;
+        this.metaCode = options.metaCode;
+        this.metaSubcode = options.metaSubcode;
+        this.retryAfterMs = options.retryAfterMs;
+    }
+}
+exports.MetaGraphApiError = MetaGraphApiError;
 const META_AUTH_URL = `https://www.facebook.com/${constants_1.META_GRAPH_VERSION}/dialog/oauth`;
 const META_GRAPH_URL = `https://graph.facebook.com/${constants_1.META_GRAPH_VERSION}`;
 const INSTAGRAM_CONSENT_URL = 'https://www.instagram.com/consent/';
@@ -21,6 +35,119 @@ const readRecord = (value) => value && typeof value === 'object' && !Array.isArr
 const wait = (ms) => new Promise((resolve) => {
     setTimeout(resolve, ms);
 });
+const parseRetryAfterMs = (value) => {
+    if (!value) {
+        return undefined;
+    }
+    const seconds = Number(value);
+    if (Number.isFinite(seconds)) {
+        return Math.max(0, seconds * 1000);
+    }
+    const retryAt = new Date(value).getTime();
+    if (Number.isFinite(retryAt)) {
+        return Math.max(0, retryAt - Date.now());
+    }
+    return undefined;
+};
+const createMetaApiError = (fallbackMessage, response, payload) => {
+    const errorPayload = payload;
+    const message = errorPayload.error?.message || fallbackMessage;
+    return new MetaGraphApiError(message, {
+        statusCode: response.status,
+        metaType: errorPayload.error?.type,
+        metaCode: errorPayload.error?.code,
+        metaSubcode: errorPayload.error?.error_subcode,
+        retryAfterMs: parseRetryAfterMs(response.headers.get('retry-after')),
+    });
+};
+const isMetaGraphRetryable = (error, method) => {
+    if (method !== 'GET' && method !== 'HEAD') {
+        return false;
+    }
+    return (0, retry_1.isRetryableError)(error);
+};
+const getMetaFailureKind = (error) => {
+    const candidate = error;
+    const message = error instanceof Error ? error.message : String(error);
+    const normalizedMessage = message.toLowerCase();
+    const metaCode = candidate?.metaCode;
+    const metaSubcode = candidate?.metaSubcode;
+    const statusCode = candidate?.statusCode;
+    if (metaCode === 190 ||
+        [458, 459, 460, 463, 467].includes(metaSubcode ?? -1) ||
+        /token|session|oauth|expired|invalid.*access/i.test(message)) {
+        return 'reconnect';
+    }
+    if ([10, 200, 230].includes(metaCode ?? -1) ||
+        /permission|permissions|not authorized|missing scope|manage.*insights|content_publish/i.test(message)) {
+        return 'permission_missing';
+    }
+    if (statusCode === 429 ||
+        [4, 17, 32, 613].includes(metaCode ?? -1) ||
+        /rate limit|too many calls|temporarily blocked/i.test(message)) {
+        return 'rate_limited';
+    }
+    if (/media|image|video|container|aspect ratio|unsupported|copyright|policy/i.test(normalizedMessage)) {
+        return 'media_rejected';
+    }
+    if ((0, retry_1.isRetryableError)(error)) {
+        return 'temporary_outage';
+    }
+    return 'unknown';
+};
+const normalizeMetaFailureForUser = (error, platform) => {
+    const kind = getMetaFailureKind(error);
+    const platformLabel = platform === 'instagram' ? 'Instagram' : 'Facebook';
+    switch (kind) {
+        case 'reconnect':
+            return {
+                kind,
+                message: `Reconnect this ${platformLabel} account before PrixmoAI publishes again.`,
+                accountStatus: 'expired',
+                retryable: false,
+            };
+        case 'permission_missing':
+            return {
+                kind,
+                message: `${platformLabel} needs publishing permission again. Reconnect the account and approve the requested access.`,
+                accountStatus: 'revoked',
+                retryable: false,
+            };
+        case 'rate_limited':
+            return {
+                kind,
+                message: `${platformLabel} is slowing publishing requests right now. PrixmoAI will retry automatically.`,
+                accountStatus: null,
+                retryable: true,
+            };
+        case 'temporary_outage':
+            return {
+                kind,
+                message: `${platformLabel} is temporarily unavailable. PrixmoAI will retry automatically.`,
+                accountStatus: null,
+                retryable: true,
+            };
+        case 'media_rejected':
+            return {
+                kind,
+                message: error instanceof Error
+                    ? error.message
+                    : `${platformLabel} rejected this media. Check the image or video and try again.`,
+                accountStatus: null,
+                retryable: false,
+            };
+        default:
+            return {
+                kind,
+                message: error instanceof Error
+                    ? error.message
+                    : `${platformLabel} could not publish this post.`,
+                accountStatus: null,
+                retryable: false,
+            };
+    }
+};
+exports.normalizeMetaFailureForUser = normalizeMetaFailureForUser;
 const uniqueStrings = (values) => [
     ...new Set(values
         .filter((value) => Boolean(value?.trim()))
@@ -249,14 +376,27 @@ const metaGraphFetch = async (path, params, init) => {
         }
         url.searchParams.set(key, String(value));
     }
-    const response = await fetch(url, init);
-    const payload = (await response.json().catch(() => ({})));
-    const errorPayload = payload;
-    if (!response.ok || errorPayload.error?.message) {
-        const message = errorPayload.error?.message || 'Meta API request failed.';
-        throw new Error(message);
-    }
-    return payload;
+    const method = (init?.method ?? 'GET').toUpperCase();
+    return (0, retry_1.retryWithBackoff)(async () => {
+        const response = await fetch(url, init);
+        const payload = (await response.json().catch(() => ({})));
+        const errorPayload = payload;
+        if (!response.ok || errorPayload.error?.message) {
+            throw createMetaApiError('Meta API request failed.', response, payload);
+        }
+        return payload;
+    }, {
+        shouldRetry: (error) => isMetaGraphRetryable(error, method),
+        onRetry: ({ error, attempt, nextDelayMs }) => {
+            (0, observability_1.logFailure)('meta_graph_retry', error, {
+                provider: 'meta',
+                path: url.pathname,
+                method,
+                attempt,
+                nextDelayMs,
+            }, 'warn');
+        },
+    });
 };
 const instagramGraphFetch = async (path, params, init) => {
     const url = new URL(path.startsWith('http') ? path : `${INSTAGRAM_GRAPH_URL}${path}`);
@@ -266,14 +406,27 @@ const instagramGraphFetch = async (path, params, init) => {
         }
         url.searchParams.set(key, String(value));
     }
-    const response = await fetch(url, init);
-    const payload = (await response.json().catch(() => ({})));
-    const errorPayload = payload;
-    if (!response.ok || errorPayload.error?.message) {
-        const message = errorPayload.error?.message || 'Instagram API request failed.';
-        throw new Error(message);
-    }
-    return payload;
+    const method = (init?.method ?? 'GET').toUpperCase();
+    return (0, retry_1.retryWithBackoff)(async () => {
+        const response = await fetch(url, init);
+        const payload = (await response.json().catch(() => ({})));
+        const errorPayload = payload;
+        if (!response.ok || errorPayload.error?.message) {
+            throw createMetaApiError('Instagram API request failed.', response, payload);
+        }
+        return payload;
+    }, {
+        shouldRetry: (error) => isMetaGraphRetryable(error, method),
+        onRetry: ({ error, attempt, nextDelayMs }) => {
+            (0, observability_1.logFailure)('instagram_graph_retry', error, {
+                provider: 'instagram',
+                path: url.pathname,
+                method,
+                attempt,
+                nextDelayMs,
+            }, 'warn');
+        },
+    });
 };
 const exchangeCodeForShortLivedUserToken = async (code) => metaGraphFetch('/oauth/access_token', {
     client_id: constants_1.META_FACEBOOK_APP_ID,
@@ -289,20 +442,30 @@ const exchangeInstagramCodeForShortLivedUserToken = async (code) => {
         redirect_uri: getMetaOAuthRedirectUri('instagram'),
         code,
     });
-    const response = await fetch(INSTAGRAM_TOKEN_URL, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/x-www-form-urlencoded',
+    return (0, retry_1.retryWithBackoff)(async () => {
+        const response = await fetch(INSTAGRAM_TOKEN_URL, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+            },
+            body,
+        });
+        const payload = (await response.json().catch(() => ({})));
+        const errorPayload = payload;
+        if (!response.ok || errorPayload.error?.message) {
+            throw createMetaApiError('Instagram could not complete the business login token exchange.', response, payload);
+        }
+        return payload;
+    }, {
+        shouldRetry: retry_1.isRetryableError,
+        onRetry: ({ error, attempt, nextDelayMs }) => {
+            (0, observability_1.logFailure)('instagram_token_exchange_retry', error, {
+                provider: 'instagram',
+                attempt,
+                nextDelayMs,
+            }, 'warn');
         },
-        body,
     });
-    const payload = (await response.json().catch(() => ({})));
-    const errorPayload = payload;
-    if (!response.ok || errorPayload.error?.message) {
-        throw new Error(errorPayload.error?.message ||
-            'Instagram could not complete the business login token exchange.');
-    }
-    return payload;
 };
 const exchangeForLongLivedUserToken = async (shortLivedToken) => metaGraphFetch('/oauth/access_token', {
     grant_type: 'fb_exchange_token',
@@ -846,35 +1009,60 @@ const publishScheduledMetaPost = async (account, post) => {
     if (account.tokenExpiresAt && new Date(account.tokenExpiresAt).getTime() <= Date.now()) {
         throw new Error('This Meta connection has expired. Reconnect the account first.');
     }
+    if (account.platform !== 'facebook' && account.platform !== 'instagram') {
+        throw new Error('PrixmoAI can publish only Instagram and Facebook posts through Meta.');
+    }
     const now = new Date().toISOString();
-    if (account.platform === 'facebook') {
-        const pageId = (typeof metadata.metaPageId === 'string' && metadata.metaPageId) || null;
-        if (!pageId) {
-            throw new Error(getMetaPublishingErrorMessage('facebook', metadata));
+    try {
+        (0, observability_1.logOperationalEvent)('meta_publish_started', {
+            userId: post.userId,
+            provider: 'meta',
+            platform: account.platform,
+            scheduledPostId: post.id,
+            socialAccountId: account.id,
+        });
+        if (account.platform === 'facebook') {
+            const pageId = (typeof metadata.metaPageId === 'string' && metadata.metaPageId) || null;
+            if (!pageId) {
+                throw new Error(getMetaPublishingErrorMessage('facebook', metadata));
+            }
+            const externalPostId = await createFacebookPagePost(pageId, account.accessToken, post.caption, post.mediaUrl, post.mediaType);
+            return {
+                externalPostId,
+                publishedAt: now,
+            };
         }
-        const externalPostId = await createFacebookPagePost(pageId, account.accessToken, post.caption, post.mediaUrl, post.mediaType);
+        const instagramAccountId = (typeof metadata.metaInstagramAccountId === 'string' &&
+            metadata.metaInstagramAccountId) ||
+            null;
+        if (!instagramAccountId) {
+            throw new Error(getMetaPublishingErrorMessage('instagram', metadata));
+        }
+        const externalPostId = post.mediaType === 'video'
+            ? metadata.instagramLoginType === 'instagram_business_login'
+                ? await publishInstagramBusinessLoginVideo(instagramAccountId, account.accessToken, post.caption, post.mediaUrl)
+                : await publishInstagramVideo(instagramAccountId, account.accessToken, post.caption, post.mediaUrl)
+            : metadata.instagramLoginType === 'instagram_business_login'
+                ? await publishInstagramBusinessLoginImage(instagramAccountId, account.accessToken, post.caption, post.mediaUrl)
+                : await publishInstagramImage(instagramAccountId, account.accessToken, post.caption, post.mediaUrl);
         return {
             externalPostId,
             publishedAt: now,
         };
     }
-    const instagramAccountId = (typeof metadata.metaInstagramAccountId === 'string' &&
-        metadata.metaInstagramAccountId) ||
-        null;
-    if (!instagramAccountId) {
-        throw new Error(getMetaPublishingErrorMessage('instagram', metadata));
+    catch (error) {
+        const normalized = (0, exports.normalizeMetaFailureForUser)(error, account.platform);
+        (0, observability_1.logFailure)('meta_publish_failed', error, {
+            userId: post.userId,
+            provider: 'meta',
+            platform: account.platform,
+            scheduledPostId: post.id,
+            socialAccountId: account.id,
+            failureKind: normalized.kind,
+            retryable: normalized.retryable,
+        });
+        throw error;
     }
-    const externalPostId = post.mediaType === 'video'
-        ? metadata.instagramLoginType === 'instagram_business_login'
-            ? await publishInstagramBusinessLoginVideo(instagramAccountId, account.accessToken, post.caption, post.mediaUrl)
-            : await publishInstagramVideo(instagramAccountId, account.accessToken, post.caption, post.mediaUrl)
-        : metadata.instagramLoginType === 'instagram_business_login'
-            ? await publishInstagramBusinessLoginImage(instagramAccountId, account.accessToken, post.caption, post.mediaUrl)
-            : await publishInstagramImage(instagramAccountId, account.accessToken, post.caption, post.mediaUrl);
-    return {
-        externalPostId,
-        publishedAt: now,
-    };
 };
 exports.publishScheduledMetaPost = publishScheduledMetaPost;
 const getMetaOAuthSuccessRedirectUrl = (message) => buildMetaOAuthRedirectUrl('success', message);

@@ -340,6 +340,9 @@ export const DashboardPage = () => {
                   <img
                     src={item.generatedImageUrl}
                     alt={item.prompt || item.id}
+                    loading="lazy"
+                    decoding="async"
+                    referrerPolicy="no-referrer"
                   />
                   <span>{formatDateTime(item.createdAt)}</span>
                 </button>

@@ -1282,7 +1282,7 @@ const AnalyticsUnlockPanel = ({
   </Card>
 );
 
-const sanitizeLearningCopy = (value: string | null | undefined) => {
+const sanitizeLearningCopy = (value: string | null | undefined): string => {
   if (!value) {
     return '';
   }
@@ -1304,7 +1304,7 @@ const sanitizeLearningCopy = (value: string | null | undefined) => {
   if (recommendationMatch) {
     const label = recommendationMatch[1].trim();
     const platform = recommendationMatch[2].trim();
-    const easyLabel = sanitizeLearningCopy(label);
+    const easyLabel: string = sanitizeLearningCopy(label);
 
     if (/hook/i.test(easyLabel) && /unclear|not clearly detected/i.test(easyLabel)) {
       return `Try a few different opening lines next. Posts without a clear opening style are doing better than your usual ${platform} results.`;
@@ -2921,7 +2921,13 @@ export const AnalyticsPage = () => {
                               <button type="button" className="analytics-table__thumb" onClick={() => setSelectedPost(post)}>
                                 {post.thumbnailUrl ? (
                                   <>
-                                    <img src={post.thumbnailUrl} alt={post.caption || post.id} />
+                                    <img
+                                      src={post.thumbnailUrl}
+                                      alt={post.caption || post.id}
+                                      loading="lazy"
+                                      decoding="async"
+                                      referrerPolicy="no-referrer"
+                                    />
                                     {(post.postType === 'video' || post.postType === 'reel') ? (
                                       <span className="analytics-table__thumb-badge">
                                         <Play size={11} />

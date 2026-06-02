@@ -33,6 +33,7 @@ import {
 } from './jobRuntime.service';
 import type { BrandMemoryMatch, BrandProfile } from '../types';
 import { collectRealtimeTrendIntelligence } from './trendIntelligence.service';
+import { logFailure, logOperationalEvent, recordFailureSpikeSignal } from '../lib/observability';
 
 type ResolvedGenerateContentInput = GenerateContentInput & {
   brandName?: string | null;
@@ -169,6 +170,16 @@ export const startContentGenerationWorker = () => {
               throw error;
             }
 
+            logFailure(
+              'content_trend_research_failed',
+              error,
+              {
+                jobId: job.id,
+                userId: job.data.userId,
+                queue: QUEUE_NAMES.contentGenerate,
+              },
+              'warn'
+            );
             console.warn('[content-generation] live trend research failed; continuing without it.', {
               jobId: job.id,
               userId: job.data.userId,
@@ -209,6 +220,15 @@ export const startContentGenerationWorker = () => {
           job.id!,
           error instanceof Error ? error.message : 'Content generation failed.'
         );
+        logFailure('content_generation_job_failed', error, {
+          jobId: job.id,
+          userId: job.data.userId,
+          queue: QUEUE_NAMES.contentGenerate,
+          provider: 'content-generation',
+        });
+        recordFailureSpikeSignal('content_generation_job_failed', {
+          queue: QUEUE_NAMES.contentGenerate,
+        });
         throw error;
       } finally {
         cleanup();
@@ -224,6 +244,13 @@ export const startContentGenerationWorker = () => {
 
   contentWorker.on('active', clearContentWorkerIdleTimer);
   contentWorker.on('drained', scheduleContentWorkerIdleShutdown);
+  contentWorker.on('failed', (job, error) => {
+    logFailure('content_generation_worker_failed', error, {
+      jobId: job?.id ?? null,
+      userId: job?.data.userId ?? null,
+      queue: QUEUE_NAMES.contentGenerate,
+    });
+  });
 };
 
 export const enqueueContentGenerationJob = async (
@@ -251,9 +278,10 @@ export const enqueueContentGenerationJob = async (
       }
     );
 
-    console.info('[content-generation] job queued', {
+    logOperationalEvent('content_generation_job_queued', {
       jobId: job.id,
       userId: data.userId,
+      queue: QUEUE_NAMES.contentGenerate,
       productName: data.input.productName,
       includeReelScript: data.includeReelScript,
       brandMemoryCount: data.brandMemories.length,
@@ -273,9 +301,10 @@ export const enqueueContentGenerationJob = async (
       signal
     );
 
-    console.info('[content-generation] job completed', {
+    logOperationalEvent('content_generation_job_completed', {
       jobId: job.id,
       userId: data.userId,
+      queue: QUEUE_NAMES.contentGenerate,
       provider: result.provider,
       hasReelScript:
         Boolean(result.contentPack.reelScript.hook.trim()) &&

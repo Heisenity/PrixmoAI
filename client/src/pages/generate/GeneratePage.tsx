@@ -137,6 +137,8 @@ const WORKSPACE_MENU_ITEMS = [
   { label: 'Settings', href: '/app/settings', icon: Settings },
 ] as const;
 
+const CUSTOM_BACKGROUND_OPTION = 'Custom background';
+
 const createDefaultContentForm = (useBrandName = false) => ({
   useBrandName,
   productName: '',
@@ -152,6 +154,7 @@ const createDefaultImageForm = (useBrandName = false) => ({
   productName: '',
   productDescription: '',
   backgroundStyle: '',
+  backgroundPrompt: '',
   sourceImageUrl: '',
   prompt: '',
 });
@@ -907,6 +910,9 @@ const getUserMessageContent = (message: GenerateConversationMessage) => {
       typeof input.backgroundStyle === 'string' && input.backgroundStyle.trim()
         ? `Background: ${input.backgroundStyle.trim()}`
         : null,
+      typeof input.backgroundPrompt === 'string' && input.backgroundPrompt.trim()
+        ? `Custom background: ${trimInlineText(input.backgroundPrompt.trim(), 80)}`
+        : null,
     ].filter(Boolean);
 
     return productDescription
@@ -982,6 +988,8 @@ const hydrateImageInput = (message: GenerateConversationMessage) => {
         : '',
     backgroundStyle:
       typeof input.backgroundStyle === 'string' ? input.backgroundStyle : '',
+    backgroundPrompt:
+      typeof input.backgroundPrompt === 'string' ? input.backgroundPrompt : '',
     sourceImageUrl:
       typeof input.sourceImageUrl === 'string' ? input.sourceImageUrl : '',
     prompt: typeof input.prompt === 'string' ? input.prompt : '',
@@ -2011,6 +2019,14 @@ export const GeneratePage = () => {
   const threadTitle = activeConversation?.title || 'New conversation';
   const savedBrandName = profile?.brandName?.trim() || '';
   const hasSavedBrandName = Boolean(savedBrandName);
+  const selectedImageBackgroundStyle =
+    imageForm.backgroundStyle || IMAGE_BACKGROUND_OPTIONS[0];
+  const isCustomImageBackground =
+    selectedImageBackgroundStyle === CUSTOM_BACKGROUND_OPTION;
+  const customImageBackgroundPrompt = isCustomImageBackground
+    ? imageForm.backgroundPrompt.trim()
+    : '';
+  const [isCustomBackgroundApplied, setIsCustomBackgroundApplied] = useState(false);
   const brandProfileHint = useMemo(() => {
     if (!profile) {
       return null;
@@ -2070,6 +2086,12 @@ export const GeneratePage = () => {
           };
     });
   }, [profile?.brandName]);
+
+  useEffect(() => {
+    if (!isCustomImageBackground) {
+      setIsCustomBackgroundApplied(false);
+    }
+  }, [isCustomImageBackground]);
 
   const resetComposer = () => {
     setActiveWorkspace('copy');
@@ -2164,11 +2186,20 @@ export const GeneratePage = () => {
       return;
     }
 
+    if (isCustomImageBackground && !customImageBackgroundPrompt) {
+      workspace.setError(
+        'Describe the custom background, or choose a ready-made background style.'
+      );
+      return;
+    }
+
     try {
       await workspace.generateImage({
         ...imageForm,
         width: 768,
         height: 768,
+        backgroundStyle: selectedImageBackgroundStyle,
+        backgroundPrompt: customImageBackgroundPrompt || undefined,
         sourceImageUrl: imageForm.sourceImageUrl || undefined,
         prompt: imageForm.prompt || undefined,
       });
@@ -2257,11 +2288,20 @@ export const GeneratePage = () => {
       return;
     }
 
+    if (isCustomImageBackground && !customImageBackgroundPrompt) {
+      workspace.setError(
+        'Describe the custom background, or choose a ready-made background style.'
+      );
+      return;
+    }
+
     void workspace
       .generateImage({
         ...imageForm,
         width: 768,
         height: 768,
+        backgroundStyle: selectedImageBackgroundStyle,
+        backgroundPrompt: customImageBackgroundPrompt || undefined,
         sourceImageUrl: imageForm.sourceImageUrl || undefined,
         prompt: imageForm.prompt || undefined,
       })
@@ -2276,6 +2316,23 @@ export const GeneratePage = () => {
   const stopGeneration = () => {
     workspace.cancelCopyGeneration();
     workspace.cancelImageGeneration();
+  };
+
+  const applyCustomBackgroundPrompt = () => {
+    const trimmedPrompt = imageForm.backgroundPrompt.trim();
+
+    if (!trimmedPrompt) {
+      workspace.setError('Write your custom background first.');
+      setIsCustomBackgroundApplied(false);
+      return;
+    }
+
+    setImageForm((current) => ({
+      ...current,
+      backgroundPrompt: trimmedPrompt,
+    }));
+    workspace.setError(null);
+    setIsCustomBackgroundApplied(true);
   };
 
   return (
@@ -3100,22 +3157,86 @@ export const GeneratePage = () => {
                       </span>
                     </button>
                   </div>
-                  <Select
-                    label="Background style"
-                    value={
-                      imageForm.backgroundStyle || IMAGE_BACKGROUND_OPTIONS[0]
-                    }
-                    onChange={(event) =>
-                      setImageForm((current) => ({
-                        ...current,
-                        backgroundStyle: event.target.value,
-                      }))
-                    }
-                    >
-                      {IMAGE_BACKGROUND_OPTIONS.map((option) => (
-                        <option key={option}>{option}</option>
-                      ))}
-                    </Select>
+                  <div
+                    className={`field generate-chat__background-field ${
+                      isCustomImageBackground
+                        ? 'generate-chat__background-field--custom'
+                        : ''
+                    }`}
+                  >
+                    <span className="field__label-row">
+                      <span className="field__label">Background style</span>
+                    </span>
+                    <div className="generate-chat__background-shell">
+                      <select
+                        className="field__control field__control--select generate-chat__background-select"
+                        value={selectedImageBackgroundStyle}
+                        onChange={(event) =>
+                          setImageForm((current) => ({
+                            ...current,
+                            backgroundStyle: event.target.value,
+                          }))
+                        }
+                      >
+                        {IMAGE_BACKGROUND_OPTIONS.map((option) => (
+                          <option key={option}>{option}</option>
+                        ))}
+                      </select>
+                      {isCustomImageBackground ? (
+                        <div className="generate-chat__custom-background-panel">
+                          <div className="generate-chat__custom-background-topline">
+                            <span className="generate-chat__custom-background-pill">
+                              <Sparkles size={14} />
+                              Custom scene
+                            </span>
+                            <span>
+                              Press Enter to apply. Use Shift + Enter for a new line.
+                            </span>
+                          </div>
+                          <textarea
+                            className="generate-chat__custom-background-input"
+                            value={imageForm.backgroundPrompt}
+                            onChange={(event) =>
+                              {
+                                setImageForm((current) => ({
+                                  ...current,
+                                  backgroundPrompt: event.target.value,
+                                }));
+                                if (isCustomBackgroundApplied) {
+                                  setIsCustomBackgroundApplied(false);
+                                }
+                              }
+                            }
+                            onKeyDown={(event) => {
+                              if (event.key === 'Enter' && !event.shiftKey) {
+                                event.preventDefault();
+                                applyCustomBackgroundPrompt();
+                              }
+                            }}
+                            rows={3}
+                            placeholder="Example: Bengali vintage cinema hall, rainy Kolkata street, red velvet curtain, old film poster wall..."
+                          />
+                          <div className="generate-chat__custom-background-actions">
+                            <button
+                              type="button"
+                              className={`generate-chat__custom-background-apply ${
+                                isCustomBackgroundApplied
+                                  ? 'generate-chat__custom-background-apply--done'
+                                  : ''
+                              }`}
+                              onClick={applyCustomBackgroundPrompt}
+                            >
+                              {isCustomBackgroundApplied ? <Check size={14} /> : <Sparkles size={14} />}
+                              <span>{isCustomBackgroundApplied ? 'Applied' : 'Apply'}</span>
+                            </button>
+                            <span className="generate-chat__custom-background-hint">
+                              PrixmoAI will turn this into a polished background prompt.
+                            </span>
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
                   <DictationTextareaField
                     className="field field--full"
                     label="Description / brief"
@@ -3188,6 +3309,9 @@ export const GeneratePage = () => {
                     <img
                       src={imageForm.sourceImageUrl}
                       alt={`${imageForm.productName || 'Reference'} preview`}
+                      loading="lazy"
+                      decoding="async"
+                      referrerPolicy="no-referrer"
                     />
                     <div className="generator-source-chip__copy">
                       <strong>Reference ready</strong>

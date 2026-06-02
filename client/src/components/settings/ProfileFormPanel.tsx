@@ -1379,7 +1379,13 @@ export const ProfileFormPanel = ({
           </label>
           {form.logoUrl ? (
             <div className="profile-panel__logo-preview">
-              <img src={form.logoUrl} alt="Brand logo preview" />
+              <img
+                src={form.logoUrl}
+                alt="Brand logo preview"
+                loading="lazy"
+                decoding="async"
+                referrerPolicy="no-referrer"
+              />
               <div className="profile-panel__logo-preview-copy">
                 <strong>Logo ready</strong>
                 <span>{form.logoUrl.split('/').pop() || 'Saved logo'}</span>
