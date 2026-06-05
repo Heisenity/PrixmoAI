@@ -13,6 +13,7 @@ import {
   PanelRightClose,
   PanelRightOpen,
   Search as SearchIcon,
+  ShieldCheck,
   Square,
   Sparkles,
   CalendarClock,
@@ -44,6 +45,7 @@ import { useBrandProfile } from '../../hooks/useBrandProfile';
 import { useGenerateWorkspace } from '../../hooks/useGenerateWorkspace';
 import { useAuth } from '../../hooks/useAuth';
 import { useAnalytics } from '../../hooks/useAnalytics';
+import { useAdminAccess } from '../../hooks/useAdminAccess';
 import { useUpgradePrompt } from '../../hooks/useUpgradePrompt';
 import { apiRequest } from '../../lib/axios';
 import { getAvatarCandidates } from '../../lib/profile';
@@ -1249,6 +1251,7 @@ export const GeneratePage = () => {
   const { overview, isLoading: isAnalyticsLoading } = useAnalytics();
   const { profile } = useBrandProfile();
   const { signOut, token, user } = useAuth();
+  const { isAdmin } = useAdminAccess();
   const navigate = useNavigate();
   const threadEndRef = useRef<HTMLDivElement | null>(null);
   const accountMenuRef = useRef<HTMLDivElement | null>(null);
@@ -2014,6 +2017,16 @@ export const GeneratePage = () => {
     hasUsageData: Boolean(overview),
     usageWindowLabel: planDetails.usageWindowLabel,
   });
+  const visibleWorkspaceMenuItems = useMemo(
+    () =>
+      isAdmin
+        ? [
+            ...WORKSPACE_MENU_ITEMS,
+            { label: 'Admin Health', href: '/app/admin-health', icon: ShieldCheck },
+          ]
+        : WORKSPACE_MENU_ITEMS,
+    [isAdmin]
+  );
   const shouldWatermarkImages =
     !subscription || subscription.plan === 'free';
   const threadTitle = activeConversation?.title || 'New conversation';
@@ -2637,7 +2650,7 @@ export const GeneratePage = () => {
               </div>
 
               <nav className="generate-chat__account-menu-links" aria-label="Workspace navigation">
-                {WORKSPACE_MENU_ITEMS.map((item) => {
+                {visibleWorkspaceMenuItems.map((item) => {
                   const Icon = item.icon;
 
                   return (

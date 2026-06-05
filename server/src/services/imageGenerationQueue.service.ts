@@ -338,6 +338,14 @@ export const enqueueImageGenerationJob = async (
       signal
     );
 
+    logOperationalEvent('image_generation_job_completed', {
+      jobId: job.id,
+      userId: params.data.userId,
+      queue: QUEUE_NAMES.imageGenerate,
+      provider: result.provider,
+      queueTier: params.runtimePolicy.queueTier,
+    });
+
     return {
       jobId: job.id!,
       result,

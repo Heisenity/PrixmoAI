@@ -208,6 +208,13 @@ const enqueueImageGenerationJob = async (params, signal, onQueued) => {
         });
         await onQueued?.(job.id);
         const result = await (0, jobRuntime_service_1.waitForQueueJobResult)(job, queueEvents, signal);
+        (0, observability_1.logOperationalEvent)('image_generation_job_completed', {
+            jobId: job.id,
+            userId: params.data.userId,
+            queue: queueNames_1.QUEUE_NAMES.imageGenerate,
+            provider: result.provider,
+            queueTier: params.runtimePolicy.queueTier,
+        });
         return {
             jobId: job.id,
             result,

@@ -978,6 +978,16 @@ const syncAnalyticsForUser = async (client, userId, options = {}) => {
             });
         });
     }
+    (0, observability_1.logOperationalEvent)('analytics_sync_completed', {
+        userId,
+        queue: queueNames_1.QUEUE_NAMES.analyticsSyncUser,
+        provider: 'meta',
+        postsDiscovered: summary.postsDiscovered,
+        postsSynced: summary.postsSynced,
+        audienceSnapshotsSynced: summary.audienceSnapshotsSynced,
+        accountsScanned: summary.accountsScanned,
+        errorCount: summary.errors.length,
+    });
     return summary;
 };
 exports.syncAnalyticsForUser = syncAnalyticsForUser;

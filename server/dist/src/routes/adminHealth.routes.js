@@ -1,0 +1,18 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+const express_1 = require("express");
+const adminHealth_controller_1 = require("../controllers/adminHealth.controller");
+const auth_middleware_1 = require("../middleware/auth.middleware");
+const adminAccess_middleware_1 = require("../middleware/adminAccess.middleware");
+const validate_middleware_1 = require("../middleware/validate.middleware");
+const adminAccess_1 = require("../lib/adminAccess");
+const adminHealth_schema_1 = require("../schemas/adminHealth.schema");
+const router = (0, express_1.Router)();
+router.get('/access/me', auth_middleware_1.authMiddleware, (0, adminAccess_middleware_1.adminAccessMiddleware)(), adminHealth_controller_1.getMyAdminAccess);
+router.get('/overview', auth_middleware_1.authMiddleware, (0, adminAccess_middleware_1.adminAccessMiddleware)(adminAccess_1.ADMIN_PERMISSIONS.systemHealthView), adminHealth_controller_1.getAdminHealth);
+router.get('/grants', auth_middleware_1.authMiddleware, (0, adminAccess_middleware_1.adminAccessMiddleware)(adminAccess_1.ADMIN_PERMISSIONS.adminAccessManage), adminHealth_controller_1.getAdminGrants);
+router.post('/grants', auth_middleware_1.authMiddleware, (0, adminAccess_middleware_1.adminAccessMiddleware)(adminAccess_1.ADMIN_PERMISSIONS.adminAccessManage), (0, validate_middleware_1.validate)(adminHealth_schema_1.adminGrantSchema), adminHealth_controller_1.saveAdminGrant);
+router.delete('/grants/:grantId', auth_middleware_1.authMiddleware, (0, adminAccess_middleware_1.adminAccessMiddleware)(adminAccess_1.ADMIN_PERMISSIONS.adminAccessManage), adminHealth_controller_1.deleteAdminGrant);
+router.post('/actions', auth_middleware_1.authMiddleware, (0, adminAccess_middleware_1.adminAccessMiddleware)(adminAccess_1.ADMIN_PERMISSIONS.safeActionsRun), (0, validate_middleware_1.validate)(adminHealth_schema_1.adminSafeActionSchema), adminHealth_controller_1.runAdminAction);
+router.get('/user-debug', auth_middleware_1.authMiddleware, (0, adminAccess_middleware_1.adminAccessMiddleware)(adminAccess_1.ADMIN_PERMISSIONS.userDebugView), (0, validate_middleware_1.validate)(adminHealth_schema_1.adminUserDebugQuerySchema), adminHealth_controller_1.getUserDebug);
+exports.default = router;

@@ -1498,6 +1498,17 @@ export const syncAnalyticsForUser = async (
     });
   }
 
+  logOperationalEvent('analytics_sync_completed', {
+    userId,
+    queue: QUEUE_NAMES.analyticsSyncUser,
+    provider: 'meta',
+    postsDiscovered: summary.postsDiscovered,
+    postsSynced: summary.postsSynced,
+    audienceSnapshotsSynced: summary.audienceSnapshotsSynced,
+    accountsScanned: summary.accountsScanned,
+    errorCount: summary.errors.length,
+  });
+
   return summary;
 };
 

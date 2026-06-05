@@ -1613,6 +1613,15 @@ export const refreshAnalyticsLearningForUser = async (
       platforms: updatedPlatforms,
       runId: run.id,
     });
+    logOperationalEvent('analytics_learning_completed', {
+      userId,
+      queue: QUEUE_NAMES.analyticsLearningUser,
+      jobId: run.id,
+      triggerSource: options.triggerSource ?? 'manual',
+      postsAnalyzed: learningRows.length,
+      profilesUpdated,
+      platforms: updatedPlatforms,
+    });
 
     return summary;
   } catch (error) {

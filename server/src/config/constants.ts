@@ -84,6 +84,12 @@ export const OBSERVABILITY_ALERT_FAILURE_THRESHOLD = Number(
 export const OBSERVABILITY_ALERT_WINDOW_MS = Number(
   process.env.OBSERVABILITY_ALERT_WINDOW_MS || 5 * 60_000
 );
+export const RUNTIME_CACHE_TTL_MS = Number(
+  process.env.RUNTIME_CACHE_TTL_MS || 60_000
+);
+export const ADMIN_HEALTH_EVENT_RETENTION_DAYS = Number(
+  process.env.ADMIN_HEALTH_EVENT_RETENTION_DAYS || 14
+);
 export const DEFAULT_GEMINI_MODEL =
   process.env.GEMINI_MODEL || 'gemini-2.5-flash';
 export const DEFAULT_GEMINI_EMBEDDING_MODEL =

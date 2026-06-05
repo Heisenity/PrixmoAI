@@ -49,6 +49,12 @@ const pageMeta: Record<string, { eyebrow: string; title: string; subtitle: strin
     subtitle:
       'Industry, audience, and brand voice live here and shape every generation.',
   },
+  '/app/admin-health': {
+    eyebrow: 'SA Control Room',
+    title: 'Monitor PrixmoAI production health.',
+    subtitle:
+      'Review queues, failures, user impact, permissions, and safe admin actions.',
+  },
 };
 
 export const PageWrapper = () => {

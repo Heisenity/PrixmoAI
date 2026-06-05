@@ -1,12 +1,70 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.invalidateBillingRuntimeCache = exports.buildBillingSubscriptionCacheKey = exports.buildBillingPlansCacheKey = exports.invalidateAnalyticsRuntimeCache = exports.buildAnalyticsHistoryCacheKey = exports.buildAnalyticsBestPostCacheKey = exports.buildAnalyticsWeeklyComparisonCacheKey = exports.buildAnalyticsSummaryCacheKey = exports.buildAnalyticsDashboardCacheKey = exports.buildAnalyticsOverviewCacheKey = exports.buildRuntimeCacheKey = exports.deleteRuntimeCacheByPrefix = exports.deleteRuntimeCacheKey = exports.getOrSetJsonCache = void 0;
+const constants_1 = require("../config/constants");
 const redis_1 = require("../lib/redis");
-const getOrSetJsonCache = async (_key, compute) => compute();
+const getOrSetJsonCache = async (key, compute) => {
+    if (!redis_1.isRedisConfigured) {
+        return compute();
+    }
+    try {
+        const client = (0, redis_1.getRedisClient)();
+        const cached = await client.get(key);
+        if (cached) {
+            return JSON.parse(cached);
+        }
+        const value = await compute();
+        await client.set(key, JSON.stringify(value), 'PX', constants_1.RUNTIME_CACHE_TTL_MS);
+        return value;
+    }
+    catch (error) {
+        console.warn('[runtime-cache] cache read/write failed; falling back to source data', {
+            key,
+            error: error instanceof Error ? error.message : String(error),
+        });
+        return compute();
+    }
+};
 exports.getOrSetJsonCache = getOrSetJsonCache;
-const deleteRuntimeCacheKey = async (_key) => { };
+const deleteRuntimeCacheKey = async (key) => {
+    if (!redis_1.isRedisConfigured) {
+        return;
+    }
+    try {
+        await (0, redis_1.getRedisClient)().del(key);
+    }
+    catch (error) {
+        console.warn('[runtime-cache] failed to delete cache key', {
+            key,
+            error: error instanceof Error ? error.message : String(error),
+        });
+    }
+};
 exports.deleteRuntimeCacheKey = deleteRuntimeCacheKey;
-const deleteRuntimeCacheByPrefix = async (..._parts) => { };
+const deleteRuntimeCacheByPrefix = async (...parts) => {
+    if (!redis_1.isRedisConfigured) {
+        return;
+    }
+    const client = (0, redis_1.getRedisClient)();
+    const prefix = (0, exports.buildRuntimeCacheKey)(...parts);
+    const pattern = `${prefix}*`;
+    let cursor = '0';
+    try {
+        do {
+            const [nextCursor, keys] = await client.scan(cursor, 'MATCH', pattern, 'COUNT', 100);
+            cursor = nextCursor;
+            if (keys.length) {
+                await client.del(...keys);
+            }
+        } while (cursor !== '0');
+    }
+    catch (error) {
+        console.warn('[runtime-cache] failed to delete cache prefix', {
+            prefix,
+            error: error instanceof Error ? error.message : String(error),
+        });
+    }
+};
 exports.deleteRuntimeCacheByPrefix = deleteRuntimeCacheByPrefix;
 const buildRuntimeCacheKey = (...parts) => (0, redis_1.buildRedisKey)('cache', ...parts);
 exports.buildRuntimeCacheKey = buildRuntimeCacheKey;

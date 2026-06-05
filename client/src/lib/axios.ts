@@ -96,6 +96,43 @@ const toSearchParams = (query?: ApiRequestOptions['query']) => {
   return search ? `?${search}` : '';
 };
 
+const toReadableApiMessage = (value: unknown): string => {
+  if (!value) {
+    return '';
+  }
+
+  if (typeof value === 'string') {
+    return value;
+  }
+
+  if (Array.isArray(value)) {
+    return value.map(toReadableApiMessage).filter(Boolean).join(' ');
+  }
+
+  if (typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    const message = toReadableApiMessage(record.message);
+    const details = toReadableApiMessage(record.details);
+    const hint = toReadableApiMessage(record.hint);
+    const code = toReadableApiMessage(record.code);
+    const combined = [message, details, hint, code ? `(${code})` : '']
+      .filter(Boolean)
+      .join(' ');
+
+    if (combined) {
+      return combined;
+    }
+
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return 'The server returned an unreadable error.';
+    }
+  }
+
+  return String(value);
+};
+
 const executeApiRequest = async <T>(
   url: string,
   options: ApiRequestOptions,
@@ -142,9 +179,11 @@ const executeApiRequest = async <T>(
   }
 
   const responseMessage =
-    payload?.message ||
-    payload?.errors?.find((detail) => detail.message)?.message ||
-    (rawPayload.trim() && !rawPayload.trim().startsWith('<') ? rawPayload.trim() : '');
+    toReadableApiMessage(payload?.message) ||
+    toReadableApiMessage(payload?.errors?.find((detail) => detail.message)?.message) ||
+    (rawPayload.trim() && !rawPayload.trim().startsWith('<')
+      ? toReadableApiMessage(rawPayload.trim())
+      : '');
 
   if (!response.ok) {
     throw new ApiRequestError(

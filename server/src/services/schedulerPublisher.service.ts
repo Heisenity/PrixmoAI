@@ -337,6 +337,17 @@ const processScheduledPost = async (postId: string, userId: string) => {
       )
     );
 
+    logOperationalEvent('scheduler_publish_completed', {
+      userId: post.userId,
+      jobId: getScheduledPublishJobId(post.id),
+      queue: QUEUE_NAMES.schedulerPublish,
+      provider: socialAccount.oauthProvider ?? 'meta',
+      platform: socialAccount.platform,
+      scheduledPostId: post.id,
+      socialAccountId: socialAccount.id,
+      externalPostId: published.externalPostId,
+    });
+
     try {
       await enqueueAnalyticsSyncJob({
         userId: post.userId,

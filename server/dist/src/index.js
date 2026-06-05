@@ -9,6 +9,7 @@ const helmet_1 = __importDefault(require("helmet"));
 const cors_1 = __importDefault(require("cors"));
 const errorHandler_middleware_1 = require("./middleware/errorHandler.middleware");
 const billing_controller_1 = require("./controllers/billing.controller");
+const adminHealth_routes_1 = __importDefault(require("./routes/adminHealth.routes"));
 const auth_routes_1 = __importDefault(require("./routes/auth.routes"));
 const analytics_routes_1 = __importDefault(require("./routes/analytics.routes"));
 const billing_routes_1 = __importDefault(require("./routes/billing.routes"));
@@ -63,6 +64,7 @@ app.get('/health', (req, res) => {
     });
 });
 app.use('/api/auth', auth_routes_1.default);
+app.use('/api/admin-health', adminHealth_routes_1.default);
 app.use('/api/analytics', analytics_routes_1.default);
 app.use('/api/billing', billing_routes_1.default);
 app.use('/api/content', content_routes_1.default);

@@ -65,6 +65,11 @@ const SettingsPage = lazy(() =>
     default: module.SettingsPage,
   }))
 );
+const AdminHealthPage = lazy(() =>
+  import('./pages/admin/AdminHealthPage').then((module) => ({
+    default: module.AdminHealthPage,
+  }))
+);
 
 const RouterTree = () => (
   <BrowserRouter>
@@ -92,6 +97,7 @@ const RouterTree = () => (
             <Route path="scheduler" element={<SchedulerPage />} />
             <Route path="billing" element={<BillingPage />} />
             <Route path="settings" element={<SettingsPage />} />
+            <Route path="admin-health" element={<AdminHealthPage />} />
           </Route>
         </Route>
 

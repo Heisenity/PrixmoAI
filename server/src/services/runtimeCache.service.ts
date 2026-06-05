@@ -1,15 +1,77 @@
-import { buildRedisKey } from '../lib/redis';
+import { RUNTIME_CACHE_TTL_MS } from '../config/constants';
+import { buildRedisKey, getRedisClient, isRedisConfigured } from '../lib/redis';
 
 export const getOrSetJsonCache = async <T>(
-  _key: string,
+  key: string,
   compute: () => Promise<T>
-): Promise<T> => compute();
+): Promise<T> => {
+  if (!isRedisConfigured) {
+    return compute();
+  }
 
-export const deleteRuntimeCacheKey = async (_key: string) => {};
+  try {
+    const client = getRedisClient();
+    const cached = await client.get(key);
+
+    if (cached) {
+      return JSON.parse(cached) as T;
+    }
+
+    const value = await compute();
+    await client.set(key, JSON.stringify(value), 'PX', RUNTIME_CACHE_TTL_MS);
+    return value;
+  } catch (error) {
+    console.warn('[runtime-cache] cache read/write failed; falling back to source data', {
+      key,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return compute();
+  }
+};
+
+export const deleteRuntimeCacheKey = async (key: string) => {
+  if (!isRedisConfigured) {
+    return;
+  }
+
+  try {
+    await getRedisClient().del(key);
+  } catch (error) {
+    console.warn('[runtime-cache] failed to delete cache key', {
+      key,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+};
 
 export const deleteRuntimeCacheByPrefix = async (
-  ..._parts: Array<string | number>
-) => {};
+  ...parts: Array<string | number>
+) => {
+  if (!isRedisConfigured) {
+    return;
+  }
+
+  const client = getRedisClient();
+  const prefix = buildRuntimeCacheKey(...parts);
+  const pattern = `${prefix}*`;
+  let cursor = '0';
+
+  try {
+    do {
+      const [nextCursor, keys] = await client.scan(cursor, 'MATCH', pattern, 'COUNT', 100);
+      cursor = nextCursor;
+
+      if (keys.length) {
+        await client.del(...keys);
+      }
+    } while (cursor !== '0');
+  } catch (error) {
+    console.warn('[runtime-cache] failed to delete cache prefix', {
+      prefix,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+};
 
 export const buildRuntimeCacheKey = (...parts: Array<string | number>) =>
   buildRedisKey('cache', ...parts);

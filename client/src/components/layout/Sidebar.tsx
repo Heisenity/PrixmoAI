@@ -8,6 +8,7 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Settings,
+  ShieldCheck,
   Sparkles,
 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -25,6 +26,7 @@ import { getOverallUsageSummary } from '../../lib/usage';
 import { cn } from '../../lib/utils';
 import { useAuth } from '../../hooks/useAuth';
 import { useAnalytics } from '../../hooks/useAnalytics';
+import { useAdminAccess } from '../../hooks/useAdminAccess';
 import { useBilling } from '../../hooks/useBilling';
 import { useUpgradePrompt } from '../../hooks/useUpgradePrompt';
 import { CurrentPlanBadge } from '../billing/CurrentPlanBadge';
@@ -50,6 +52,7 @@ export const Sidebar = ({ collapsed, onToggleCollapse }: SidebarProps) => {
   const { profile, signOut, user } = useAuth();
   const { subscription, catalog, isLoading: isBillingLoading } = useBilling();
   const { overview, isLoading: isAnalyticsLoading } = useAnalytics();
+  const { isAdmin } = useAdminAccess();
   const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
   const [superAdminTestingTier, setSuperAdminTestingTier] = useState(() =>
     readStoredSuperAdminTestingTier()
@@ -93,6 +96,16 @@ export const Sidebar = ({ collapsed, onToggleCollapse }: SidebarProps) => {
     hasUsageData: Boolean(usageSnapshot || overview),
     usageWindowLabel: planDetails.usageWindowLabel,
   });
+  const visibleWorkspaceLinks = useMemo(
+    () =>
+      isAdmin
+        ? [
+            ...workspaceLinks,
+            { label: 'Admin Health', href: '/app/admin-health', icon: ShieldCheck },
+          ]
+        : workspaceLinks,
+    [isAdmin]
+  );
 
   useEffect(() => {
     setIsProfileMenuOpen(false);
@@ -235,7 +248,7 @@ export const Sidebar = ({ collapsed, onToggleCollapse }: SidebarProps) => {
             </div>
 
             <nav className="sidebar__profile-menu-links" aria-label="Workspace navigation">
-              {workspaceLinks.map((item) => {
+              {visibleWorkspaceLinks.map((item) => {
                 const Icon = item.icon;
                 return (
                   <NavLink

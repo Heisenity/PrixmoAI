@@ -4,6 +4,7 @@ import helmet from "helmet";
 import cors from "cors";
 import { errorHandler } from "./middleware/errorHandler.middleware";
 import { handleRazorpayWebhook } from "./controllers/billing.controller";
+import adminHealthRouter from "./routes/adminHealth.routes";
 import authRouter from "./routes/auth.routes";
 import analyticsRouter from "./routes/analytics.routes";
 import billingRouter from "./routes/billing.routes";
@@ -78,6 +79,7 @@ app.get('/health', (req, res) => {
 });
 
 app.use('/api/auth', authRouter);
+app.use('/api/admin-health', adminHealthRouter);
 app.use('/api/analytics', analyticsRouter);
 app.use('/api/billing', billingRouter);
 app.use('/api/content', contentRouter);
