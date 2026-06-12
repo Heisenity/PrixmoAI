@@ -63,6 +63,7 @@ import {
   toDisplayDateTimeLocalValue,
   toIsoStringFromDisplayDateTimeLocalValue,
 } from '../../lib/timezone';
+import { getAvatarCandidates } from '../../lib/profile';
 import { cn, formatDateTime } from '../../lib/utils';
 import type {
   MetaOAuthPopupResult,
@@ -181,6 +182,65 @@ const getPlatformBadgeIcon = (platform: SocialPlatform) =>
   ) : (
     <Twitter size={15} />
   );
+
+const getAccountAvatarCandidates = (account: SocialAccount) =>
+  getAvatarCandidates(
+    readMetadataValue(account.metadata, 'metaInstagramProfilePictureUrl') ||
+      readMetadataValue(account.metadata, 'metaPagePictureUrl') ||
+      readMetadataValue(account.metadata, 'pagePictureUrl') ||
+      readMetadataValue(account.metadata, 'profilePictureUrl') ||
+      readMetadataValue(account.metadata, 'profileImageUrl'),
+    [
+      account.metadata,
+      {
+        avatar_url: readMetadataValue(account.metadata, 'avatarUrl'),
+        picture_url: readMetadataValue(account.metadata, 'pictureUrl'),
+        picture: readMetadataValue(account.metadata, 'picture'),
+        image: readMetadataValue(account.metadata, 'image'),
+        photo_url: readMetadataValue(account.metadata, 'photoUrl'),
+        photoURL: readMetadataValue(account.metadata, 'photoURL'),
+        iconUrl: readMetadataValue(account.metadata, 'iconUrl'),
+      },
+    ]
+  );
+
+const SchedulerChannelAvatar = ({ account }: { account: SocialAccount }) => {
+  const avatarCandidates = useMemo(() => getAccountAvatarCandidates(account), [account]);
+  const avatarSignature = useMemo(
+    () => avatarCandidates.join('|'),
+    [avatarCandidates]
+  );
+  const [candidateIndex, setCandidateIndex] = useState(0);
+  const activeAvatar = avatarCandidates[candidateIndex] || null;
+
+  useEffect(() => {
+    setCandidateIndex(0);
+  }, [account.id, avatarSignature]);
+
+  if (!activeAvatar) {
+    return (
+      <span className="scheduler-channel-card__avatar-fallback">
+        {getAccountInitials(account)}
+      </span>
+    );
+  }
+
+  return (
+    <img
+      src={activeAvatar}
+      alt={getAccountDisplayName(account)}
+      loading="lazy"
+      decoding="async"
+      referrerPolicy="no-referrer"
+      draggable={false}
+      onError={() => {
+        setCandidateIndex((current) =>
+          current + 1 < avatarCandidates.length ? current + 1 : avatarCandidates.length
+        );
+      }}
+    />
+  );
+};
 
 const QUEUE_ACTION_BUFFER_MS = 4_000;
 const SCHEDULE_MIN_BUFFER_MS = 5_000;
@@ -3219,25 +3279,7 @@ export const SchedulerPage = () => {
                   <div className="scheduler-channel-card__identity">
                     <div className="scheduler-channel-card__avatar-stack">
                       <div className="scheduler-channel-card__avatar">
-                        {readMetadataValue(
-                          account.metadata,
-                          'metaInstagramProfilePictureUrl'
-                        ) ? (
-                          <img
-                            src={
-                              readMetadataValue(
-                                account.metadata,
-                                'metaInstagramProfilePictureUrl'
-                              ) || undefined
-                            }
-                            alt={getAccountDisplayName(account)}
-                            loading="lazy"
-                            decoding="async"
-                            referrerPolicy="no-referrer"
-                          />
-                        ) : (
-                          <span>{getAccountInitials(account)}</span>
-                        )}
+                        <SchedulerChannelAvatar account={account} />
                       </div>
                       <span
                         className={`scheduler-channel-card__platform scheduler-channel-card__platform--${account.platform}`}

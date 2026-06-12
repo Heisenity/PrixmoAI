@@ -2,6 +2,7 @@ import {
   createElement,
   createContext,
   startTransition,
+  useCallback,
   useContext,
   useEffect,
   useState,
@@ -51,6 +52,7 @@ type AuthContextValue = {
   updatePassword: (password: string) => Promise<void>;
   signInWithOAuth: (provider: 'google' | 'github' | 'facebook') => Promise<void>;
   signOut: () => Promise<void>;
+  getAccessToken: (options?: { forceRefresh?: boolean }) => Promise<string | null>;
   refreshProfile: () => Promise<void>;
   saveProfile: (
     input: SaveProfileInput,
@@ -640,8 +642,50 @@ const useAuthBootstrap = () => {
     }
   };
 
+  const getAccessToken = useCallback(async (options: { forceRefresh?: boolean } = {}) => {
+    if (!supabase) {
+      return session?.access_token ?? null;
+    }
+
+    const {
+      data: { session: currentSession },
+      error,
+    } = await supabase.auth.getSession();
+
+    if (error) {
+      throw new Error(error.message);
+    }
+
+    const expiresAtMs = currentSession?.expires_at
+      ? currentSession.expires_at * 1000
+      : null;
+    const hasFreshToken =
+      currentSession?.access_token &&
+      (!expiresAtMs || expiresAtMs - Date.now() > 60_000);
+
+    if (hasFreshToken && !options.forceRefresh) {
+      return currentSession.access_token;
+    }
+
+    const {
+      data: { session: refreshedSession },
+      error: refreshError,
+    } = await supabase.auth.refreshSession();
+
+    if (refreshError) {
+      throw new Error(refreshError.message);
+    }
+
+    startTransition(() => {
+      setSession(refreshedSession);
+      setUser(refreshedSession?.user ?? null);
+    });
+
+    return refreshedSession?.access_token ?? currentSession?.access_token ?? null;
+  }, [session?.access_token]);
+
   const refreshProfile = async () => {
-    await hydrateProfile(session?.access_token ?? null);
+    await hydrateProfile(await getAccessToken());
   };
 
   const saveProfile = async (
@@ -674,6 +718,7 @@ const useAuthBootstrap = () => {
     updatePassword,
     signInWithOAuth,
     signOut,
+    getAccessToken,
     refreshProfile,
     saveProfile,
   } satisfies AuthContextValue;

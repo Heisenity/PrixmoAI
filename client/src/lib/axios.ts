@@ -112,10 +112,11 @@ const toReadableApiMessage = (value: unknown): string => {
   if (typeof value === 'object') {
     const record = value as Record<string, unknown>;
     const message = toReadableApiMessage(record.message);
+    const error = toReadableApiMessage(record.error);
     const details = toReadableApiMessage(record.details);
     const hint = toReadableApiMessage(record.hint);
     const code = toReadableApiMessage(record.code);
-    const combined = [message, details, hint, code ? `(${code})` : '']
+    const combined = [message, error, details, hint, code ? `(${code})` : '']
       .filter(Boolean)
       .join(' ');
 

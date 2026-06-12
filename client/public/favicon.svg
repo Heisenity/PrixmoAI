@@ -1,21 +1,30 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
-  <rect width="64" height="64" rx="18" fill="#0B111A"/>
-  <rect
-    x="10"
-    y="10"
-    width="44"
-    height="44"
-    rx="14"
-    fill="url(#g)"
-    fill-opacity="0.12"
-    stroke="#FFFFFF"
-    stroke-opacity="0.12"
-  />
-  <circle cx="32" cy="32" r="9" fill="url(#g)"/>
   <defs>
-    <linearGradient id="g" x1="14" y1="14" x2="50" y2="50" gradientUnits="userSpaceOnUse">
+    <radialGradient id="prixmo-orb-core" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(27 24) rotate(50) scale(30 28)">
+      <stop stop-color="#D8F6FF"/>
+      <stop offset="0.22" stop-color="#AEEBFF"/>
+      <stop offset="0.62" stop-color="#7FDFF2"/>
+      <stop offset="1" stop-color="#4FBFBA"/>
+    </radialGradient>
+    <radialGradient id="prixmo-orb-shell" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(32 32) rotate(90) scale(28)">
+      <stop stop-color="#2D5F7C" stop-opacity="0.16"/>
+      <stop offset="0.7" stop-color="#1A354B" stop-opacity="0.88"/>
+      <stop offset="1" stop-color="#102030"/>
+    </radialGradient>
+    <linearGradient id="prixmo-orb-glow" x1="14" y1="14" x2="52" y2="52" gradientUnits="userSpaceOnUse">
       <stop stop-color="#8FD8FF"/>
       <stop offset="1" stop-color="#73F0D5"/>
     </linearGradient>
+    <filter id="prixmo-orb-blur" x="0" y="0" width="64" height="64" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feGaussianBlur stdDeviation="5"/>
+    </filter>
   </defs>
+
+  <rect width="64" height="64" rx="18" fill="#09111A"/>
+  <circle cx="32" cy="32" r="22" fill="url(#prixmo-orb-shell)"/>
+  <circle cx="32" cy="32" r="20" stroke="url(#prixmo-orb-glow)" stroke-opacity="0.18"/>
+  <circle cx="32" cy="32" r="13" fill="url(#prixmo-orb-core)"/>
+  <circle cx="38.5" cy="25.5" r="4.5" fill="#F4FFFF" fill-opacity="0.86"/>
+  <circle cx="23.5" cy="40.5" r="6.5" fill="url(#prixmo-orb-glow)" filter="url(#prixmo-orb-blur)" fill-opacity="0.22"/>
+  <circle cx="32" cy="32" r="29" stroke="url(#prixmo-orb-glow)" stroke-opacity="0.08"/>
 </svg>

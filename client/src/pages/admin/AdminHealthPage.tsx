@@ -7,9 +7,10 @@ import {
   RefreshCw,
   Search,
   Wifi,
+  X,
   XCircle,
 } from 'lucide-react';
-import { apiRequest } from '../../lib/axios';
+import { ApiRequestError, apiRequest } from '../../lib/axios';
 import { useAuth } from '../../hooks/useAuth';
 import { useAdminAccess } from '../../hooks/useAdminAccess';
 import { LoadingSpinner } from '../../components/shared/LoadingSpinner';
@@ -76,6 +77,137 @@ const statusClass = (status?: string | null) => {
   return 'admin-health-status admin-health-status--bad';
 };
 
+const FRIENDLY_EVENT_NAMES: Record<string, string> = {
+  analytics_learning_completed: 'Learning updated',
+  analytics_learning_job_enqueued: 'Learning update started',
+  analytics_learning_job_failed: 'Learning update failed',
+  analytics_learning_worker_failed: 'Learning service stopped',
+  analytics_sync_completed: 'Analytics updated',
+  analytics_sync_job_failed: 'Analytics update failed',
+  analytics_sync_worker_failed: 'Analytics service stopped',
+  analytics_account_sync_failed: 'Account analytics could not update',
+  content_generation_job_completed: 'Content created',
+  content_generation_job_failed: 'Content creation failed',
+  content_generation_worker_failed: 'Content service stopped',
+  image_generation_job_completed: 'Image created',
+  image_generation_job_failed: 'Image creation failed',
+  image_generation_worker_failed: 'Image service stopped',
+  scheduler_publish_completed: 'Post published',
+  scheduler_publish_failed: 'Post could not be published',
+  scheduler_publish_worker_failed: 'Publishing service stopped',
+  scheduler_analytics_sync_enqueue_failed: 'Post analytics update could not start',
+  failure_spike_detected: 'Several failures detected',
+};
+
+const FRIENDLY_EVENT_DESCRIPTIONS: Record<string, string> = {
+  analytics_learning_completed:
+    'PrixmoAI finished learning from the latest analytics.',
+  analytics_learning_job_enqueued:
+    'A new learning update was added and is waiting to be processed.',
+  analytics_learning_job_failed:
+    'PrixmoAI could not finish the learning update.',
+  analytics_learning_worker_failed:
+    'The service that updates recommendations stopped unexpectedly.',
+  analytics_sync_completed:
+    'The latest social analytics were collected successfully.',
+  analytics_sync_job_failed:
+    'The latest social analytics could not be collected.',
+  analytics_sync_worker_failed:
+    'The analytics update service stopped unexpectedly.',
+  analytics_account_sync_failed:
+    'Analytics could not be updated for a connected social account.',
+  content_generation_job_completed:
+    'The requested content was created successfully.',
+  content_generation_job_failed:
+    'The requested content could not be created.',
+  content_generation_worker_failed:
+    'The content creation service stopped unexpectedly.',
+  image_generation_job_completed:
+    'The requested image was created successfully.',
+  image_generation_job_failed:
+    'The requested image could not be created.',
+  image_generation_worker_failed:
+    'The image creation service stopped unexpectedly.',
+  scheduler_publish_completed:
+    'A scheduled post was published successfully.',
+  scheduler_publish_failed:
+    'A scheduled post could not be published.',
+  scheduler_publish_worker_failed:
+    'The publishing service stopped unexpectedly.',
+  scheduler_analytics_sync_enqueue_failed:
+    'The system could not start the analytics update for a published post.',
+  failure_spike_detected:
+    'More failures than usual were detected and should be checked.',
+};
+
+const FRIENDLY_AREAS: Record<string, string> = {
+  'content.generate': 'Content creation',
+  'image.generate': 'Image creation',
+  'video.generate': 'Video creation',
+  'scheduler.publish': 'Post publishing',
+  'analytics.sync.user': 'Analytics update',
+  'analytics.learning.user': 'Recommendation learning',
+  meta: 'Meta connection',
+  instagram: 'Instagram',
+  facebook: 'Facebook',
+  system: 'System',
+};
+
+const FRIENDLY_PERMISSIONS: Record<string, string> = {
+  'system_health:view': 'View system health',
+  'admin_access:manage': 'Manage employee access',
+  'social_health:view': 'View connected account health',
+  'analytics_health:view': 'View analytics health',
+  'safe_actions:run': 'Run safe recovery actions',
+  'user_debug:view': 'Check individual user accounts',
+};
+
+const FRIENDLY_ROLES: Record<string, string> = {
+  admin2: 'Full admin',
+  support: 'Customer support',
+  analytics: 'Analytics only',
+  readonly: 'View only',
+  custom: 'Custom access',
+};
+
+const friendlyWords = (value?: string | null) => {
+  if (!value) {
+    return 'System activity';
+  }
+
+  return value
+    .replace(/[._-]+/g, ' ')
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+};
+
+const friendlyEventName = (event?: string | null) =>
+  FRIENDLY_EVENT_NAMES[event ?? ''] ?? friendlyWords(event);
+
+const friendlyEventDescription = (event?: string | null) =>
+  FRIENDLY_EVENT_DESCRIPTIONS[event ?? ''] ??
+  'The system recorded this activity for your review.';
+
+const friendlyAreaName = (value?: string | null) =>
+  FRIENDLY_AREAS[value ?? ''] ?? friendlyWords(value);
+
+const friendlyStatus = (value?: string | null) => {
+  const normalized = value?.toLowerCase();
+
+  if (['up', 'connected', 'ok', 'healthy'].includes(normalized ?? '')) {
+    return 'Working';
+  }
+
+  if (['disabled', 'degraded', 'warning'].includes(normalized ?? '')) {
+    return 'Needs attention';
+  }
+
+  if (['error', 'failed', 'down'].includes(normalized ?? '')) {
+    return 'Not working';
+  }
+
+  return friendlyWords(value ?? 'Checking');
+};
+
 const JsonPreview = ({ value }: { value: unknown }) => (
   <pre className="admin-health-json">
     {JSON.stringify(value ?? {}, null, 2)}
@@ -108,6 +240,7 @@ const toReadableAdminMessage = (value: unknown, fallback: string): string => {
     const record = value as Record<string, unknown>;
     const message = [
       toReadableAdminMessage(record.message, ''),
+      toReadableAdminMessage(record.error, ''),
       toReadableAdminMessage(record.details, ''),
       toReadableAdminMessage(record.hint, ''),
       toReadableAdminMessage(record.code, ''),
@@ -160,7 +293,7 @@ const AdminNotice = ({
 };
 
 export const AdminHealthPage = () => {
-  const { token } = useAuth();
+  const { getAccessToken, token } = useAuth();
   const {
     access,
     hasPermission,
@@ -171,6 +304,9 @@ export const AdminHealthPage = () => {
   const [grants, setGrants] = useState<AdminGrant[]>([]);
   const [debugQuery, setDebugQuery] = useState('');
   const [debugSnapshot, setDebugSnapshot] = useState<unknown>(null);
+  const [dismissedImpactUsers, setDismissedImpactUsers] = useState<Set<string>>(
+    () => new Set()
+  );
   const [grantForm, setGrantForm] = useState({
     email: '',
     role: 'support',
@@ -187,6 +323,41 @@ export const AdminHealthPage = () => {
   const canRunActions = hasPermission(PERMISSIONS.safeActionsRun);
   const canDebugUsers = hasPermission(PERMISSIONS.userDebugView);
 
+  const resolveAdminToken = async (forceRefresh = false) => {
+    const freshToken = await getAccessToken({ forceRefresh });
+
+    if (!freshToken) {
+      throw new Error('Please sign in again to load admin health.');
+    }
+
+    return freshToken;
+  };
+
+  const adminRequest = async <T,>(
+    path: string,
+    options: Parameters<typeof apiRequest<T>>[1] = {}
+  ) => {
+    const firstToken = await resolveAdminToken();
+
+    try {
+      return await apiRequest<T>(path, {
+        ...options,
+        token: firstToken,
+      });
+    } catch (error) {
+      if (!(error instanceof ApiRequestError) || error.status !== 401) {
+        throw error;
+      }
+
+      const retryToken = await resolveAdminToken(true);
+
+      return apiRequest<T>(path, {
+        ...options,
+        token: retryToken,
+      });
+    }
+  };
+
   const loadOverview = async () => {
     if (!token || !isAdmin) {
       return;
@@ -198,13 +369,11 @@ export const AdminHealthPage = () => {
 
     try {
       try {
-        const nextOverview = await apiRequest<AdminOverview>(
-          '/api/admin-health/overview',
-          {
-            token,
-          }
+        const nextOverview = await adminRequest<AdminOverview>(
+          '/api/admin-health/overview'
         );
         setOverview(nextOverview);
+        setDismissedImpactUsers(new Set());
       } catch (error) {
         setOverview(null);
         setErrorMessage(
@@ -217,11 +386,8 @@ export const AdminHealthPage = () => {
 
       if (canManageAccess) {
         try {
-          const nextGrants = await apiRequest<AdminGrant[]>(
-            '/api/admin-health/grants',
-            {
-              token,
-            }
+          const nextGrants = await adminRequest<AdminGrant[]>(
+            '/api/admin-health/grants'
           );
           setGrants(nextGrants);
         } catch (error) {
@@ -268,9 +434,8 @@ export const AdminHealthPage = () => {
     setErrorMessage(null);
 
     try {
-      await apiRequest('/api/admin-health/actions', {
+      await adminRequest('/api/admin-health/actions', {
         method: 'POST',
-        token,
         body,
       });
       setStatusMessage('Admin action completed.');
@@ -294,8 +459,7 @@ export const AdminHealthPage = () => {
     setErrorMessage(null);
 
     try {
-      const data = await apiRequest('/api/admin-health/user-debug', {
-        token,
+      const data = await adminRequest('/api/admin-health/user-debug', {
         query: {
           query: debugQuery.trim(),
         },
@@ -310,6 +474,17 @@ export const AdminHealthPage = () => {
     }
   };
 
+  const clearUserDebug = () => {
+    setDebugQuery('');
+    setDebugSnapshot(null);
+    setStatusMessage(null);
+  };
+
+  const visibleImpactedUsers =
+    overview?.userImpact.filter(
+      (user) => !dismissedImpactUsers.has(String(user.userId))
+    ) ?? [];
+
   const saveGrant = async () => {
     if (!token || !canManageAccess) {
       return;
@@ -319,9 +494,8 @@ export const AdminHealthPage = () => {
     setErrorMessage(null);
 
     try {
-      await apiRequest('/api/admin-health/grants', {
+      await adminRequest('/api/admin-health/grants', {
         method: 'POST',
-        token,
         body: grantForm,
       });
       setGrantForm({
@@ -350,9 +524,8 @@ export const AdminHealthPage = () => {
     setErrorMessage(null);
 
     try {
-      await apiRequest(`/api/admin-health/grants/${grantId}`, {
+      await adminRequest(`/api/admin-health/grants/${grantId}`, {
         method: 'DELETE',
-        token,
       });
       setStatusMessage('Admin permission revoked.');
       await loadOverview();
@@ -389,8 +562,8 @@ export const AdminHealthPage = () => {
           <p className="section-eyebrow">SA Control Room</p>
           <h2>System Health</h2>
           <p>
-            Monitor generation, scheduler, Meta accounts, analytics, queues,
-            incidents, and employee admin access from one secure place.
+            See what is working, what needs attention, and which users may be
+            affected.
           </p>
         </div>
         <button
@@ -430,37 +603,41 @@ export const AdminHealthPage = () => {
           <section className="admin-health-grid admin-health-grid--status">
             <article className="admin-health-card">
               <Database size={20} />
-              <span>Database</span>
+              <span>Data storage</span>
               <strong className={statusClass(overview.liveSystemStatus.database?.status)}>
-                {overview.liveSystemStatus.database?.status ?? 'unknown'}
+                {friendlyStatus(overview.liveSystemStatus.database?.status)}
               </strong>
-              <p>{overview.liveSystemStatus.database?.message}</p>
+              <p>Your app can read and save data.</p>
             </article>
             <article className="admin-health-card">
               <Wifi size={20} />
-              <span>Redis / Queues</span>
+              <span>Background tasks</span>
               <strong className={statusClass(overview.liveSystemStatus.redis?.status)}>
-                {overview.liveSystemStatus.redis?.status ?? 'unknown'}
+                {friendlyStatus(overview.liveSystemStatus.redis?.status)}
               </strong>
-              <p>{overview.liveSystemStatus.redis?.message}</p>
+              <p>Waiting jobs can be stored and processed.</p>
             </article>
             <article className="admin-health-card">
               <Activity size={20} />
-              <span>Workers</span>
-              <strong>{overview.liveSystemStatus.workers?.mode ?? 'unknown'}</strong>
+              <span>Task processing</span>
+              <strong>
+                {overview.liveSystemStatus.workers?.mode === 'on-demand'
+                  ? 'Starts when needed'
+                  : 'Always ready'}
+              </strong>
               <p>
-                Generation boot:{' '}
-                {String(overview.liveSystemStatus.workers?.generationWorkersOnBoot)}
-                {' '}• Background boot:{' '}
-                {String(overview.liveSystemStatus.workers?.backgroundWorkersOnBoot)}
+                Content, publishing, and analytics tasks run automatically.
               </p>
             </article>
-            <article className="admin-health-card">
+            <article className="admin-health-card admin-health-card--last-job">
               <CheckCircle2 size={20} />
-              <span>Last successful job</span>
-              <strong>
-                {overview.liveSystemStatus.lastSuccessfulBackgroundJob?.event ??
-                  'No success event yet'}
+              <span>Latest completed task</span>
+              <strong title={overview.liveSystemStatus.lastSuccessfulBackgroundJob?.event}>
+                {overview.liveSystemStatus.lastSuccessfulBackgroundJob?.event
+                  ? friendlyEventName(
+                      overview.liveSystemStatus.lastSuccessfulBackgroundJob.event
+                    )
+                  : 'Nothing completed yet'}
               </strong>
               <p>
                 {formatDate(
@@ -472,43 +649,43 @@ export const AdminHealthPage = () => {
 
           <section className="admin-health-grid">
             <article className="admin-health-card admin-health-card--wide">
-              <h3>Generation Health</h3>
+              <h3>Content and image creation</h3>
               <div className="admin-health-metrics">
-                <span>{overview.generationHealth.failedEventCount} failed events</span>
-                <span>{totalFailedQueueJobs} failed queue jobs</span>
-                <span>{overview.generationHealth.failedProviderCalls} provider failures</span>
+                <span>{overview.generationHealth.failedEventCount} recent problems</span>
+                <span>{totalFailedQueueJobs} tasks could not finish</span>
+                <span>{overview.generationHealth.failedProviderCalls} service problems</span>
               </div>
               <CompactEventList events={overview.generationHealth.recentFailures} />
             </article>
 
             <article className="admin-health-card admin-health-card--wide">
-              <h3>Scheduler Health</h3>
+              <h3>Scheduled publishing</h3>
               <div className="admin-health-metrics">
-                <span>{overview.schedulerHealth.pendingPosts} pending posts</span>
+                <span>{overview.schedulerHealth.pendingPosts} posts waiting</span>
                 <span>{overview.schedulerHealth.publishedPosts} published posts</span>
-                <span>{overview.schedulerHealth.failedPosts} failed posts</span>
-                <span>{overview.schedulerHealth.failedItems} failed items</span>
+                <span>{overview.schedulerHealth.failedPosts} posts need attention</span>
+                <span>{overview.schedulerHealth.failedItems} media items need attention</span>
               </div>
               <CompactEventList events={overview.schedulerHealth.recentFailures} />
             </article>
 
             <article className="admin-health-card">
-              <h3>Social Account Health</h3>
+              <h3>Connected social accounts</h3>
               <div className="admin-health-stack">
-                <span>Verified: {overview.socialAccountHealth.verified}</span>
-                <span>Expired: {overview.socialAccountHealth.expired}</span>
-                <span>Revoked: {overview.socialAccountHealth.revoked}</span>
-                <strong>Needs reconnect: {overview.socialAccountHealth.needsReconnect}</strong>
+                <span>Working: {overview.socialAccountHealth.verified}</span>
+                <span>Connection expired: {overview.socialAccountHealth.expired}</span>
+                <span>Access removed: {overview.socialAccountHealth.revoked}</span>
+                <strong>Reconnect needed: {overview.socialAccountHealth.needsReconnect}</strong>
               </div>
             </article>
 
             <article className="admin-health-card">
-              <h3>Analytics Health</h3>
+              <h3>Analytics updates</h3>
               <div className="admin-health-stack">
-                <span>Synced rows 24h: {overview.analyticsHealth.syncedRowsLast24h}</span>
-                <span>Learning runs: {overview.analyticsHealth.learningRunsLast24h}</span>
-                <span>Failed runs: {overview.analyticsHealth.learningRunsFailed}</span>
-                <strong>Posts analyzed: {overview.analyticsHealth.postsAnalyzedLast24h}</strong>
+                <span>Updates received today: {overview.analyticsHealth.syncedRowsLast24h}</span>
+                <span>Learning updates today: {overview.analyticsHealth.learningRunsLast24h}</span>
+                <span>Updates needing attention: {overview.analyticsHealth.learningRunsFailed}</span>
+                <strong>Posts checked today: {overview.analyticsHealth.postsAnalyzedLast24h}</strong>
               </div>
             </article>
           </section>
@@ -516,19 +693,19 @@ export const AdminHealthPage = () => {
           <section className="admin-health-card">
             <div className="admin-health-section-head">
               <div>
-                <h3>Queue Monitor</h3>
-                <p>Waiting, active, delayed, failed, and recent failed jobs.</p>
+                <h3>Background work</h3>
+                <p>See which tasks are waiting, running, delayed, or need attention.</p>
               </div>
             </div>
             <div className="admin-health-table">
               {overview.queueMonitor.map((queue) => (
-                <div className="admin-health-table-row" key={queue.queue}>
-                  <strong>{queue.queue}</strong>
-                  <span>Status: {queue.status}</span>
+                <div className="admin-health-table-row admin-health-table-row--queue" key={queue.queue}>
+                  <strong title={queue.queue}>{friendlyAreaName(queue.queue)}</strong>
+                  <span>Connection: {friendlyStatus(queue.status)}</span>
                   <span>Waiting: {queue.counts?.waiting ?? 0}</span>
-                  <span>Active: {queue.counts?.active ?? 0}</span>
+                  <span>Running: {queue.counts?.active ?? 0}</span>
                   <span>Delayed: {queue.counts?.delayed ?? 0}</span>
-                  <span>Failed: {queue.counts?.failed ?? 0}</span>
+                  <span>Needs attention: {queue.counts?.failed ?? 0}</span>
                 </div>
               ))}
             </div>
@@ -548,24 +725,61 @@ export const AdminHealthPage = () => {
 
           <section className="admin-health-grid">
             <article className="admin-health-card admin-health-card--wide">
-              <h3>Failure Alerts</h3>
-              <p>{overview.failureAlerts.spikeCount} spike alerts in the last 24 hours.</p>
+              <h3>Important alerts</h3>
+              <p>
+                {overview.failureAlerts.spikeCount
+                  ? `${overview.failureAlerts.spikeCount} unusual failure alerts in the last 24 hours.`
+                  : 'No unusual rise in failures during the last 24 hours.'}
+              </p>
               <CompactEventList events={overview.failureAlerts.recentSpikes} />
             </article>
             <article className="admin-health-card admin-health-card--wide">
-              <h3>User Impact View</h3>
-              <div className="admin-health-table">
-                {overview.userImpact.length ? (
-                  overview.userImpact.map((user) => (
-                    <div className="admin-health-table-row" key={user.userId}>
-                      <strong>{user.email ?? user.userId}</strong>
-                      <span>{user.issueCount} issues</span>
-                      <span>{user.affectedFeatures?.join(', ') || 'system'}</span>
-                      <span>{user.recovered ? 'Recovered signal found' : 'Needs review'}</span>
+              <h3>Users needing attention</h3>
+              <p>Users who recently experienced a warning or failure.</p>
+              <div className="admin-health-table admin-health-impact-list">
+                {visibleImpactedUsers.length ? (
+                  visibleImpactedUsers.map((user) => (
+                    <div className="admin-health-impact-row" key={user.userId}>
+                      <div className="admin-health-impact-copy">
+                        <strong>{user.email ?? 'User account'}</strong>
+                        <span>
+                          {user.issueCount} {user.issueCount === 1 ? 'problem' : 'problems'} found
+                        </span>
+                        <span>
+                          Affected area:{' '}
+                          {(user.affectedFeatures ?? [])
+                            .map((feature: string) => friendlyAreaName(feature))
+                            .join(', ') || 'General system'}
+                        </span>
+                      </div>
+                      <span
+                        className={
+                          user.recovered
+                            ? 'admin-health-status admin-health-status--good'
+                            : 'admin-health-status admin-health-status--warn'
+                        }
+                      >
+                        {user.recovered ? 'Working again' : 'Please review'}
+                      </span>
+                      <button
+                        type="button"
+                        className="admin-health-icon-button"
+                        aria-label={`Remove ${user.email ?? 'user'} from this view`}
+                        title="Remove from this view"
+                        onClick={() =>
+                          setDismissedImpactUsers((current) => {
+                            const next = new Set(current);
+                            next.add(String(user.userId));
+                            return next;
+                          })
+                        }
+                      >
+                        <X size={17} />
+                      </button>
                     </div>
                   ))
                 ) : (
-                  <p>No impacted users in the last 24 hours.</p>
+                  <p>No users currently need attention in this view.</p>
                 )}
               </div>
             </article>
@@ -575,8 +789,8 @@ export const AdminHealthPage = () => {
             <section className="admin-health-card">
               <div className="admin-health-section-head">
                 <div>
-                  <h3>Per-user Debugging</h3>
-                  <p>Search by user email or user ID. Secrets and tokens are redacted.</p>
+                  <h3>Check one user</h3>
+                  <p>Search by email or user ID to review that account safely.</p>
                 </div>
                 <div className="admin-health-search">
                   <Search size={16} />
@@ -590,6 +804,17 @@ export const AdminHealthPage = () => {
                     }}
                     placeholder="user@email.com or user id"
                   />
+                  {debugQuery || debugSnapshot ? (
+                    <button
+                      type="button"
+                      className="admin-health-icon-button"
+                      aria-label="Clear user search"
+                      title="Clear user search"
+                      onClick={clearUserDebug}
+                    >
+                      <X size={17} />
+                    </button>
+                  ) : null}
                   <button
                     type="button"
                     className="admin-health-button"
@@ -602,7 +827,25 @@ export const AdminHealthPage = () => {
               </div>
               {debugSnapshot ? (
                 <div className="admin-health-debug">
-                  <JsonPreview value={debugSnapshot} />
+                  <div className="admin-health-debug-head">
+                    <div>
+                      <strong>User details loaded</strong>
+                      <span>Private tokens and passwords are hidden.</span>
+                    </div>
+                    <button
+                      type="button"
+                      className="admin-health-button admin-health-button--tiny"
+                      onClick={clearUserDebug}
+                    >
+                      <X size={15} />
+                      Close
+                    </button>
+                  </div>
+                  <UserDebugSummary value={debugSnapshot} />
+                  <details className="admin-health-technical-details">
+                    <summary>Show technical details</summary>
+                    <JsonPreview value={debugSnapshot} />
+                  </details>
                   {canRunActions && (debugSnapshot as any)?.user?.id ? (
                     <div className="admin-health-actions">
                       <button
@@ -639,7 +882,8 @@ export const AdminHealthPage = () => {
           ) : null}
 
           <section className="admin-health-card">
-            <h3>Recent Operational Events</h3>
+            <h3>Recent system activity</h3>
+            <p>Recent updates and problems recorded by PrixmoAI.</p>
             <CompactEventList
               events={overview.recentEvents}
               canMarkReviewed={canRunActions}
@@ -657,8 +901,8 @@ export const AdminHealthPage = () => {
         <section className="admin-health-card admin-health-card--setup">
           <h3>Health data is not loaded yet</h3>
           <p>
-            This dashboard becomes useful after the admin health migration is
-            applied and the backend can read the health-event tables.
+            System information is not available yet. Refresh after the backend
+            and database are ready.
           </p>
           <div className="admin-health-metrics">
             <span>System status</span>
@@ -748,34 +992,91 @@ export const AdminHealthPage = () => {
                       }))
                     }
                   />
-                  {permission}
+                  {FRIENDLY_PERMISSIONS[permission] ?? friendlyWords(permission)}
                 </label>
               ))}
             </div>
           ) : null}
 
           <div className="admin-health-table">
-            {grants.map((grant) => (
-              <div className="admin-health-table-row" key={grant.id}>
-                <strong>{grant.email}</strong>
-                <span>{grant.role}</span>
-                <span>{grant.revoked_at ? 'Revoked' : 'Active'}</span>
-                <span>{formatDate(grant.created_at)}</span>
-                {!grant.revoked_at ? (
-                  <button
-                    type="button"
-                    className="admin-health-button admin-health-button--danger"
-                    disabled={isActionRunning}
-                    onClick={() => void revokeGrant(grant.id)}
-                  >
-                    Revoke
-                  </button>
-                ) : null}
-              </div>
-            ))}
+            {grants.length ? (
+              grants.map((grant) => (
+                <div className="admin-health-table-row" key={grant.id}>
+                  <strong>{grant.email}</strong>
+                  <span>{FRIENDLY_ROLES[grant.role] ?? friendlyWords(grant.role)}</span>
+                  <span>{grant.revoked_at ? 'Access removed' : 'Access active'}</span>
+                  <span>{formatDate(grant.created_at)}</span>
+                  {!grant.revoked_at ? (
+                    <button
+                      type="button"
+                      className="admin-health-button admin-health-button--danger"
+                      disabled={isActionRunning}
+                      onClick={() => void revokeGrant(grant.id)}
+                    >
+                      Revoke
+                    </button>
+                  ) : null}
+                </div>
+              ))
+            ) : (
+              <p className="admin-health-muted">
+                No employee admin access has been added yet.
+              </p>
+            )}
           </div>
         </section>
       ) : null}
+    </div>
+  );
+};
+
+const UserDebugSummary = ({ value }: { value: unknown }) => {
+  const snapshot =
+    value && typeof value === 'object'
+      ? (value as Record<string, any>)
+      : {};
+  const user =
+    snapshot.user && typeof snapshot.user === 'object'
+      ? snapshot.user
+      : {};
+  const count = (key: string) =>
+    Array.isArray(snapshot[key]) ? snapshot[key].length : 0;
+  const currentSubscription = Array.isArray(snapshot.subscriptions)
+    ? snapshot.subscriptions[0]
+    : null;
+
+  return (
+    <div className="admin-health-user-summary">
+      <div className="admin-health-user-summary__identity">
+        <div>
+          <span>User</span>
+          <strong>{user.email ?? 'Email not available'}</strong>
+        </div>
+        <div>
+          <span>Last signed in</span>
+          <strong>{formatDate(user.lastSignInAt)}</strong>
+        </div>
+        <div>
+          <span>Current plan</span>
+          <strong>
+            {friendlyWords(
+              currentSubscription?.plan ??
+                currentSubscription?.tier ??
+                currentSubscription?.status ??
+                'Not available'
+            )}
+          </strong>
+        </div>
+      </div>
+      <div className="admin-health-user-summary__counts">
+        <span>{count('generatedContent')} content items</span>
+        <span>{count('generatedImages')} images</span>
+        <span>{count('socialAccounts')} connected accounts</span>
+        <span>{count('scheduledPosts')} scheduled posts</span>
+        <span>{count('analytics')} analytics records</span>
+        <span>{count('learningRuns')} learning updates</span>
+        <span>{count('healthEvents')} recent system events</span>
+      </div>
     </div>
   );
 };
@@ -804,14 +1105,16 @@ const CompactEventList = ({
             : event.level === 'warn'
               ? AlertTriangle
               : CheckCircle2;
+        const area = event.queue || event.provider || event.platform || 'system';
 
         return (
           <div className="admin-health-event" key={event.id ?? `${event.event}-${event.created_at}`}>
             <Icon size={16} />
-            <div>
-              <strong>{event.event}</strong>
+            <div className="admin-health-event__copy">
+              <strong title={event.event}>{friendlyEventName(event.event)}</strong>
+              <p>{friendlyEventDescription(event.event)}</p>
               <span>
-                {event.queue || event.provider || event.platform || 'system'} •{' '}
+                {friendlyAreaName(area)} •{' '}
                 {formatDate(event.created_at)}
               </span>
             </div>
@@ -822,8 +1125,10 @@ const CompactEventList = ({
                 disabled={isActionRunning}
                 onClick={() => onMarkReviewed?.(event.id)}
               >
-                Reviewed
+                Mark checked
               </button>
+            ) : event.reviewed_at ? (
+              <span className="admin-health-checked">Checked</span>
             ) : null}
           </div>
         );
@@ -851,7 +1156,7 @@ const FailedJobs = ({
   );
 
   if (!failedJobs.length) {
-    return <p className="admin-health-muted">No failed queue jobs retained right now.</p>;
+    return <p className="admin-health-muted">No unfinished background tasks need attention.</p>;
   }
 
   return (
@@ -859,9 +1164,12 @@ const FailedJobs = ({
       {failedJobs.map((job) => (
         <div className="admin-health-failed-job" key={`${job.queue}-${job.id}`}>
           <div>
-            <strong>{job.queue}</strong>
-            <span>Job {job.id} • attempts {job.attemptsMade}</span>
-            <p>{job.failedReason || 'No failure reason saved.'}</p>
+            <strong title={job.queue}>{friendlyAreaName(job.queue)}</strong>
+            <span>
+              Tried {Number(job.attemptsMade ?? 0)}{' '}
+              {Number(job.attemptsMade ?? 0) === 1 ? 'time' : 'times'}
+            </span>
+            <p>{job.failedReason || 'No explanation was saved for this problem.'}</p>
           </div>
           {canRunActions ? (
             <button
@@ -870,7 +1178,7 @@ const FailedJobs = ({
               disabled={isActionRunning || !job.id}
               onClick={() => onRetry(String(job.queue), String(job.id))}
             >
-              Retry
+              Try again
             </button>
           ) : null}
         </div>

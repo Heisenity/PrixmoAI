@@ -91,6 +91,46 @@ const sanitizeForAdmin = (value: unknown): unknown => {
   return output;
 };
 
+const getErrorMessage = (error: unknown, fallback = 'Unknown error') => {
+  if (!error) {
+    return fallback;
+  }
+
+  if (error instanceof Error && error.message) {
+    return error.message;
+  }
+
+  if (typeof error === 'string') {
+    return error;
+  }
+
+  if (typeof error === 'object') {
+    const record = error as Record<string, unknown>;
+    const parts = [
+      typeof record.message === 'string' ? record.message : null,
+      typeof record.details === 'string' ? record.details : null,
+      typeof record.hint === 'string' ? record.hint : null,
+      typeof record.code === 'string' ? `(${record.code})` : null,
+    ].filter(Boolean);
+
+    if (parts.length) {
+      return parts.join(' ');
+    }
+
+    try {
+      return JSON.stringify(error);
+    } catch {
+      return fallback;
+    }
+  }
+
+  return String(error);
+};
+
+const isMissingAdminAccessTableError = (message: string) =>
+  /admin_access_grants|admin_safe_action_logs|admin_health_events/i.test(message) &&
+  /does not exist|schema cache|could not find|relation/i.test(message);
+
 const safeCount = async (
   client: AppSupabaseClient,
   table: string,
@@ -119,7 +159,7 @@ const safeCount = async (
   } catch (error) {
     return {
       count: 0,
-      error: error instanceof Error ? error.message : String(error),
+      error: getErrorMessage(error),
     };
   }
 };
@@ -150,7 +190,7 @@ const safeRows = async <T = JsonRecord>(
   } catch (error) {
     return {
       rows: [],
-      error: error instanceof Error ? error.message : String(error),
+      error: getErrorMessage(error),
     };
   }
 };
@@ -369,6 +409,8 @@ const getUserImpact = async (client: AppSupabaseClient) => {
       affectedFeatures: Set<string>;
       reviewedCount: number;
       recovered: boolean;
+      latestIssueAt: string | null;
+      latestRecoveryAt: string | null;
     }
   >();
 
@@ -389,28 +431,50 @@ const getUserImpact = async (client: AppSupabaseClient) => {
       affectedFeatures: new Set<string>(),
       reviewedCount: 0,
       recovered: false,
+      latestIssueAt: null,
+      latestRecoveryAt: null,
     };
 
-    current.issueCount += row.level === 'error' || row.level === 'warn' ? 1 : 0;
-    current.affectedFeatures.add(
-      String(row.queue ?? row.provider ?? row.platform ?? row.event ?? 'system')
-    );
+    const isIssue = row.level === 'error' || row.level === 'warn';
+    const isRecovery =
+      row.level === 'info' &&
+      /completed|success|synced/i.test(String(row.event));
+
+    if (isIssue) {
+      current.issueCount += 1;
+      current.latestIssueAt ??= String(row.created_at ?? '');
+      current.affectedFeatures.add(
+        String(row.queue ?? row.provider ?? row.platform ?? row.event ?? 'system')
+      );
+    }
 
     if (row.reviewed_at) {
       current.reviewedCount += 1;
     }
 
-    if (row.level === 'info' && /completed|success|synced/i.test(String(row.event))) {
-      current.recovered = true;
+    if (isRecovery) {
+      current.latestRecoveryAt ??= String(row.created_at ?? '');
     }
+
+    current.recovered = Boolean(
+      current.latestIssueAt &&
+        current.latestRecoveryAt &&
+        new Date(current.latestRecoveryAt).getTime() >
+          new Date(current.latestIssueAt).getTime()
+    );
 
     grouped.set(userId, current);
   });
 
-  const userEmailById = await getAuthUsersById([...grouped.keys()]);
+  const impactedUsers = [...grouped.values()].filter(
+    (item) => item.issueCount > 0
+  );
+  const userEmailById = await getAuthUsersById(
+    impactedUsers.map((item) => item.userId)
+  );
 
-  return [...grouped.values()]
-    .map((item) => ({
+  return impactedUsers
+    .map(({ latestIssueAt: _latestIssueAt, latestRecoveryAt: _latestRecoveryAt, ...item }) => ({
       ...item,
       email: userEmailById.get(item.userId) ?? null,
       affectedFeatures: [...item.affectedFeatures],
@@ -611,6 +675,12 @@ export const listAdminAccessGrants = async () => {
   );
 
   if (error) {
+    if (isMissingAdminAccessTableError(error)) {
+      throw new Error(
+        'Admin access storage is not ready yet. Apply migration 029_admin_system_health.sql, then restart the backend.'
+      );
+    }
+
     throw new Error(error);
   }
 
@@ -661,7 +731,15 @@ export const upsertAdminAccessGrant = async (
     .single();
 
   if (error) {
-    throw new Error(error.message || 'Failed to save admin access grant.');
+    const message = getErrorMessage(error, 'Failed to save admin access grant.');
+
+    if (isMissingAdminAccessTableError(message)) {
+      throw new Error(
+        'Admin access storage is not ready yet. Apply migration 029_admin_system_health.sql before saving employee access.'
+      );
+    }
+
+    throw new Error(message);
   }
 
   await logSafeAction(client, {
@@ -695,7 +773,15 @@ export const revokeAdminAccessGrant = async (
     .single();
 
   if (error) {
-    throw new Error(error.message || 'Failed to revoke admin access grant.');
+    const message = getErrorMessage(error, 'Failed to revoke admin access grant.');
+
+    if (isMissingAdminAccessTableError(message)) {
+      throw new Error(
+        'Admin access storage is not ready yet. Apply migration 029_admin_system_health.sql before revoking employee access.'
+      );
+    }
+
+    throw new Error(message);
   }
 
   await logSafeAction(client, {
@@ -723,15 +809,29 @@ const logSafeAction = async (
   client: AppSupabaseClient,
   input: SafeActionLogInput
 ) => {
-  await client.from('admin_safe_action_logs').insert({
-    actor_user_id: input.actorUserId,
-    target_user_id: input.targetUserId ?? null,
-    action: input.action,
-    status: input.status,
-    request_payload: sanitizeForAdmin(input.requestPayload) as JsonRecord,
-    result_payload: sanitizeForAdmin(input.resultPayload ?? {}) as JsonRecord,
-    error_message: input.errorMessage ?? null,
-  });
+  try {
+    const { error } = await client.from('admin_safe_action_logs').insert({
+      actor_user_id: input.actorUserId,
+      target_user_id: input.targetUserId ?? null,
+      action: input.action,
+      status: input.status,
+      request_payload: sanitizeForAdmin(input.requestPayload) as JsonRecord,
+      result_payload: sanitizeForAdmin(input.resultPayload ?? {}) as JsonRecord,
+      error_message: input.errorMessage ?? null,
+    });
+
+    if (error) {
+      console.warn('[admin-health] safe action log skipped', {
+        action: input.action,
+        error: getErrorMessage(error),
+      });
+    }
+  } catch (error) {
+    console.warn('[admin-health] safe action log skipped', {
+      action: input.action,
+      error: getErrorMessage(error),
+    });
+  }
 };
 
 export const runAdminSafeAction = async (
