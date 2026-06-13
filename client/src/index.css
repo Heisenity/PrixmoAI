@@ -6670,17 +6670,22 @@ img {
 
 .scheduler-connection-flow {
   display: grid;
-  grid-template-columns: minmax(0, 1.45fr) minmax(280px, 0.85fr);
-  gap: 1rem;
+  grid-template-columns: minmax(0, 1fr);
+  justify-items: center;
+  gap: 0.85rem;
 }
 
 .scheduler-connection-card {
   display: grid;
-  gap: 1rem;
-  padding: 1.35rem;
-  border-radius: 24px;
+  gap: 0.88rem;
+  width: min(100%, 680px);
+  padding: 1.1rem;
+  border-radius: 22px;
   border: 1px solid rgba(255, 255, 255, 0.06);
   background: rgba(255, 255, 255, 0.02);
+  box-shadow:
+    0 18px 38px rgba(4, 10, 18, 0.16),
+    inset 0 1px 0 rgba(255, 255, 255, 0.02);
 }
 
 .scheduler-connection-card--primary {
@@ -6694,28 +6699,28 @@ img {
   align-items: center;
   gap: 0.45rem;
   width: fit-content;
-  padding: 0.35rem 0.7rem;
+  padding: 0.32rem 0.66rem;
   border-radius: 999px;
   background: rgba(164, 231, 144, 0.14);
   color: rgba(186, 247, 169, 0.95);
-  font-size: 0.84rem;
+  font-size: 0.8rem;
 }
 
 .scheduler-connection-card__title {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
-  font-size: 1.5rem;
+  gap: 0.68rem;
+  font-size: 1.35rem;
 }
 
 .scheduler-connection-card__title strong {
-  font-size: 1.6rem;
+  font-size: 1.46rem;
   letter-spacing: -0.04em;
 }
 
 .scheduler-connection-card__list {
   display: grid;
-  gap: 0.8rem;
+  gap: 0.68rem;
   padding: 0;
   margin: 0;
   list-style: none;
@@ -6724,9 +6729,10 @@ img {
 .scheduler-connection-card__list li {
   display: flex;
   align-items: flex-start;
-  gap: 0.7rem;
+  gap: 0.62rem;
   color: var(--text-soft);
-  line-height: 1.6;
+  line-height: 1.52;
+  font-size: 0.97rem;
 }
 
 .scheduler-connection-card__list svg {
@@ -6739,6 +6745,58 @@ img {
   margin: 0;
   color: var(--text-soft);
   line-height: 1.7;
+}
+
+.scheduler-connection-card__cta {
+  align-self: center;
+  justify-self: center;
+  width: min(100%, 380px);
+  min-height: 44px;
+  padding-inline: 1rem;
+  font-size: 0.92rem;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  background-size: 140% 140%;
+  box-shadow:
+    0 12px 24px rgba(110, 194, 224, 0.12),
+    0 0 0 1px rgba(255, 255, 255, 0.03) inset;
+  animation: scheduler-connection-cta-breathe 3.8s ease-in-out infinite;
+}
+
+.scheduler-connection-card__cta:hover,
+.scheduler-connection-card__cta:focus-visible {
+  transform: translateY(-1px);
+  box-shadow:
+    0 16px 28px rgba(110, 194, 224, 0.16),
+    0 0 0 1px rgba(255, 255, 255, 0.05) inset;
+}
+
+@keyframes scheduler-connection-cta-breathe {
+  0%,
+  100% {
+    box-shadow:
+      0 12px 24px rgba(110, 194, 224, 0.12),
+      0 0 0 1px rgba(255, 255, 255, 0.03) inset;
+    background-position: 0% 50%;
+  }
+
+  50% {
+    box-shadow:
+      0 16px 28px rgba(110, 194, 224, 0.16),
+      0 0 0 1px rgba(255, 255, 255, 0.05) inset;
+    background-position: 100% 50%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scheduler-connection-card__cta {
+    animation: none;
+  }
+
+  .scheduler-connection-card__cta:hover,
+  .scheduler-connection-card__cta:focus-visible {
+    transform: none;
+  }
 }
 
 .scheduler-facebook-selection {

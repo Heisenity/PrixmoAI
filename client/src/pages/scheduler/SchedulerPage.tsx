@@ -108,17 +108,17 @@ type ConnectModalStep = 'root' | 'instagram' | 'facebook';
 type QueueTabId = 'scheduled' | 'published' | 'failed' | 'cancelled';
 
 const instagramConnectionFeatures = [
-  'Automatic posting for professional accounts',
-  'Reconnect publishing permissions through Instagram directly',
-  'The connected handle comes from the Instagram login you use',
-  'Instagram can prompt you to upgrade to professional if needed',
+  'Only Instagram Professional accounts are supported here',
+  'Use your Business or Creator Instagram login to connect',
+  'PrixmoAI will link the exact professional profile you sign in with',
+  'If your account is still personal, switch it to professional first',
 ];
 
 const facebookConnectionFeatures = [
-  'Use a Facebook-branded login flow just for Pages you manage',
-  'Choose the exact Page you want to add after login',
-  'Connect multiple Pages from the same Facebook account',
-  'Groups stay manual because Meta no longer supports direct Group publishing',
+  'Only Facebook Pages are supported here',
+  'Sign in with Facebook, then pick the Page you manage',
+  'You can connect more than one Page from the same Facebook account',
+  'Facebook Groups are not supported in this publishing flow',
 ];
 
 const readMetadataValue = (
@@ -4299,9 +4299,8 @@ export const SchedulerPage = () => {
                     <p className="section-eyebrow">Instagram channel</p>
                     <h3>Choose your Instagram connection</h3>
                     <p>
-                      Buffer-style flow: connect a professional Instagram account
-                      directly so PrixmoAI can discover the real profile from the
-                      login you use.
+                      Connect your Instagram Professional account to publish and
+                      manage posts from PrixmoAI.
                     </p>
                   </div>
                   <div className="scheduler-channel-modal__header-actions">
@@ -4328,7 +4327,7 @@ export const SchedulerPage = () => {
                   <div className="scheduler-connection-card scheduler-connection-card--primary">
                     <div className="scheduler-connection-card__badge">
                       <RefreshCw size={14} />
-                      Automatic posting for professional accounts
+                      Instagram Professional only
                     </div>
                     <div className="scheduler-connection-card__title">
                       <Instagram size={22} />
@@ -4344,7 +4343,8 @@ export const SchedulerPage = () => {
                     </ul>
                     <Button
                       type="button"
-                      size="lg"
+                      size="md"
+                      className="scheduler-connection-card__cta"
                       onClick={() => {
                         void handleStartOAuth('instagram');
                       }}
@@ -4352,21 +4352,6 @@ export const SchedulerPage = () => {
                     >
                       <Instagram size={16} />
                       Connect to Instagram
-                    </Button>
-                  </div>
-
-                  <div className="scheduler-connection-card scheduler-connection-card--secondary">
-                    <div className="scheduler-connection-card__title">
-                      <Instagram size={22} />
-                      <strong>Personal</strong>
-                    </div>
-                    <p>
-                      Personal Instagram profiles are notification-only on tools like
-                      Buffer. PrixmoAI does not support that notification flow yet, so
-                      professional accounts are the supported path right now.
-                    </p>
-                    <Button type="button" variant="ghost" disabled>
-                      Personal support coming soon
                     </Button>
                   </div>
                 </div>
@@ -4380,8 +4365,8 @@ export const SchedulerPage = () => {
                     <p className="section-eyebrow">Facebook channel</p>
                     <h3>Select what you want to connect</h3>
                     <p>
-                      Facebook should stay Facebook-only here. Sign in with Facebook,
-                      then PrixmoAI will let you choose the exact Page to add.
+                      Connect your Facebook Page to publish and manage posts from
+                      PrixmoAI. Facebook Groups are not supported here.
                     </p>
                   </div>
                   <div className="scheduler-channel-modal__header-actions">
@@ -4408,7 +4393,7 @@ export const SchedulerPage = () => {
                   <div className="scheduler-connection-card scheduler-connection-card--primary">
                     <div className="scheduler-connection-card__badge">
                       <Flag size={14} />
-                      Page-based publishing
+                      Facebook Pages only
                     </div>
                     <div className="scheduler-connection-card__title">
                       <Facebook size={22} />
@@ -4424,7 +4409,8 @@ export const SchedulerPage = () => {
                     </ul>
                     <Button
                       type="button"
-                      size="lg"
+                      size="md"
+                      className="scheduler-connection-card__cta"
                       onClick={() => {
                         void handleStartOAuth('facebook');
                       }}
@@ -4432,21 +4418,6 @@ export const SchedulerPage = () => {
                     >
                       <Facebook size={16} />
                       Continue with Facebook
-                    </Button>
-                  </div>
-
-                  <div className="scheduler-connection-card scheduler-connection-card--secondary">
-                    <div className="scheduler-connection-card__title">
-                      <Flag size={22} />
-                      <strong>Facebook Group</strong>
-                    </div>
-                    <p>
-                      Meta removed direct Group publishing, so PrixmoAI is keeping
-                      Groups out of the live scheduler until a notification-based flow
-                      is added.
-                    </p>
-                    <Button type="button" variant="ghost" disabled>
-                      Group flow coming soon
                     </Button>
                   </div>
                 </div>
@@ -4473,8 +4444,8 @@ export const SchedulerPage = () => {
                 <p className="section-eyebrow">Facebook Pages</p>
                 <h3>Choose the Page to connect</h3>
                 <p>
-                  Buffer-style finish: pick the Facebook Pages you want to add to the
-                  scheduler from the account you just authenticated.
+                  Pick the Facebook Pages you want to add to the scheduler from
+                  the account you just authenticated.
                 </p>
               </div>
               <button
