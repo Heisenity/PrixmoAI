@@ -73,17 +73,42 @@ export const formatRetrievedBrandMemories = (
     return null;
   }
 
-  return [
-    'Relevant semantic brand memory:',
-    ...brandMemories.map(
+  const connectedAccountMemories = brandMemories.filter(
+    (memory) => memory.memoryType === 'connected-account-intelligence'
+  );
+  const generalMemories = brandMemories.filter(
+    (memory) => memory.memoryType !== 'connected-account-intelligence'
+  );
+  const sections: string[] = [];
+
+  if (connectedAccountMemories.length > 0) {
+    sections.push(
+      [
+        'Connected account intelligence for the selected platform:',
+        ...connectedAccountMemories.map(
+          (memory) => `- ${clampMemoryText(memory.contentText, 520)}`
+        ),
+        '- Use this as a platform-specific bias for tone, format, hooks, calls to action, and visual direction.',
+        '- Do not copy old posts or repeat their wording.',
+      ].join('\n')
+    );
+  }
+
+  if (generalMemories.length > 0) {
+    sections.push([
+      'Relevant semantic brand memory:',
+      ...generalMemories.map(
       (memory, index) =>
         `- Memory ${index + 1} (${memory.memoryType}, similarity ${memory.similarity.toFixed(2)}): ${clampMemoryText(
           memory.contentText
         )}`
-    ),
-    '- Reuse these memories only when they clearly match the current request.',
-    '- Treat them as style and strategy guidance, not as facts to copy blindly.',
-  ].join('\n');
+      ),
+      '- Reuse these memories only when they clearly match the current request.',
+      '- Treat them as style and strategy guidance, not as facts to copy blindly.',
+    ].join('\n'));
+  }
+
+  return sections.join('\n\n');
 };
 
 export const formatBrandContext = (

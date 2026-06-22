@@ -11,6 +11,7 @@ const socialAccounts_1 = require("../db/queries/socialAccounts");
 const subscriptions_1 = require("../db/queries/subscriptions");
 const supabase_1 = require("../db/supabase");
 const constants_1 = require("../config/constants");
+const socialAccountIntelligence_service_1 = require("../services/socialAccountIntelligence.service");
 const meta_service_1 = require("../services/meta.service");
 const schedulerPublisher_service_1 = require("../services/schedulerPublisher.service");
 const storage_service_1 = require("../services/storage.service");
@@ -824,7 +825,17 @@ const handleMetaOAuthCallback = async (req, res) => {
                         });
                     }
                 }
-                await (0, socialAccounts_1.upsertSocialAccountByUniqueKey)(client, claim.userId, accountInput);
+                const connectedAccount = await (0, socialAccounts_1.upsertSocialAccountByUniqueKey)(client, claim.userId, accountInput);
+                await (0, socialAccountIntelligence_service_1.handleVerifiedSocialAccountConnected)(connectedAccount.userId, connectedAccount).catch((intelligenceError) => {
+                    console.warn('[scheduler] connected account enrichment could not start', {
+                        userId: connectedAccount.userId,
+                        socialAccountId: connectedAccount.id,
+                        platform: connectedAccount.platform,
+                        error: intelligenceError instanceof Error
+                            ? intelligenceError.message
+                            : String(intelligenceError),
+                    });
+                });
                 return respondWithMetaOAuthResult(res, claim.responseMode, {
                     status: 'success',
                     message: 'Facebook Page connected.',
@@ -855,7 +866,17 @@ const handleMetaOAuthCallback = async (req, res) => {
             claim,
             exchange,
         });
-        await (0, socialAccounts_1.upsertSocialAccountByUniqueKey)(client, claim.userId, verified.socialAccount);
+        const connectedAccount = await (0, socialAccounts_1.upsertSocialAccountByUniqueKey)(client, claim.userId, verified.socialAccount);
+        await (0, socialAccountIntelligence_service_1.handleVerifiedSocialAccountConnected)(connectedAccount.userId, connectedAccount).catch((intelligenceError) => {
+            console.warn('[scheduler] connected account enrichment could not start', {
+                userId: connectedAccount.userId,
+                socialAccountId: connectedAccount.id,
+                platform: connectedAccount.platform,
+                error: intelligenceError instanceof Error
+                    ? intelligenceError.message
+                    : String(intelligenceError),
+            });
+        });
         return respondWithMetaOAuthResult(res, claim.responseMode, {
             status: 'success',
             message: claim.platform === 'instagram'
@@ -975,6 +996,18 @@ const finalizePendingMetaFacebookPages = async (req, res) => {
             }
         }
         const connectedAccounts = await Promise.all(accountInputs.map((input) => (0, socialAccounts_1.upsertSocialAccountByUniqueKey)(client, userId, input)));
+        for (const connectedAccount of connectedAccounts) {
+            await (0, socialAccountIntelligence_service_1.handleVerifiedSocialAccountConnected)(userId, connectedAccount).catch((intelligenceError) => {
+                console.warn('[scheduler] connected account enrichment could not start', {
+                    userId,
+                    socialAccountId: connectedAccount.id,
+                    platform: connectedAccount.platform,
+                    error: intelligenceError instanceof Error
+                        ? intelligenceError.message
+                        : String(intelligenceError),
+                });
+            });
+        }
         await (0, oauthConnectionSessions_1.deleteOAuthConnectionSession)(client, userId, session.id);
         return res.status(200).json({
             status: 'success',

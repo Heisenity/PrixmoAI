@@ -67,6 +67,7 @@ import {
   syncGeneratedContentSemanticMemory,
   syncGeneratedImageSemanticMemory,
 } from '../services/brandMemory.service';
+import { prepareConnectedAccountIntelligenceForGeneration } from '../services/socialAccountIntelligence.service';
 
 type AuthenticatedRequest<
   Params = Record<string, string>,
@@ -639,6 +640,16 @@ export const generateWorkspaceCopy = async (
       progress: 16,
       message: 'Pulling brand memory and past signals for this brief.',
     });
+    await prepareConnectedAccountIntelligenceForGeneration(
+      client,
+      req.user.id,
+      generationInput.platform
+    ).catch((memoryError) => {
+      console.warn('[workspace-copy] connected account intelligence lookup failed', {
+        userId: req.user?.id,
+        error: memoryError instanceof Error ? memoryError.message : String(memoryError),
+      });
+    });
     try {
       brandMemories = await getRelevantMemoriesForContentGeneration(
         client,
@@ -1027,6 +1038,17 @@ export const generateWorkspaceImage = async (
     let brandMemories = [] as Awaited<
       ReturnType<typeof getRelevantMemoriesForImageGeneration>
     >;
+
+    await prepareConnectedAccountIntelligenceForGeneration(
+      client,
+      req.user.id,
+      memoryQueryInput.platform
+    ).catch((memoryError) => {
+      console.warn('[workspace-image] connected account intelligence lookup failed', {
+        userId: req.user?.id,
+        error: memoryError instanceof Error ? memoryError.message : String(memoryError),
+      });
+    });
 
     try {
       brandMemories = await getRelevantMemoriesForImageGeneration(

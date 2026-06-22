@@ -25,6 +25,10 @@ import { startAnalyticsLearningWorker } from './services/analyticsLearning.servi
 import { startContentGenerationWorker } from './services/contentGenerationQueue.service';
 import { startImageGenerationWorker } from './services/imageGenerationQueue.service';
 import { startSchedulerPublisherWorker } from './services/schedulerPublisher.service';
+import {
+  ensureSocialAccountIntelligenceSweep,
+  startSocialAccountIntelligenceWorker,
+} from './services/socialAccountIntelligence.service';
 import { formatIstTimestamp } from './lib/timezone';
 import { version } from '../package.json';
 import { isRedisConfigured } from './lib/redis';
@@ -113,6 +117,7 @@ app.listen(PORT, () => {
     startSchedulerPublisherWorker();
     startAnalyticsSyncWorker();
     startAnalyticsLearningWorker();
+    startSocialAccountIntelligenceWorker();
   }
   if (!isRedisConfigured) {
     console.warn(
@@ -135,6 +140,14 @@ app.listen(PORT, () => {
     console.warn(
       '[runtime] Meta-dependent background jobs are idle until Meta OAuth credentials are configured.'
     );
+  } else if (isRedisConfigured) {
+    void ensureSocialAccountIntelligenceSweep().catch((error) => {
+      console.warn(
+        `[runtime] Failed to schedule connected-account intelligence refresh: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
+    });
   }
 
   void ensureConfiguredSuperAdminAccount()

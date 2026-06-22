@@ -72,6 +72,7 @@ type ScheduledItemRow = {
     oauth_provider: string | null;
     verification_status: string;
     verified_at: string | null;
+    is_primary_for_platform: boolean;
     access_token: string | null;
     refresh_token: string | null;
     token_expires_at: string | null;
@@ -155,6 +156,9 @@ const toScheduledItem = (row: ScheduledItemRow): ScheduledItem => ({
           row.social_accounts.oauth_provider === 'meta' ? 'meta' : null,
         verificationStatus: row.social_accounts.verification_status as any,
         verifiedAt: row.social_accounts.verified_at,
+        isPrimaryForPlatform: Boolean(
+          row.social_accounts.is_primary_for_platform
+        ),
         accessToken: row.social_accounts.access_token,
         refreshToken: row.social_accounts.refresh_token,
         tokenExpiresAt: row.social_accounts.token_expires_at,

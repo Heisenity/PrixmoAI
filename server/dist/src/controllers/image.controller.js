@@ -13,6 +13,7 @@ const r2Storage_service_1 = require("../services/r2Storage.service");
 const imageGenerationQueue_service_1 = require("../services/imageGenerationQueue.service");
 const runtimeCache_service_1 = require("../services/runtimeCache.service");
 const brandMemory_service_1 = require("../services/brandMemory.service");
+const socialAccountIntelligence_service_1 = require("../services/socialAccountIntelligence.service");
 const parsePositiveInt = (value, fallback) => {
     if (typeof value !== 'string') {
         return fallback;
@@ -141,6 +142,12 @@ const generateImage = async (req, res) => {
             keywords: linkedContent?.keywords ?? [],
         };
         let brandMemories = [];
+        await (0, socialAccountIntelligence_service_1.prepareConnectedAccountIntelligenceForGeneration)(client, req.user.id, memoryQueryInput.platform).catch((memoryError) => {
+            console.warn('[image] connected account intelligence lookup failed', {
+                userId: req.user?.id,
+                error: memoryError instanceof Error ? memoryError.message : String(memoryError),
+            });
+        });
         try {
             brandMemories = await (0, brandMemory_service_1.getRelevantMemoriesForImageGeneration)(client, req.user.id, brandProfile, memoryQueryInput);
         }

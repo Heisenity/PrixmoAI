@@ -24,6 +24,7 @@ const analyticsLearning_service_1 = require("./services/analyticsLearning.servic
 const contentGenerationQueue_service_1 = require("./services/contentGenerationQueue.service");
 const imageGenerationQueue_service_1 = require("./services/imageGenerationQueue.service");
 const schedulerPublisher_service_1 = require("./services/schedulerPublisher.service");
+const socialAccountIntelligence_service_1 = require("./services/socialAccountIntelligence.service");
 const timezone_1 = require("./lib/timezone");
 const package_json_1 = require("../package.json");
 const redis_1 = require("./lib/redis");
@@ -91,6 +92,7 @@ app.listen(PORT, () => {
         (0, schedulerPublisher_service_1.startSchedulerPublisherWorker)();
         (0, analyticsSync_service_1.startAnalyticsSyncWorker)();
         (0, analyticsLearning_service_1.startAnalyticsLearningWorker)();
+        (0, socialAccountIntelligence_service_1.startSocialAccountIntelligenceWorker)();
     }
     if (!redis_1.isRedisConfigured) {
         console.warn('[runtime] Redis-backed queues are disabled because REDIS_URL is missing.');
@@ -106,6 +108,11 @@ app.listen(PORT, () => {
     }
     if (!constants_1.isMetaOAuthConfigured) {
         console.warn('[runtime] Meta-dependent background jobs are idle until Meta OAuth credentials are configured.');
+    }
+    else if (redis_1.isRedisConfigured) {
+        void (0, socialAccountIntelligence_service_1.ensureSocialAccountIntelligenceSweep)().catch((error) => {
+            console.warn(`[runtime] Failed to schedule connected-account intelligence refresh: ${error instanceof Error ? error.message : String(error)}`);
+        });
     }
     void (0, superAdmin_1.ensureConfiguredSuperAdminAccount)()
         .then((result) => {

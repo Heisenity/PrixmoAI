@@ -40,6 +40,7 @@ import {
   getRelevantMemoriesForImageGeneration,
   syncGeneratedImageSemanticMemory,
 } from '../services/brandMemory.service';
+import { prepareConnectedAccountIntelligenceForGeneration } from '../services/socialAccountIntelligence.service';
 
 type AuthenticatedRequest<
   Params = Record<string, string>,
@@ -221,6 +222,17 @@ export const generateImage = async (
     let brandMemories = [] as Awaited<
       ReturnType<typeof getRelevantMemoriesForImageGeneration>
     >;
+
+    await prepareConnectedAccountIntelligenceForGeneration(
+      client,
+      req.user.id,
+      memoryQueryInput.platform
+    ).catch((memoryError) => {
+      console.warn('[image] connected account intelligence lookup failed', {
+        userId: req.user?.id,
+        error: memoryError instanceof Error ? memoryError.message : String(memoryError),
+      });
+    });
 
     try {
       brandMemories = await getRelevantMemoriesForImageGeneration(

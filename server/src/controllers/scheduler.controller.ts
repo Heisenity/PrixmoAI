@@ -64,6 +64,7 @@ import type {
   SchedulerMediaType,
   SocialPlatform,
 } from '../types';
+import { handleVerifiedSocialAccountConnected } from '../services/socialAccountIntelligence.service';
 import type {
   AddBatchItemsBody,
   CreateMediaAssetBody,
@@ -1352,11 +1353,25 @@ export const handleMetaOAuthCallback = async (
           }
         }
 
-        await upsertSocialAccountByUniqueKey(
+        const connectedAccount = await upsertSocialAccountByUniqueKey(
           client,
           claim.userId,
           accountInput
         );
+        await handleVerifiedSocialAccountConnected(
+          connectedAccount.userId,
+          connectedAccount
+        ).catch((intelligenceError) => {
+          console.warn('[scheduler] connected account enrichment could not start', {
+            userId: connectedAccount.userId,
+            socialAccountId: connectedAccount.id,
+            platform: connectedAccount.platform,
+            error:
+              intelligenceError instanceof Error
+                ? intelligenceError.message
+                : String(intelligenceError),
+          });
+        });
 
         return respondWithMetaOAuthResult(
           res,
@@ -1400,7 +1415,25 @@ export const handleMetaOAuthCallback = async (
       exchange,
     });
 
-    await upsertSocialAccountByUniqueKey(client, claim.userId, verified.socialAccount);
+    const connectedAccount = await upsertSocialAccountByUniqueKey(
+      client,
+      claim.userId,
+      verified.socialAccount
+    );
+    await handleVerifiedSocialAccountConnected(
+      connectedAccount.userId,
+      connectedAccount
+    ).catch((intelligenceError) => {
+      console.warn('[scheduler] connected account enrichment could not start', {
+        userId: connectedAccount.userId,
+        socialAccountId: connectedAccount.id,
+        platform: connectedAccount.platform,
+        error:
+          intelligenceError instanceof Error
+            ? intelligenceError.message
+            : String(intelligenceError),
+      });
+    });
 
     return respondWithMetaOAuthResult(
       res,
@@ -1598,6 +1631,23 @@ export const finalizePendingMetaFacebookPages = async (
         upsertSocialAccountByUniqueKey(client, userId, input)
       )
     );
+
+    for (const connectedAccount of connectedAccounts) {
+      await handleVerifiedSocialAccountConnected(
+        userId,
+        connectedAccount
+      ).catch((intelligenceError) => {
+        console.warn('[scheduler] connected account enrichment could not start', {
+          userId,
+          socialAccountId: connectedAccount.id,
+          platform: connectedAccount.platform,
+          error:
+            intelligenceError instanceof Error
+              ? intelligenceError.message
+              : String(intelligenceError),
+        });
+      });
+    }
 
     await deleteOAuthConnectionSession(client, userId, session.id);
 

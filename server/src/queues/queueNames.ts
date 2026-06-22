@@ -4,6 +4,7 @@ export const QUEUE_NAMES = {
   schedulerPublish: 'scheduler.publish',
   analyticsSyncUser: 'analytics.sync.user',
   analyticsLearningUser: 'analytics.learning.user',
+  socialAccountIntelligence: 'social.account.intelligence',
   videoGenerate: 'video.generate',
 } as const;
 

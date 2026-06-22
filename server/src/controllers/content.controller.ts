@@ -38,6 +38,7 @@ import {
   syncGeneratedContentSemanticMemory,
 } from '../services/brandMemory.service';
 import { recommendCaptionForScheduling } from '../services/contentRecommendation.service';
+import { prepareConnectedAccountIntelligenceForGeneration } from '../services/socialAccountIntelligence.service';
 
 type AuthenticatedRequest<
   Params = Record<string, string>,
@@ -139,6 +140,17 @@ export const generateContent = async (
     let brandMemories = [] as Awaited<
       ReturnType<typeof getRelevantMemoriesForContentGeneration>
     >;
+
+    await prepareConnectedAccountIntelligenceForGeneration(
+      client,
+      req.user.id,
+      generationInput.platform
+    ).catch((memoryError) => {
+      console.warn('[content-controller] connected account intelligence lookup failed', {
+        userId: req.user?.id,
+        error: memoryError instanceof Error ? memoryError.message : String(memoryError),
+      });
+    });
 
     try {
       brandMemories = await getRelevantMemoriesForContentGeneration(

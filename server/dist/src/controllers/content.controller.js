@@ -15,6 +15,7 @@ const contentGenerationQueue_service_1 = require("../services/contentGenerationQ
 const runtimeCache_service_1 = require("../services/runtimeCache.service");
 const brandMemory_service_2 = require("../services/brandMemory.service");
 const contentRecommendation_service_1 = require("../services/contentRecommendation.service");
+const socialAccountIntelligence_service_1 = require("../services/socialAccountIntelligence.service");
 const parsePositiveInt = (value, fallback) => {
     if (typeof value !== 'string') {
         return fallback;
@@ -78,6 +79,12 @@ const generateContent = async (req, res) => {
             ...resolveBrandPreference(brandProfile, req.body.useBrandName),
         };
         let brandMemories = [];
+        await (0, socialAccountIntelligence_service_1.prepareConnectedAccountIntelligenceForGeneration)(client, req.user.id, generationInput.platform).catch((memoryError) => {
+            console.warn('[content-controller] connected account intelligence lookup failed', {
+                userId: req.user?.id,
+                error: memoryError instanceof Error ? memoryError.message : String(memoryError),
+            });
+        });
         try {
             brandMemories = await (0, brandMemory_service_2.getRelevantMemoriesForContentGeneration)(client, req.user.id, brandProfile, generationInput);
         }

@@ -54,6 +54,7 @@ export type BrandMemoryType =
   | 'brand-description'
   | 'brand-voice-note'
   | 'platform-performance-insight'
+  | 'connected-account-intelligence'
   | 'user-generation-prompt'
   | 'generated-caption'
   | 'generated-hashtags'
@@ -442,6 +443,7 @@ export interface SocialAccount {
   oauthProvider: OAuthProvider | null;
   verificationStatus: SocialAccountVerificationStatus;
   verifiedAt: string | null;
+  isPrimaryForPlatform: boolean;
   accessToken: string | null;
   refreshToken: string | null;
   tokenExpiresAt: string | null;
@@ -459,6 +461,7 @@ export interface CreateSocialAccountInput {
   oauthProvider?: OAuthProvider | null;
   verificationStatus?: SocialAccountVerificationStatus;
   verifiedAt?: string | null;
+  isPrimaryForPlatform?: boolean;
   accessToken?: string | null;
   refreshToken?: string | null;
   tokenExpiresAt?: string | null;
@@ -467,6 +470,252 @@ export interface CreateSocialAccountInput {
 
 export interface UpdateSocialAccountInput
   extends Partial<CreateSocialAccountInput> {}
+
+export interface SocialAccountSyncRun {
+  id: string;
+  userId: string;
+  socialAccountId: string;
+  platform: SocialPlatform | string;
+  jobType: 'sync-account' | 'daily-sweep';
+  triggerSource: string;
+  status: 'queued' | 'running' | 'completed' | 'failed' | 'skipped';
+  checkpointPostId: string | null;
+  checkpointPostedAt: string | null;
+  lastSyncedAt: string | null;
+  nextRefreshAt: string | null;
+  fetchedPostsCount: number;
+  upsertedPostsCount: number;
+  insightRowsCount: number;
+  visualAssetsAnalyzed: number;
+  retryCount: number;
+  normalizedFailureKind: string | null;
+  errorMessage: string | null;
+  rawSummary: Record<string, unknown>;
+  startedAt: string | null;
+  completedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateSocialAccountSyncRunInput {
+  userId: string;
+  socialAccountId: string;
+  platform: SocialPlatform | string;
+  jobType?: SocialAccountSyncRun['jobType'];
+  triggerSource?: string;
+  status?: SocialAccountSyncRun['status'];
+  checkpointPostId?: string | null;
+  checkpointPostedAt?: string | null;
+  lastSyncedAt?: string | null;
+  nextRefreshAt?: string | null;
+  fetchedPostsCount?: number;
+  upsertedPostsCount?: number;
+  insightRowsCount?: number;
+  visualAssetsAnalyzed?: number;
+  retryCount?: number;
+  normalizedFailureKind?: string | null;
+  errorMessage?: string | null;
+  rawSummary?: Record<string, unknown>;
+  startedAt?: string | null;
+  completedAt?: string | null;
+}
+
+export interface UpdateSocialAccountSyncRunInput
+  extends Partial<CreateSocialAccountSyncRunInput> {}
+
+export interface SocialAccountProfileSnapshot {
+  id: string;
+  userId: string;
+  socialAccountId: string;
+  syncRunId: string | null;
+  platform: SocialPlatform | string;
+  username: string | null;
+  displayName: string | null;
+  biography: string | null;
+  profilePictureUrl: string | null;
+  followersCount: number | null;
+  followsCount: number | null;
+  mediaCount: number | null;
+  rawPayload: Record<string, unknown>;
+  fetchedAt: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateSocialAccountProfileSnapshotInput {
+  userId: string;
+  socialAccountId: string;
+  syncRunId?: string | null;
+  platform: SocialPlatform | string;
+  username?: string | null;
+  displayName?: string | null;
+  biography?: string | null;
+  profilePictureUrl?: string | null;
+  followersCount?: number | null;
+  followsCount?: number | null;
+  mediaCount?: number | null;
+  rawPayload?: Record<string, unknown>;
+  fetchedAt?: string;
+}
+
+export interface SocialAccountPostRaw {
+  id: string;
+  userId: string;
+  socialAccountId: string;
+  platform: SocialPlatform | string;
+  externalPostId: string;
+  shortcode: string | null;
+  permalink: string | null;
+  captionText: string | null;
+  captionHash: string | null;
+  mediaFingerprint: string | null;
+  mediaType: string | null;
+  mediaProductType: string | null;
+  normalizedFormat: string | null;
+  postedAt: string | null;
+  mediaUrl: string | null;
+  thumbnailUrl: string | null;
+  likeCount: number;
+  commentsCount: number;
+  shareCount: number;
+  saveCount: number;
+  reactionCount: number;
+  impressionsCount: number;
+  reachCount: number;
+  videoViewsCount: number;
+  rawPayload: Record<string, unknown>;
+  lastMetricsSyncedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface UpsertSocialAccountPostRawInput {
+  userId: string;
+  socialAccountId: string;
+  platform: SocialPlatform | string;
+  externalPostId: string;
+  shortcode?: string | null;
+  permalink?: string | null;
+  captionText?: string | null;
+  captionHash?: string | null;
+  mediaFingerprint?: string | null;
+  mediaType?: string | null;
+  mediaProductType?: string | null;
+  normalizedFormat?: string | null;
+  postedAt?: string | null;
+  mediaUrl?: string | null;
+  thumbnailUrl?: string | null;
+  likeCount?: number;
+  commentsCount?: number;
+  shareCount?: number;
+  saveCount?: number;
+  reactionCount?: number;
+  impressionsCount?: number;
+  reachCount?: number;
+  videoViewsCount?: number;
+  rawPayload?: Record<string, unknown>;
+  lastMetricsSyncedAt?: string | null;
+}
+
+export interface SocialAccountPostInsight {
+  id: string;
+  userId: string;
+  socialAccountId: string;
+  socialAccountPostRawId: string;
+  syncRunId: string;
+  platform: SocialPlatform | string;
+  likeCount: number;
+  commentsCount: number;
+  shareCount: number;
+  saveCount: number;
+  reactionCount: number;
+  impressionsCount: number;
+  reachCount: number;
+  videoViewsCount: number;
+  metrics: Record<string, unknown>;
+  rawPayload: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateSocialAccountPostInsightInput {
+  userId: string;
+  socialAccountId: string;
+  socialAccountPostRawId: string;
+  syncRunId: string;
+  platform: SocialPlatform | string;
+  likeCount?: number;
+  commentsCount?: number;
+  shareCount?: number;
+  saveCount?: number;
+  reactionCount?: number;
+  impressionsCount?: number;
+  reachCount?: number;
+  videoViewsCount?: number;
+  metrics?: Record<string, unknown>;
+  rawPayload?: Record<string, unknown>;
+}
+
+export interface SocialAccountIntelligenceProfile {
+  id: string;
+  userId: string;
+  socialAccountId: string;
+  platform: SocialPlatform | string;
+  summaryText: string;
+  accountTone: string | null;
+  mainThemes: string[];
+  repeatedKeywords: string[];
+  hookStyles: string[];
+  ctaStyles: string[];
+  captionLengthPattern: string | null;
+  emojiStyle: string | null;
+  hashtagBehavior: string | null;
+  postingCadence: Record<string, unknown>;
+  formatMix: Record<string, unknown>;
+  bestPatterns: Array<Record<string, unknown>>;
+  weakPatterns: Array<Record<string, unknown>>;
+  visualDna: Record<string, unknown>;
+  performanceContext: Record<string, unknown>;
+  summaryPayload: Record<string, unknown>;
+  sourcePostCount: number;
+  lastPostId: string | null;
+  lastPostTimestamp: string | null;
+  lastSyncedAt: string | null;
+  nextRefreshAt: string | null;
+  sourceWindowStart: string | null;
+  sourceWindowEnd: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface UpsertSocialAccountIntelligenceProfileInput {
+  userId: string;
+  socialAccountId: string;
+  platform: SocialPlatform | string;
+  summaryText: string;
+  accountTone?: string | null;
+  mainThemes?: string[];
+  repeatedKeywords?: string[];
+  hookStyles?: string[];
+  ctaStyles?: string[];
+  captionLengthPattern?: string | null;
+  emojiStyle?: string | null;
+  hashtagBehavior?: string | null;
+  postingCadence?: Record<string, unknown>;
+  formatMix?: Record<string, unknown>;
+  bestPatterns?: Array<Record<string, unknown>>;
+  weakPatterns?: Array<Record<string, unknown>>;
+  visualDna?: Record<string, unknown>;
+  performanceContext?: Record<string, unknown>;
+  summaryPayload?: Record<string, unknown>;
+  sourcePostCount?: number;
+  lastPostId?: string | null;
+  lastPostTimestamp?: string | null;
+  lastSyncedAt?: string | null;
+  nextRefreshAt?: string | null;
+  sourceWindowStart?: string | null;
+  sourceWindowEnd?: string | null;
+}
 
 export interface ScheduledPost {
   id: string;

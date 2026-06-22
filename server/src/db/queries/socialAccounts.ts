@@ -16,6 +16,7 @@ type SocialAccountRow = {
   oauth_provider: string | null;
   verification_status: SocialAccount['verificationStatus'];
   verified_at: string | null;
+  is_primary_for_platform: boolean;
   access_token: string | null;
   refresh_token: string | null;
   token_expires_at: string | null;
@@ -59,6 +60,7 @@ const toSocialAccount = (row: SocialAccountRow): SocialAccount => ({
   oauthProvider: (row.oauth_provider as SocialAccount['oauthProvider']) ?? null,
   verificationStatus: row.verification_status,
   verifiedAt: row.verified_at,
+  isPrimaryForPlatform: Boolean(row.is_primary_for_platform),
   accessToken: row.access_token,
   refreshToken: row.refresh_token,
   tokenExpiresAt: row.token_expires_at,
@@ -84,6 +86,7 @@ export const createSocialAccount = async (
       oauth_provider: input.oauthProvider ?? null,
       verification_status: input.verificationStatus ?? 'unverified',
       verified_at: input.verifiedAt ?? null,
+      is_primary_for_platform: input.isPrimaryForPlatform ?? false,
       access_token: input.accessToken ?? null,
       refresh_token: input.refreshToken ?? null,
       token_expires_at: input.tokenExpiresAt ?? null,
@@ -137,6 +140,7 @@ export const upsertSocialAccountByUniqueKey = async (
         oauth_provider: input.oauthProvider ?? null,
         verification_status: input.verificationStatus ?? 'unverified',
         verified_at: input.verifiedAt ?? null,
+        is_primary_for_platform: input.isPrimaryForPlatform ?? false,
         access_token: input.accessToken ?? null,
         refresh_token: input.refreshToken ?? null,
         token_expires_at: input.tokenExpiresAt ?? null,
@@ -237,6 +241,7 @@ export const updateSocialAccount = async (
     oauth_provider: input.oauthProvider,
     verification_status: input.verificationStatus,
     verified_at: input.verifiedAt,
+    is_primary_for_platform: input.isPrimaryForPlatform,
     access_token: input.accessToken,
     refresh_token: input.refreshToken,
     token_expires_at: input.tokenExpiresAt,
@@ -272,4 +277,94 @@ export const deleteSocialAccount = async (
   if (error) {
     throw new Error(error.message || 'Failed to delete social account');
   }
+};
+
+export const getPrimarySocialAccountByUserAndPlatform = async (
+  client: AppSupabaseClient,
+  userId: string,
+  platform: SocialAccount['platform']
+): Promise<SocialAccount | null> => {
+  const { data: primary, error: primaryError } = await client
+    .from('social_accounts')
+    .select('*')
+    .eq('user_id', userId)
+    .eq('platform', platform)
+    .eq('verification_status', 'verified')
+    .eq('is_primary_for_platform', true)
+    .maybeSingle();
+
+  if (primaryError) {
+    throw new Error(primaryError.message || 'Failed to fetch primary social account');
+  }
+
+  if (primary) {
+    return toSocialAccount(primary as SocialAccountRow);
+  }
+
+  const { data: fallback, error: fallbackError } = await client
+    .from('social_accounts')
+    .select('*')
+    .eq('user_id', userId)
+    .eq('platform', platform)
+    .eq('verification_status', 'verified')
+    .order('connected_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (fallbackError) {
+    throw new Error(
+      fallbackError.message || 'Failed to fetch verified social account'
+    );
+  }
+
+  return fallback ? toSocialAccount(fallback as SocialAccountRow) : null;
+};
+
+export const setPrimarySocialAccountForPlatform = async (
+  client: AppSupabaseClient,
+  userId: string,
+  platform: SocialAccount['platform'],
+  socialAccountId: string
+): Promise<SocialAccount> => {
+  const { data: target, error: targetError } = await client
+    .from('social_accounts')
+    .select('id')
+    .eq('id', socialAccountId)
+    .eq('user_id', userId)
+    .eq('platform', platform)
+    .eq('verification_status', 'verified')
+    .maybeSingle();
+
+  if (targetError || !target) {
+    throw new Error(
+      targetError?.message ||
+        'Only a verified account can be primary for this platform'
+    );
+  }
+
+  const { error: clearError } = await client
+    .from('social_accounts')
+    .update({ is_primary_for_platform: false })
+    .eq('user_id', userId)
+    .eq('platform', platform)
+    .eq('is_primary_for_platform', true)
+    .neq('id', socialAccountId);
+
+  if (clearError) {
+    throw new Error(clearError.message || 'Failed to clear previous primary account');
+  }
+
+  const { data, error } = await client
+    .from('social_accounts')
+    .update({ is_primary_for_platform: true })
+    .eq('id', socialAccountId)
+    .eq('user_id', userId)
+    .select('*')
+    .single();
+
+  if (error || !data) {
+    throw new Error(error?.message || 'Failed to set primary social account');
+  }
+
+  return toSocialAccount(data as SocialAccountRow);
 };

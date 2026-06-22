@@ -61,6 +61,7 @@ const toScheduledItem = (row) => ({
             oauthProvider: row.social_accounts.oauth_provider === 'meta' ? 'meta' : null,
             verificationStatus: row.social_accounts.verification_status,
             verifiedAt: row.social_accounts.verified_at,
+            isPrimaryForPlatform: Boolean(row.social_accounts.is_primary_for_platform),
             accessToken: row.social_accounts.access_token,
             refreshToken: row.social_accounts.refresh_token,
             tokenExpiresAt: row.social_accounts.token_expires_at,

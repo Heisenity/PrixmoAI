@@ -1,11 +1,14 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.getRelevantMemoriesForSchedulingRecommendation = exports.recordBrandMemoryFeedback = exports.getRelevantMemoriesForBrandDescription = exports.getRelevantMemoriesForImageGeneration = exports.getRelevantMemoriesForContentGeneration = exports.syncAnalyticsLearningSemanticMemory = exports.syncGeneratedImageSemanticMemory = exports.syncGeneratedContentSemanticMemory = exports.syncBrandProfileSemanticMemory = exports.formatSemanticReferenceChunks = void 0;
+exports.getRelevantMemoriesForSchedulingRecommendation = exports.recordBrandMemoryFeedback = exports.getRelevantMemoriesForBrandDescription = exports.getRelevantMemoriesForImageGeneration = exports.getRelevantMemoriesForContentGeneration = exports.syncConnectedAccountIntelligenceSemanticMemory = exports.syncAnalyticsLearningSemanticMemory = exports.syncGeneratedImageSemanticMemory = exports.syncGeneratedContentSemanticMemory = exports.syncBrandProfileSemanticMemory = exports.formatSemanticReferenceChunks = void 0;
 const constants_1 = require("../config/constants");
 const gemini_1 = require("../ai/gemini");
 const brandMemoryEmbeddings_1 = require("../db/queries/brandMemoryEmbeddings");
 const brandMemorySignals_1 = require("../db/queries/brandMemorySignals");
 const analytics_1 = require("../db/queries/analytics");
+const socialAccountIntelligence_1 = require("../db/queries/socialAccountIntelligence");
+const socialAccounts_1 = require("../db/queries/socialAccounts");
+const observability_1 = require("../lib/observability");
 const zod_1 = require("zod");
 const GEMINI_EMBEDDING_API_URL = (model, apiKey) => `https://generativelanguage.googleapis.com/v1beta/models/${model}:embedContent?key=${apiKey}`;
 const PLATFORM_MEMORY_STALE_MS = 6 * 60 * 60 * 1000;
@@ -15,6 +18,7 @@ const BRAND_MEMORY_RECENCY_HALF_LIFE_DAYS = {
     'brand-description': 150,
     'brand-voice-note': 160,
     'platform-performance-insight': 45,
+    'connected-account-intelligence': 30,
     'user-generation-prompt': 60,
     'generated-caption': 35,
     'generated-hashtags': 28,
@@ -28,6 +32,7 @@ const BRAND_MEMORY_TASK_POLICY = {
         'brand-description': 0.88,
         'brand-voice-note': 1,
         'platform-performance-insight': 0.96,
+        'connected-account-intelligence': 1,
         'generated-caption': 1,
         'generated-hashtags': 0.68,
         'generated-reel-script': 0.72,
@@ -40,6 +45,7 @@ const BRAND_MEMORY_TASK_POLICY = {
         'brand-description': 0.62,
         'brand-voice-note': 0.66,
         'platform-performance-insight': 1,
+        'connected-account-intelligence': 0.94,
         'generated-caption': 0.78,
         'generated-hashtags': 1,
         'generated-reel-script': 0.52,
@@ -52,6 +58,7 @@ const BRAND_MEMORY_TASK_POLICY = {
         'brand-description': 0.72,
         'brand-voice-note': 0.92,
         'platform-performance-insight': 0.92,
+        'connected-account-intelligence': 0.96,
         'generated-caption': 0.72,
         'generated-hashtags': 0.48,
         'generated-reel-script': 1,
@@ -64,6 +71,7 @@ const BRAND_MEMORY_TASK_POLICY = {
         'brand-description': 0.76,
         'brand-voice-note': 0.72,
         'platform-performance-insight': 0.74,
+        'connected-account-intelligence': 1,
         'generated-caption': 0.58,
         'generated-hashtags': 0.34,
         'generated-reel-script': 0.44,
@@ -76,6 +84,7 @@ const BRAND_MEMORY_TASK_POLICY = {
         'brand-description': 1,
         'brand-voice-note': 0.98,
         'platform-performance-insight': 0.72,
+        'connected-account-intelligence': 0.78,
         'generated-caption': 0.64,
         'generated-hashtags': 0.3,
         'generated-reel-script': 0.5,
@@ -88,6 +97,7 @@ const BRAND_MEMORY_TASK_POLICY = {
         'brand-description': 0.88,
         'brand-voice-note': 1,
         'platform-performance-insight': 1,
+        'connected-account-intelligence': 1,
         'generated-caption': 1,
         'generated-hashtags': 0.62,
         'generated-reel-script': 0.76,
@@ -200,6 +210,7 @@ const shouldSemanticChunkMemoryEntry = (entry) => entry.contentText.length >= 42
         'brand-profile-summary',
         'brand-voice-note',
         'platform-performance-insight',
+        'connected-account-intelligence',
         'user-generation-prompt',
         'generated-caption',
         'generated-reel-script',
@@ -345,6 +356,18 @@ const getPlatformAlignmentBoost = (selectedPlatform, match) => {
         return 0;
     }
     return memoryPlatform === normalizedRequestedPlatform ? 0.08 : -0.03;
+};
+const isMemoryCompatibleWithPlatform = (selectedPlatform, match) => {
+    if (match.memoryType !== 'connected-account-intelligence') {
+        return true;
+    }
+    const normalizedRequestedPlatform = normalizePlatformKey(selectedPlatform);
+    const memoryPlatform = normalizePlatformKey(typeof match.metadata.platform === 'string'
+        ? match.metadata.platform
+        : null);
+    return Boolean(normalizedRequestedPlatform &&
+        memoryPlatform &&
+        normalizedRequestedPlatform === memoryPlatform);
 };
 const serializeMemoryForLog = (match) => ({
     id: match.id,
@@ -685,6 +708,25 @@ const buildPlatformSnapshotMemoryEntry = (snapshot) => ({
         snapshotType: snapshot.snapshotType,
         ...snapshot.metrics,
         signals: snapshot.signals,
+    },
+});
+const buildConnectedAccountIntelligenceMemoryEntry = (profile) => ({
+    sourceTable: 'social_account_intelligence_profiles',
+    sourceId: profile.id,
+    sourceKey: `${profile.platform}:${profile.socialAccountId}`,
+    memoryType: 'connected-account-intelligence',
+    contentText: profile.summaryText,
+    metadata: {
+        platform: profile.platform,
+        socialAccountId: profile.socialAccountId,
+        sourcePostCount: profile.sourcePostCount,
+        accountTone: profile.accountTone,
+        mainThemes: profile.mainThemes,
+        hookStyles: profile.hookStyles,
+        ctaStyles: profile.ctaStyles,
+        captionLengthPattern: profile.captionLengthPattern,
+        visualDna: profile.visualDna,
+        lastSyncedAt: profile.lastSyncedAt,
     },
 });
 const buildAnalyticsWindowStart = () => {
@@ -1053,6 +1095,18 @@ const syncAnalyticsLearningSemanticMemory = async (client, userId, brandProfile,
     return snapshot;
 };
 exports.syncAnalyticsLearningSemanticMemory = syncAnalyticsLearningSemanticMemory;
+const syncConnectedAccountIntelligenceSemanticMemory = async (client, profile) => {
+    const entry = buildConnectedAccountIntelligenceMemoryEntry(profile);
+    await indexBrandMemoryEntries(client, profile.userId, [entry]);
+    console.info('[brand-memory] indexed connected account intelligence', {
+        userId: profile.userId,
+        socialAccountId: profile.socialAccountId,
+        platform: profile.platform,
+        sourcePostCount: profile.sourcePostCount,
+    });
+    return 1;
+};
+exports.syncConnectedAccountIntelligenceSemanticMemory = syncConnectedAccountIntelligenceSemanticMemory;
 const rerankBrandMemories = async (queryText, candidates, limit) => {
     if (candidates.length <= 1) {
         return {
@@ -1151,7 +1205,9 @@ const retrieveBrandMemories = async (client, userId, queryText, options) => {
             vectorLimit: constants_1.BRAND_MEMORY_VECTOR_CANDIDATE_COUNT,
             keywordLimit: constants_1.BRAND_MEMORY_KEYWORD_CANDIDATE_COUNT,
         });
-        const enrichedMatches = hybridMatches.map((match) => applyMemoryTaskScoring(queryText, options.taskContext, match));
+        const enrichedMatches = hybridMatches
+            .filter((match) => isMemoryCompatibleWithPlatform(options.taskContext.selectedPlatform, match))
+            .map((match) => applyMemoryTaskScoring(queryText, options.taskContext, match));
         const filteredMatches = enrichedMatches.filter((match) => (match.compositeScore ?? match.hybridScore ?? match.similarity) >= constants_1.BRAND_MEMORY_MIN_SIMILARITY);
         const candidatePool = filteredMatches.length > 0
             ? [...filteredMatches].sort((left, right) => (right.compositeScore ?? 0) - (left.compositeScore ?? 0))
@@ -1202,8 +1258,9 @@ const retrieveBrandMemories = async (client, userId, queryText, options) => {
         limit: Math.max(limit, constants_1.BRAND_MEMORY_RERANK_CANDIDATE_COUNT),
         memoryTypes: options.memoryTypes,
     });
-    const filteredMatches = rawMatches.filter((match) => match.similarity >= constants_1.BRAND_MEMORY_MIN_SIMILARITY);
-    const finalMatches = (filteredMatches.length > 0 ? filteredMatches : rawMatches)
+    const platformScopedRawMatches = rawMatches.filter((match) => isMemoryCompatibleWithPlatform(options.taskContext.selectedPlatform, match));
+    const filteredMatches = platformScopedRawMatches.filter((match) => match.similarity >= constants_1.BRAND_MEMORY_MIN_SIMILARITY);
+    const finalMatches = (filteredMatches.length > 0 ? filteredMatches : platformScopedRawMatches)
         .map((match) => applyMemoryTaskScoring(queryText, options.taskContext, match))
         .sort((left, right) => (right.compositeScore ?? 0) - (left.compositeScore ?? 0))
         .slice(0, limit);
@@ -1219,6 +1276,47 @@ const retrieveBrandMemories = async (client, userId, queryText, options) => {
         },
     };
 };
+const includePrimaryConnectedAccountIntelligence = async (client, userId, platform, matches) => {
+    const normalizedPlatform = normalizePlatformKey(platform);
+    if (normalizedPlatform !== 'instagram' &&
+        normalizedPlatform !== 'facebook') {
+        return matches.filter((match) => match.memoryType !== 'connected-account-intelligence');
+    }
+    const account = await (0, socialAccounts_1.getPrimarySocialAccountByUserAndPlatform)(client, userId, normalizedPlatform);
+    if (!account) {
+        return matches;
+    }
+    const profile = await (0, socialAccountIntelligence_1.getSocialAccountIntelligenceProfileBySocialAccountId)(client, account.id);
+    if (!profile) {
+        return matches;
+    }
+    const existing = matches.find((match) => match.memoryType === 'connected-account-intelligence' &&
+        match.metadata.socialAccountId === account.id);
+    const remaining = matches.filter((match) => match !== existing);
+    return [
+        existing ?? {
+            id: `connected-account-intelligence:${profile.id}`,
+            brandProfileId: null,
+            sourceTable: 'social_account_intelligence_profiles',
+            sourceId: profile.id,
+            sourceKey: `${profile.platform}:${profile.socialAccountId}`,
+            memoryType: 'connected-account-intelligence',
+            contentText: profile.summaryText,
+            metadata: {
+                platform: profile.platform,
+                socialAccountId: profile.socialAccountId,
+                sourcePostCount: profile.sourcePostCount,
+                lastSyncedAt: profile.lastSyncedAt,
+            },
+            similarity: 1,
+            hybridScore: 1,
+            compositeScore: 1,
+            createdAt: profile.createdAt,
+            updatedAt: profile.updatedAt,
+        },
+        ...remaining.filter((match) => match.memoryType !== 'connected-account-intelligence'),
+    ];
+};
 const getRelevantMemoriesForContentGeneration = async (client, userId, brandProfile, productInput) => {
     const platformMemory = await ensureAnalyticsAwareMemories(client, userId, brandProfile);
     const retrieval = await retrieveBrandMemories(client, userId, buildContentGenerationQueryText(brandProfile, productInput), {
@@ -1233,6 +1331,7 @@ const getRelevantMemoriesForContentGeneration = async (client, userId, brandProf
             'user-generation-prompt',
             'image-prompt',
             'platform-performance-insight',
+            'connected-account-intelligence',
         ],
         taskContext: {
             task: 'caption-generation',
@@ -1248,7 +1347,16 @@ const getRelevantMemoriesForContentGeneration = async (client, userId, brandProf
             },
         },
     });
-    const matches = retrieval.matches;
+    const matches = await includePrimaryConnectedAccountIntelligence(client, userId, productInput.platform, retrieval.matches);
+    const connectedAccountMemory = matches.find((match) => match.memoryType === 'connected-account-intelligence');
+    if (connectedAccountMemory) {
+        (0, observability_1.logOperationalEvent)('Connected account intelligence used for content generation', {
+            userId,
+            platform: productInput.platform ?? null,
+            socialAccountId: connectedAccountMemory.metadata.socialAccountId ?? null,
+            memoryId: connectedAccountMemory.id,
+        });
+    }
     const observabilityLog = await (0, brandMemorySignals_1.createBrandMemoryGenerationLog)(client, {
         userId,
         brandProfileId: brandProfile?.id ?? null,
@@ -1307,6 +1415,7 @@ const getRelevantMemoriesForImageGeneration = async (client, userId, brandProfil
             'user-generation-prompt',
             'image-prompt',
             'platform-performance-insight',
+            'connected-account-intelligence',
         ],
         taskContext: {
             task: 'image-generation',
@@ -1322,7 +1431,16 @@ const getRelevantMemoriesForImageGeneration = async (client, userId, brandProfil
             },
         },
     });
-    const matches = retrieval.matches;
+    const matches = await includePrimaryConnectedAccountIntelligence(client, userId, productInput.platform, retrieval.matches);
+    const connectedAccountMemory = matches.find((match) => match.memoryType === 'connected-account-intelligence');
+    if (connectedAccountMemory) {
+        (0, observability_1.logOperationalEvent)('Connected account intelligence used for image generation', {
+            userId,
+            platform: productInput.platform ?? null,
+            socialAccountId: connectedAccountMemory.metadata.socialAccountId ?? null,
+            memoryId: connectedAccountMemory.id,
+        });
+    }
     console.info('[brand-memory] retrieved image generation memories', {
         userId,
         matchCount: matches.length,
