@@ -12,6 +12,10 @@ import type {
   UpsertSocialAccountPostRawInput,
 } from '../../types';
 import type { AppSupabaseClient } from '../supabase';
+import {
+  loadArchivePayloadFromR2,
+  parseArchiveObjectKey,
+} from '../../services/r2Storage.service';
 
 type JsonRecord = Record<string, unknown>;
 type JsonRecordArray = Array<Record<string, unknown>>;
@@ -38,6 +42,51 @@ const compactObject = <T extends Record<string, unknown>>(value: T): Partial<T> 
   Object.fromEntries(
     Object.entries(value).filter(([, entry]) => entry !== undefined)
   ) as Partial<T>;
+
+const hydrateArchivedSocialAccountPosts = async (rows: Array<Record<string, any>>) => {
+  const archivedRows = rows.filter(
+    (row) => row.raw_payload_archived_at && typeof row.raw_payload_archive_key === 'string'
+  );
+
+  if (!archivedRows.length) {
+    return rows;
+  }
+
+  const archivedPayloadEntries = await Promise.all(
+    archivedRows.map(async (row) => {
+      const objectKey = parseArchiveObjectKey(row.raw_payload_archive_key);
+
+      if (!objectKey) {
+        return null;
+      }
+
+      try {
+        return [row.id, await loadArchivePayloadFromR2({ objectKey })] as const;
+      } catch {
+        return null;
+      }
+    })
+  );
+
+  const archivedPayloadMap = new Map(
+    archivedPayloadEntries.filter(
+      (entry): entry is readonly [string, unknown] => Boolean(entry)
+    )
+  );
+
+  return rows.map((row) => {
+    const archivedPayload = archivedPayloadMap.get(row.id);
+
+    if (!archivedPayload) {
+      return row;
+    }
+
+    return {
+      ...row,
+      raw_payload: toRecord(toRecord(archivedPayload).rawPayload),
+    };
+  });
+};
 
 const toSyncRun = (row: Record<string, any>): SocialAccountSyncRun => ({
   id: row.id,
@@ -331,6 +380,9 @@ export const upsertSocialAccountPostRaw = async (
         reach_count: input.reachCount ?? 0,
         video_views_count: input.videoViewsCount ?? 0,
         raw_payload: input.rawPayload ?? {},
+        raw_payload_archived_at: null,
+        raw_payload_archive_manifest_id: null,
+        raw_payload_archive_key: null,
         last_metrics_synced_at:
           input.lastMetricsSyncedAt ?? new Date().toISOString(),
       },
@@ -369,6 +421,9 @@ export const createSocialAccountPostInsight = async (
         video_views_count: input.videoViewsCount ?? 0,
         metrics: input.metrics ?? {},
         raw_payload: input.rawPayload ?? {},
+        payload_archived_at: null,
+        payload_archive_manifest_id: null,
+        payload_archive_key: null,
       },
       { onConflict: 'social_account_post_raw_id,sync_run_id' }
     )
@@ -482,5 +537,9 @@ export const listRecentSocialAccountPosts = async (
     throw new Error(error.message || 'Failed to fetch stored social account posts');
   }
 
-  return (data ?? []).map(toPostRaw);
+  const hydratedRows = await hydrateArchivedSocialAccountPosts(
+    (data ?? []) as Array<Record<string, any>>
+  );
+
+  return hydratedRows.map(toPostRaw);
 };

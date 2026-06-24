@@ -1,4 +1,3 @@
-import dotenv from 'dotenv';
 import type { GenerateImageInput } from '../schemas/image.schema';
 import type {
   BrandMemoryMatch,
@@ -16,8 +15,6 @@ import {
   recordProviderCircuitFailure,
   recordProviderCircuitSuccess,
 } from '../services/providerCircuit.service';
-
-dotenv.config();
 
 export type ImageGenerationProvider =
   | 'cloudflare-worker'

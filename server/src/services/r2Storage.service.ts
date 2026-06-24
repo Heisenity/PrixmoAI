@@ -1,5 +1,6 @@
 import { randomUUID } from 'crypto';
-import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { gunzipSync, gzipSync } from 'zlib';
+import { GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import {
   IMAGE_BUCKETS,
   R2_ACCESS_KEY_ID,
@@ -13,9 +14,9 @@ import {
   throwIfRequestCancelled,
 } from '../lib/requestCancellation';
 
-type GeneratedAssetKind = 'content' | 'image' | 'video';
+type GeneratedAssetKind = 'content' | 'image' | 'video' | 'archive';
 
-type StoredGeneratedAsset = {
+export type StoredGeneratedAsset = {
   provider: 'r2';
   bucket: string;
   objectKey: string;
@@ -43,6 +44,13 @@ type StoreGeneratedVideoInput = {
   productName: string;
   videoBuffer: Buffer;
   contentType: string;
+  signal?: AbortSignal;
+};
+
+type StoreArchivePayloadInput = {
+  scope: string;
+  payload: unknown;
+  metadata?: Record<string, string | null | undefined>;
   signal?: AbortSignal;
 };
 
@@ -193,11 +201,30 @@ const buildObjectKey = (
   return `${kind}/${userId}/${year}/${month}/${day}/${Date.now()}-${slug}-${randomUUID()}.${extension}`;
 };
 
+const buildArchiveObjectKey = (scope: string, contentType: string) => {
+  const now = new Date();
+  const year = now.getUTCFullYear();
+  const month = String(now.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(now.getUTCDate()).padStart(2, '0');
+  const extension = contentTypeToExtension(contentType);
+
+  return `archive/${slugify(scope)}/${year}/${month}/${day}/${Date.now()}-${randomUUID()}.${extension}`;
+};
+
 const buildPublicUrl = (baseUrl: string, objectKey: string) =>
   `${baseUrl.replace(/\/+$/, '')}/${objectKey
     .split('/')
     .map((segment) => encodeURIComponent(segment))
     .join('/')}`;
+
+export const parseArchiveObjectKey = (archiveKey: string | null | undefined) => {
+  if (!archiveKey?.trim()) {
+    return null;
+  }
+
+  const separatorIndex = archiveKey.indexOf(':');
+  return separatorIndex >= 0 ? archiveKey.slice(separatorIndex + 1) : archiveKey;
+};
 
 const toCleanMetadata = (metadata: Record<string, string | null | undefined>) =>
   Object.fromEntries(
@@ -205,6 +232,30 @@ const toCleanMetadata = (metadata: Record<string, string | null | undefined>) =>
       .filter(([, value]) => typeof value === 'string' && value.trim())
       .map(([key, value]) => [key.toLowerCase(), value!.trim()])
   );
+
+const readObjectBodyBuffer = async (body: unknown): Promise<Buffer> => {
+  if (!body) {
+    return Buffer.alloc(0);
+  }
+
+  if (typeof (body as { transformToByteArray?: () => Promise<Uint8Array> }).transformToByteArray === 'function') {
+    return Buffer.from(
+      await (body as { transformToByteArray: () => Promise<Uint8Array> }).transformToByteArray()
+    );
+  }
+
+  const chunks: Buffer[] = [];
+  for await (const chunk of body as AsyncIterable<Uint8Array | Buffer | string>) {
+    if (typeof chunk === 'string') {
+      chunks.push(Buffer.from(chunk));
+      continue;
+    }
+
+    chunks.push(Buffer.from(chunk));
+  }
+
+  return Buffer.concat(chunks);
+};
 
 const uploadBufferToR2 = async (
   kind: GeneratedAssetKind,
@@ -379,4 +430,96 @@ export const storeGeneratedVideoInR2 = async (
     },
     input.signal
   );
+};
+
+export const storeArchivePayloadInR2 = async (
+  input: StoreArchivePayloadInput
+): Promise<StoredGeneratedAsset> => {
+  const config = requireR2Config();
+  const contentType = 'application/json';
+  const serializedPayload = Buffer.from(JSON.stringify(input.payload), 'utf8');
+  const buffer = gzipSync(serializedPayload);
+  // ponytail: keep archives under the existing generated bucket; split buckets only if lifecycle rules need to diverge.
+  const objectKey = buildArchiveObjectKey(input.scope, contentType);
+
+  throwIfRequestCancelled(input.signal, 'Archive cancelled.');
+
+  try {
+    await getR2Client().send(
+      new PutObjectCommand({
+        Bucket: config.bucket,
+        Key: objectKey,
+        Body: buffer,
+        ContentType: contentType,
+        ContentEncoding: 'gzip',
+        CacheControl: 'private, max-age=0, no-cache',
+        Metadata: toCleanMetadata({
+          archive_scope: input.scope,
+          archive_format: 'json',
+          archive_encoding: 'gzip',
+          ...(input.metadata ?? {}),
+        }),
+      }),
+      {
+        abortSignal: input.signal,
+      }
+    );
+  } catch (error) {
+    if (input.signal?.aborted || isAbortError(error)) {
+      throw new RequestCancelledError('Archive cancelled.');
+    }
+
+    throw new Error(
+      error instanceof Error
+        ? `Failed to upload archive payload to R2: ${error.message}`
+        : 'Failed to upload archive payload to R2'
+    );
+  }
+
+  return {
+    provider: 'r2',
+    bucket: config.bucket,
+    objectKey,
+    publicUrl: buildPublicUrl(config.publicBaseUrl, objectKey),
+    contentType,
+    sizeBytes: buffer.byteLength,
+  };
+};
+
+export const loadArchivePayloadFromR2 = async (input: {
+  objectKey: string;
+  signal?: AbortSignal;
+}): Promise<unknown> => {
+  throwIfRequestCancelled(input.signal, 'Archive load cancelled.');
+
+  let response;
+  try {
+    response = await getR2Client().send(
+      new GetObjectCommand({
+        Bucket: requireR2Config().bucket,
+        Key: input.objectKey,
+      }),
+      {
+        abortSignal: input.signal,
+      }
+    );
+  } catch (error) {
+    if (input.signal?.aborted || isAbortError(error)) {
+      throw new RequestCancelledError('Archive load cancelled.');
+    }
+
+    throw new Error(
+      error instanceof Error
+        ? `Failed to load archive payload from R2: ${error.message}`
+        : 'Failed to load archive payload from R2'
+    );
+  }
+
+  const responseBuffer = await readObjectBodyBuffer(response.Body);
+  const bodyBuffer =
+    response.ContentEncoding?.toLowerCase() === 'gzip'
+      ? gunzipSync(responseBuffer)
+      : responseBuffer;
+
+  return JSON.parse(bodyBuffer.toString('utf8') || 'null');
 };

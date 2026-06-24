@@ -1,7 +1,4 @@
-import dotenv from 'dotenv';
 import type { BillingPlan, PlanType } from '../types';
-
-dotenv.config();
 
 export const APP_PORT = Number(process.env.PORT || 5000);
 export const NODE_ENV = process.env.NODE_ENV || 'development';
@@ -89,6 +86,19 @@ export const RUNTIME_CACHE_TTL_MS = Number(
 );
 export const ADMIN_HEALTH_EVENT_RETENTION_DAYS = Number(
   process.env.ADMIN_HEALTH_EVENT_RETENTION_DAYS || 14
+);
+export const HISTORICAL_ARCHIVE_ENABLED = readBoolean(
+  process.env.HISTORICAL_ARCHIVE_ENABLED,
+  START_BACKGROUND_WORKERS_ON_BOOT && NODE_ENV === 'production'
+);
+export const HISTORICAL_ARCHIVE_INTERVAL_MS = Number(
+  process.env.HISTORICAL_ARCHIVE_INTERVAL_MS || 6 * 60 * 60_000
+);
+export const HISTORICAL_ARCHIVE_LOCK_TTL_MS = Number(
+  process.env.HISTORICAL_ARCHIVE_LOCK_TTL_MS || 45 * 60_000
+);
+export const HISTORICAL_ARCHIVE_STARTUP_DELAY_MS = Number(
+  process.env.HISTORICAL_ARCHIVE_STARTUP_DELAY_MS || 60_000
 );
 export const DEFAULT_GEMINI_MODEL =
   process.env.GEMINI_MODEL || 'gemini-2.5-flash';

@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.storeGeneratedVideoInR2 = exports.storeGeneratedImageInR2 = exports.storeGeneratedContentInR2 = exports.isR2GeneratedStorageConfigured = void 0;
+exports.storeArchivePayloadInR2 = exports.storeGeneratedVideoInR2 = exports.storeGeneratedImageInR2 = exports.storeGeneratedContentInR2 = exports.isR2GeneratedStorageConfigured = void 0;
 const crypto_1 = require("crypto");
 const client_s3_1 = require("@aws-sdk/client-s3");
 const constants_1 = require("../config/constants");
@@ -105,6 +105,14 @@ const buildObjectKey = (kind, userId, productName, contentType) => {
     const extension = contentTypeToExtension(contentType);
     const slug = slugify(productName);
     return `${kind}/${userId}/${year}/${month}/${day}/${Date.now()}-${slug}-${(0, crypto_1.randomUUID)()}.${extension}`;
+};
+const buildArchiveObjectKey = (scope, contentType) => {
+    const now = new Date();
+    const year = now.getUTCFullYear();
+    const month = String(now.getUTCMonth() + 1).padStart(2, '0');
+    const day = String(now.getUTCDate()).padStart(2, '0');
+    const extension = contentTypeToExtension(contentType);
+    return `archive/${slugify(scope)}/${year}/${month}/${day}/${Date.now()}-${(0, crypto_1.randomUUID)()}.${extension}`;
 };
 const buildPublicUrl = (baseUrl, objectKey) => `${baseUrl.replace(/\/+$/, '')}/${objectKey
     .split('/')
@@ -220,3 +228,43 @@ const storeGeneratedVideoInR2 = async (input) => {
     }, input.signal);
 };
 exports.storeGeneratedVideoInR2 = storeGeneratedVideoInR2;
+const storeArchivePayloadInR2 = async (input) => {
+    const config = requireR2Config();
+    const contentType = 'application/json';
+    const buffer = Buffer.from(JSON.stringify(input.payload, null, 2), 'utf8');
+    // ponytail: keep archives under the existing generated bucket; split buckets only if lifecycle rules need to diverge.
+    const objectKey = buildArchiveObjectKey(input.scope, contentType);
+    (0, requestCancellation_1.throwIfRequestCancelled)(input.signal, 'Archive cancelled.');
+    try {
+        await getR2Client().send(new client_s3_1.PutObjectCommand({
+            Bucket: config.bucket,
+            Key: objectKey,
+            Body: buffer,
+            ContentType: contentType,
+            CacheControl: 'private, max-age=0, no-cache',
+            Metadata: toCleanMetadata({
+                archive_scope: input.scope,
+                ...(input.metadata ?? {}),
+            }),
+        }), {
+            abortSignal: input.signal,
+        });
+    }
+    catch (error) {
+        if (input.signal?.aborted || (0, requestCancellation_1.isAbortError)(error)) {
+            throw new requestCancellation_1.RequestCancelledError('Archive cancelled.');
+        }
+        throw new Error(error instanceof Error
+            ? `Failed to upload archive payload to R2: ${error.message}`
+            : 'Failed to upload archive payload to R2');
+    }
+    return {
+        provider: 'r2',
+        bucket: config.bucket,
+        objectKey,
+        publicUrl: buildPublicUrl(config.publicBaseUrl, objectKey),
+        contentType,
+        sizeBytes: buffer.byteLength,
+    };
+};
+exports.storeArchivePayloadInR2 = storeArchivePayloadInR2;

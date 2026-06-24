@@ -1,13 +1,10 @@
 import IORedis, { type RedisOptions } from 'ioredis';
-import dotenv from 'dotenv';
 import {
   BULLMQ_PREFIX,
   REDIS_KEY_PREFIX,
   REDIS_TLS,
   REDIS_URL,
 } from '../config/constants';
-
-dotenv.config();
 
 export const isRedisConfigured = Boolean(REDIS_URL);
 

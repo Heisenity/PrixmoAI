@@ -1,7 +1,4 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
-import dotenv from 'dotenv';
-
-dotenv.config();
 
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseAnonKey = process.env.SUPABASE_ANON_KEY;
@@ -23,13 +20,13 @@ export const isSupabaseAdminConfigured = Boolean(
 
 if (!isSupabaseAuthConfigured) {
   console.warn(
-    'Supabase auth client is not configured. Set SUPABASE_URL and SUPABASE_ANON_KEY in server/.env.'
+    'Supabase auth client is not configured. Set SUPABASE_URL and SUPABASE_ANON_KEY in Doppler or the injected runtime environment.'
   );
 }
 
 if (!isSupabaseAdminConfigured) {
   console.warn(
-    'Supabase admin client is not configured. Set SUPABASE_SERVICE_ROLE_KEY in server/.env for server-side queries and webhooks.'
+    'Supabase admin client is not configured. Set SUPABASE_SERVICE_ROLE_KEY in Doppler or the injected runtime environment for server-side queries and webhooks.'
   );
 }
 

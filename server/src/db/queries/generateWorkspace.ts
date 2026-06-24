@@ -1,6 +1,10 @@
 import type {
   AppSupabaseClient,
 } from '../supabase';
+import {
+  loadArchivePayloadFromR2,
+  parseArchiveObjectKey,
+} from '../../services/r2Storage.service';
 import type {
   GenerateConversation,
   GenerateConversationAsset,
@@ -33,6 +37,10 @@ type GenerateMessageRow = {
   content: string | null;
   metadata: unknown;
   generation_id: string | null;
+  archived_at?: string | null;
+  archive_manifest_id?: string | null;
+  archive_key?: string | null;
+  content_preview?: string | null;
   created_at: string;
 };
 
@@ -43,6 +51,9 @@ type GeneratedAssetRow = {
   user_id: string;
   asset_type: GeneratedAssetType;
   payload: unknown;
+  archived_at?: string | null;
+  archive_manifest_id?: string | null;
+  archive_key?: string | null;
   created_at: string;
 };
 
@@ -50,6 +61,94 @@ const toRecord = (value: unknown): Record<string, unknown> =>
   value && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
+
+const asNullableString = (value: unknown) =>
+  typeof value === 'string' ? value : null;
+
+const loadArchivedPayloadMap = async <TRow extends { id: string }>(
+  rows: TRow[],
+  getArchiveKey: (row: TRow) => string | null | undefined
+) => {
+  const archivedPayloadEntries = await Promise.all(
+    rows.map(async (row) => {
+      const objectKey = parseArchiveObjectKey(getArchiveKey(row));
+
+      if (!objectKey) {
+        return null;
+      }
+
+      try {
+        return [row.id, await loadArchivePayloadFromR2({ objectKey })] as const;
+      } catch {
+        return null;
+      }
+    })
+  );
+
+  return new Map(
+    archivedPayloadEntries.filter(
+      (entry): entry is readonly [string, unknown] => Boolean(entry)
+    )
+  );
+};
+
+const hydrateArchivedGenerateMessages = async (rows: GenerateMessageRow[]) => {
+  const archivedRows = rows.filter((row) => row.archived_at && row.archive_key);
+
+  if (!archivedRows.length) {
+    return rows;
+  }
+
+  const archivedPayloadMap = await loadArchivedPayloadMap(
+    archivedRows,
+    (row) => row.archive_key
+  );
+
+  return rows.map((row) => {
+    const archivedPayload = archivedPayloadMap.get(row.id);
+
+    if (!archivedPayload) {
+      return row;
+    }
+
+    const payloadRecord = toRecord(archivedPayload);
+    return {
+      ...row,
+      content:
+        asNullableString(payloadRecord.content) ??
+        row.content ??
+        row.content_preview ??
+        null,
+      metadata: toRecord(payloadRecord.metadata),
+    };
+  });
+};
+
+const hydrateArchivedGeneratedAssets = async (rows: GeneratedAssetRow[]) => {
+  const archivedRows = rows.filter((row) => row.archived_at && row.archive_key);
+
+  if (!archivedRows.length) {
+    return rows;
+  }
+
+  const archivedPayloadMap = await loadArchivedPayloadMap(
+    archivedRows,
+    (row) => row.archive_key
+  );
+
+  return rows.map((row) => {
+    const archivedPayload = archivedPayloadMap.get(row.id);
+
+    if (!archivedPayload) {
+      return row;
+    }
+
+    return {
+      ...row,
+      payload: toRecord(toRecord(archivedPayload).payload),
+    };
+  });
+};
 
 const toGenerateConversation = (
   row: GenerateConversationRow
@@ -73,7 +172,7 @@ const toGenerateConversationMessage = (
   userId: row.user_id,
   role: row.role,
   messageType: row.message_type,
-  content: row.content,
+  content: row.content ?? row.content_preview ?? null,
   metadata: toRecord(row.metadata),
   generationId: row.generation_id,
   createdAt: row.created_at,
@@ -329,17 +428,24 @@ export const getGenerateConversationThread = async (
     throw new Error(assetsError.message || 'Failed to fetch generated assets');
   }
 
+  const hydratedMessageRows = await hydrateArchivedGenerateMessages(
+    (messagesData ?? []) as GenerateMessageRow[]
+  );
+  const hydratedAssetRows = await hydrateArchivedGeneratedAssets(
+    (assetsData ?? []) as GeneratedAssetRow[]
+  );
+
   const assetsByMessageId = new Map<string, GenerateConversationAsset[]>();
 
-  for (const assetRow of assetsData ?? []) {
-    const asset = toGenerateConversationAsset(assetRow as GeneratedAssetRow);
+  for (const assetRow of hydratedAssetRows) {
+    const asset = toGenerateConversationAsset(assetRow);
     const collection = assetsByMessageId.get(asset.messageId) ?? [];
     collection.push(asset);
     assetsByMessageId.set(asset.messageId, collection);
   }
 
-  const messages = (messagesData ?? []).map((messageRow) => {
-    const message = toGenerateConversationMessage(messageRow as GenerateMessageRow);
+  const messages = hydratedMessageRows.map((messageRow) => {
+    const message = toGenerateConversationMessage(messageRow);
     return {
       ...message,
       assets: assetsByMessageId.get(message.id) ?? [],

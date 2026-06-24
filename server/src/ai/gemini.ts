@@ -1,4 +1,3 @@
-import dotenv from 'dotenv';
 import { z } from 'zod';
 import {
   CAPTION_VARIATION_COUNT,
@@ -28,8 +27,6 @@ import {
   RequestCancelledError,
   throwIfRequestCancelled,
 } from '../lib/requestCancellation';
-
-dotenv.config();
 
 export type GenerationProvider = 'gemini' | 'groq';
 

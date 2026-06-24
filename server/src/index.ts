@@ -29,6 +29,7 @@ import {
   ensureSocialAccountIntelligenceSweep,
   startSocialAccountIntelligenceWorker,
 } from './services/socialAccountIntelligence.service';
+import { startHistoricalArchiveWorker } from './services/historicalArchive.service';
 import { formatIstTimestamp } from './lib/timezone';
 import { version } from '../package.json';
 import { isRedisConfigured } from './lib/redis';
@@ -167,4 +168,6 @@ app.listen(PORT, () => {
         }`
       );
     });
+
+  startHistoricalArchiveWorker();
 });
