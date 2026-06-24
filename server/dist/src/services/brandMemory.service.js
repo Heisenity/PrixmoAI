@@ -625,6 +625,7 @@ const buildGeneratedImageMemoryEntries = (image, context = {}) => {
         `Image prompt for ${context.productName ?? 'a product image'}.`,
         `Prompt: ${image.prompt ?? 'not provided'}.`,
         `Product description: ${context.productDescription ?? 'not provided'}.`,
+        `Platform: ${context.platform ?? 'not provided'}.`,
         `Background style: ${context.backgroundStyle ?? image.backgroundStyle ?? 'not provided'}.`,
         `Brand name: ${context.brandProfile?.brandName ?? 'not provided'}.`,
     ].join(' '));
@@ -641,6 +642,7 @@ const buildGeneratedImageMemoryEntries = (image, context = {}) => {
             contentText: promptText,
             metadata: {
                 brandName: context.brandProfile?.brandName ?? null,
+                platform: context.platform ?? null,
                 backgroundStyle: context.backgroundStyle ?? image.backgroundStyle ?? null,
                 sourceImageUrl: context.sourceImageUrl ?? image.sourceImageUrl ?? null,
             },
@@ -710,24 +712,30 @@ const buildPlatformSnapshotMemoryEntry = (snapshot) => ({
         signals: snapshot.signals,
     },
 });
+const buildConnectedAccountIntelligenceMetadata = (profile) => ({
+    platform: profile.platform,
+    socialAccountId: profile.socialAccountId,
+    sourcePostCount: profile.sourcePostCount,
+    accountTone: profile.accountTone,
+    mainThemes: profile.mainThemes,
+    hookStyles: profile.hookStyles,
+    ctaStyles: profile.ctaStyles,
+    captionLengthPattern: profile.captionLengthPattern,
+    emojiStyle: profile.emojiStyle,
+    hashtagBehavior: profile.hashtagBehavior,
+    formatMix: profile.formatMix,
+    bestPatterns: profile.bestPatterns,
+    weakPatterns: profile.weakPatterns,
+    visualDna: profile.visualDna,
+    lastSyncedAt: profile.lastSyncedAt,
+});
 const buildConnectedAccountIntelligenceMemoryEntry = (profile) => ({
     sourceTable: 'social_account_intelligence_profiles',
     sourceId: profile.id,
     sourceKey: `${profile.platform}:${profile.socialAccountId}`,
     memoryType: 'connected-account-intelligence',
     contentText: profile.summaryText,
-    metadata: {
-        platform: profile.platform,
-        socialAccountId: profile.socialAccountId,
-        sourcePostCount: profile.sourcePostCount,
-        accountTone: profile.accountTone,
-        mainThemes: profile.mainThemes,
-        hookStyles: profile.hookStyles,
-        ctaStyles: profile.ctaStyles,
-        captionLengthPattern: profile.captionLengthPattern,
-        visualDna: profile.visualDna,
-        lastSyncedAt: profile.lastSyncedAt,
-    },
+    metadata: buildConnectedAccountIntelligenceMetadata(profile),
 });
 const buildAnalyticsWindowStart = () => {
     const date = new Date();
@@ -1293,27 +1301,43 @@ const includePrimaryConnectedAccountIntelligence = async (client, userId, platfo
     const existing = matches.find((match) => match.memoryType === 'connected-account-intelligence' &&
         match.metadata.socialAccountId === account.id);
     const remaining = matches.filter((match) => match !== existing);
-    return [
-        existing ?? {
-            id: `connected-account-intelligence:${profile.id}`,
-            brandProfileId: null,
-            sourceTable: 'social_account_intelligence_profiles',
-            sourceId: profile.id,
-            sourceKey: `${profile.platform}:${profile.socialAccountId}`,
-            memoryType: 'connected-account-intelligence',
-            contentText: profile.summaryText,
-            metadata: {
-                platform: profile.platform,
-                socialAccountId: profile.socialAccountId,
-                sourcePostCount: profile.sourcePostCount,
-                lastSyncedAt: profile.lastSyncedAt,
-            },
-            similarity: 1,
-            hybridScore: 1,
-            compositeScore: 1,
-            createdAt: profile.createdAt,
-            updatedAt: profile.updatedAt,
+    const connectedAccountMemory = {
+        id: existing?.id ?? `connected-account-intelligence:${profile.id}`,
+        brandProfileId: existing?.brandProfileId ?? null,
+        sourceTable: 'social_account_intelligence_profiles',
+        sourceId: profile.id,
+        sourceKey: `${profile.platform}:${profile.socialAccountId}`,
+        memoryType: 'connected-account-intelligence',
+        contentText: profile.summaryText,
+        metadata: {
+            ...(existing?.metadata ?? {}),
+            ...buildConnectedAccountIntelligenceMetadata(profile),
         },
+        similarity: existing?.similarity ?? 1,
+        vectorSimilarity: existing?.vectorSimilarity,
+        keywordScore: existing?.keywordScore,
+        hybridScore: existing?.hybridScore ?? 1,
+        rerankScore: existing?.rerankScore,
+        qualityScore: existing?.qualityScore,
+        promotionScore: existing?.promotionScore,
+        performanceScore: existing?.performanceScore,
+        reuseCount: existing?.reuseCount,
+        successfulReuseCount: existing?.successfulReuseCount,
+        acceptanceCount: existing?.acceptanceCount,
+        rejectionCount: existing?.rejectionCount,
+        regenerationCount: existing?.regenerationCount,
+        editCount: existing?.editCount,
+        scheduleUseCount: existing?.scheduleUseCount,
+        freshnessScore: existing?.freshnessScore,
+        taskPolicyScore: existing?.taskPolicyScore,
+        compositeScore: existing?.compositeScore ?? 1,
+        lastFeedbackAt: existing?.lastFeedbackAt ?? null,
+        archivedAt: existing?.archivedAt ?? null,
+        createdAt: existing?.createdAt ?? profile.createdAt,
+        updatedAt: profile.updatedAt,
+    };
+    return [
+        connectedAccountMemory,
         ...remaining.filter((match) => match.memoryType !== 'connected-account-intelligence'),
     ];
 };

@@ -500,6 +500,37 @@ export const resolveExternalSourceImage = async (
   return resolveFromUrl(sourceUrl, 0, false);
 };
 
+export const isManagedSourceImageUrl = (value: string) =>
+  value.includes(`/storage/v1/object/public/${SUPABASE_SOURCE_IMAGE_BUCKET}/`);
+
+export const prepareSourceImageForGeneration = async (
+  userId: string,
+  sourceUrl: string
+) => {
+  const normalizedSourceUrl = sourceUrl.trim();
+
+  if (!normalizedSourceUrl) {
+    return null;
+  }
+
+  if (isManagedSourceImageUrl(normalizedSourceUrl)) {
+    return normalizedSourceUrl;
+  }
+
+  const resolvedMedia = await resolveExternalSourceImage(normalizedSourceUrl);
+
+  if (resolvedMedia.mediaType !== 'image') {
+    throw new Error('Please use an image URL as the reference for image generation');
+  }
+
+  const uploadedSourceImage = await importExternalSourceImage(
+    userId,
+    normalizedSourceUrl
+  );
+
+  return uploadedSourceImage.publicUrl;
+};
+
 export const importExternalSourceImage = async (
   userId: string,
   sourceUrl: string

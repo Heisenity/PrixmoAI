@@ -93,6 +93,28 @@ const resolveUserFacingFailureMessage = (failures) => {
     return failures[0]?.userMessage ||
         "We couldn't generate your image right now. Please try again.";
 };
+const REFERENCE_SIMILARITY_PATTERN = /\b(similar|same|like\s+(?:this|the|that)\s+image|like\s+the\s+reference|as\s+per\s+the\s+(?:image|reference)|based\s+on\s+the\s+(?:image|reference)|match\s+the\s+(?:image|reference)|use\s+the\s+(?:image|reference)\s+below|shown\s+below|pasted\s+below)\b/i;
+const IMAGE_MEMORY_PROMPT_TYPE_PRIORITY = {
+    'image-prompt': 100,
+    'platform-performance-insight': 92,
+    'brand-voice-note': 84,
+    'brand-description': 80,
+    'brand-profile-summary': 76,
+    'user-generation-prompt': 72,
+};
+const asString = (value) => typeof value === 'string' && value.trim() ? value.trim() : null;
+const asRecord = (value) => value && typeof value === 'object' && !Array.isArray(value)
+    ? value
+    : null;
+const asStringArray = (value) => Array.isArray(value)
+    ? value
+        .filter((item) => typeof item === 'string')
+        .map((item) => item.trim())
+        .filter(Boolean)
+    : [];
+const asRecordArray = (value) => Array.isArray(value)
+    ? value.filter((item) => Boolean(item) && typeof item === 'object' && !Array.isArray(item))
+    : [];
 const buildBrandDirection = (brandProfile) => {
     if (!brandProfile) {
         return [];
@@ -116,6 +138,211 @@ const buildTrendDirection = (trendIntelligence) => {
         `- Goal: ${trendIntelligence.selectedGoal ?? 'not provided'}`,
         ...trendIntelligence.insights.slice(0, 3).map((insight, index) => `- Visual signal ${index + 1}: ${insight.headline} | ${insight.explanation}`),
     ];
+};
+const clampDirectiveText = (value, maxLength = 220) => {
+    const normalized = normalizePromptText(value);
+    if (!normalized) {
+        return null;
+    }
+    if (normalized.length <= maxLength) {
+        return normalized;
+    }
+    return `${normalized.slice(0, maxLength - 1).trimEnd()}…`;
+};
+const summarizeWeightedRecord = (value, limit = 4) => {
+    if (!value) {
+        return null;
+    }
+    const entries = Object.entries(value)
+        .map(([key, rawValue]) => {
+        const numericValue = typeof rawValue === 'number' ? rawValue : Number(rawValue);
+        return {
+            key: key.trim(),
+            value: numericValue,
+        };
+    })
+        .filter((entry) => entry.key && Number.isFinite(entry.value) && entry.value > 0)
+        .sort((left, right) => right.value - left.value)
+        .slice(0, limit)
+        .map((entry) => `${entry.key} ${entry.value}`);
+    return entries.length > 0 ? entries.join(', ') : null;
+};
+const buildLinkedCampaignImageDirection = (contentContext) => {
+    if (!contentContext) {
+        return [];
+    }
+    const keywords = (contentContext.keywords ?? [])
+        .map((keyword) => normalizePromptText(keyword))
+        .filter(Boolean)
+        .slice(0, 6);
+    const lines = [
+        'Linked campaign context from this workspace (treat this as real business context for the visual):',
+        contentContext.goal ? `- Goal: ${contentContext.goal}` : null,
+        contentContext.tone ? `- Tone: ${contentContext.tone}` : null,
+        contentContext.audience ? `- Audience: ${contentContext.audience}` : null,
+        keywords.length > 0 ? `- Keywords / concepts: ${keywords.join(', ')}` : null,
+    ].filter((line) => Boolean(line));
+    return lines.length > 1 ? lines : [];
+};
+const buildConnectedAccountImageDirection = (brandMemories) => {
+    const connectedAccountMemory = brandMemories?.find((match) => match.memoryType === 'connected-account-intelligence');
+    if (!connectedAccountMemory) {
+        return [];
+    }
+    const metadata = asRecord(connectedAccountMemory.metadata);
+    const visualDna = asRecord(metadata?.visualDna);
+    const accountTone = clampDirectiveText(asString(metadata?.accountTone), 140);
+    const mainThemes = asStringArray(metadata?.mainThemes).slice(0, 5);
+    const formatMix = summarizeWeightedRecord(asRecord(metadata?.formatMix), 4);
+    const bestPatterns = asRecordArray(metadata?.bestPatterns);
+    const weakPatterns = asRecordArray(metadata?.weakPatterns);
+    const strongestFormat = asString(bestPatterns[0]?.format);
+    const weakerFormat = asString(weakPatterns[0]?.format);
+    const connectedAccountSummary = clampDirectiveText(connectedAccountMemory.contentText, 320);
+    const lines = [
+        'Connected account visual intelligence from recent posts on the selected platform (use this strongly when it improves business fit and does not conflict with the user brief or reference image):',
+        connectedAccountSummary ? `- Summary: ${connectedAccountSummary}` : null,
+        accountTone ? `- Account tone: ${accountTone}` : null,
+        mainThemes.length > 0
+            ? `- Recurring themes: ${mainThemes.join(', ')}`
+            : null,
+        formatMix ? `- Recent format emphasis: ${formatMix}` : null,
+        asString(visualDna?.composition)
+            ? `- Composition pattern: ${clampDirectiveText(asString(visualDna?.composition), 180)}`
+            : null,
+        asString(visualDna?.background)
+            ? `- Background pattern: ${clampDirectiveText(asString(visualDna?.background), 180)}`
+            : null,
+        asString(visualDna?.colorMood)
+            ? `- Color mood: ${clampDirectiveText(asString(visualDna?.colorMood), 180)}`
+            : null,
+        asString(visualDna?.framing)
+            ? `- Framing style: ${clampDirectiveText(asString(visualDna?.framing), 180)}`
+            : null,
+        asString(visualDna?.textUsage)
+            ? `- Text usage tendency: ${clampDirectiveText(asString(visualDna?.textUsage), 180)}`
+            : null,
+        strongestFormat
+            ? `- Strong recent post-format signal: ${strongestFormat} content has been responding well`
+            : null,
+        weakerFormat
+            ? `- Avoid defaulting to weaker recent post-format signals like ${weakerFormat} unless the brief explicitly asks for it`
+            : null,
+        '- Keep the generated image compatible with this account’s recognizable visual system while still creating a fresh original asset.',
+    ].filter((line) => Boolean(line));
+    return lines.length > 1 ? lines : [];
+};
+const getImageMemoryDirectiveLabel = (memoryType) => {
+    switch (memoryType) {
+        case 'image-prompt':
+            return 'Strong past image direction';
+        case 'platform-performance-insight':
+            return 'Platform performance guidance';
+        case 'brand-voice-note':
+            return 'Brand-expression guidance';
+        case 'brand-description':
+            return 'Brand-description guidance';
+        case 'brand-profile-summary':
+            return 'Brand summary guidance';
+        case 'user-generation-prompt':
+            return 'Reusable user preference';
+        default:
+            return 'Relevant brand memory';
+    }
+};
+const extractImageMemoryDirectiveText = (memory) => {
+    if (memory.memoryType === 'image-prompt') {
+        const promptMatch = memory.contentText.match(/Prompt:\s*(.+?)(?:\.\s*Product description:|$)/i);
+        const extractedPrompt = clampDirectiveText(promptMatch?.[1] ?? null, 260);
+        if (extractedPrompt) {
+            return extractedPrompt;
+        }
+    }
+    if (memory.memoryType === 'platform-performance-insight') {
+        const metadata = asRecord(memory.metadata);
+        const signals = asRecord(metadata?.signals);
+        const recommendationText = clampDirectiveText(asString(signals?.recommendationText), 220);
+        if (recommendationText) {
+            return recommendationText;
+        }
+    }
+    return clampDirectiveText(memory.contentText, 260);
+};
+const selectBrandMemoriesForImagePrompt = (brandMemories) => {
+    const usefulMemoryTypes = new Set([
+        'image-prompt',
+        'platform-performance-insight',
+        'brand-voice-note',
+        'brand-description',
+        'brand-profile-summary',
+        'user-generation-prompt',
+    ]);
+    const selectedTypes = new Set();
+    return (brandMemories ?? [])
+        .filter((memory) => usefulMemoryTypes.has(memory.memoryType))
+        .filter((memory) => normalizePromptText(memory.contentText).length >= 24)
+        .sort((left, right) => {
+        const rightPriority = IMAGE_MEMORY_PROMPT_TYPE_PRIORITY[right.memoryType] ?? 0;
+        const leftPriority = IMAGE_MEMORY_PROMPT_TYPE_PRIORITY[left.memoryType] ?? 0;
+        if (rightPriority !== leftPriority) {
+            return rightPriority - leftPriority;
+        }
+        const rightScore = right.compositeScore ??
+            right.rerankScore ??
+            right.hybridScore ??
+            right.similarity ??
+            0;
+        const leftScore = left.compositeScore ??
+            left.rerankScore ??
+            left.hybridScore ??
+            left.similarity ??
+            0;
+        return rightScore - leftScore;
+    })
+        .filter((memory) => {
+        if (selectedTypes.has(memory.memoryType)) {
+            return false;
+        }
+        selectedTypes.add(memory.memoryType);
+        return true;
+    })
+        .slice(0, 4);
+};
+const buildRetrievedImageMemoryDirection = (brandMemories) => {
+    const selectedMemories = selectBrandMemoriesForImagePrompt(brandMemories);
+    if (selectedMemories.length === 0) {
+        return [];
+    }
+    return [
+        'Retrieved brand memories relevant to this image (apply the strategy behind them when it strengthens the result and still fits the user brief or reference image):',
+        ...selectedMemories
+            .map((memory) => {
+            const directiveText = extractImageMemoryDirectiveText(memory);
+            if (!directiveText) {
+                return null;
+            }
+            return `- ${getImageMemoryDirectiveLabel(memory.memoryType)}: ${directiveText}`;
+        })
+            .filter((line) => Boolean(line)),
+        '- Use the strategic pattern behind these memories to sharpen positioning, styling, hierarchy, polish, and audience fit. Do not recreate an old asset verbatim.',
+    ];
+};
+const buildPlatformImageDirection = (platform) => {
+    const normalizedPlatform = platform?.trim().toLowerCase() ?? '';
+    switch (normalizedPlatform) {
+        case 'instagram':
+            return 'Platform fit: Instagram. Make it instantly scroll-stopping, visually bold, cleanly composed, and strong at first glance.';
+        case 'facebook':
+            return 'Platform fit: Facebook. Keep it clear, warm, and broadly appealing with an easy-to-read focal hierarchy.';
+        case 'linkedin':
+            return 'Platform fit: LinkedIn. Keep it polished, credible, premium, and professionally composed without feeling stiff.';
+        case 'x':
+            return 'Platform fit: X. Make it punchy, high-contrast, and fast to understand in a crowded feed.';
+        case 'pinterest':
+            return 'Platform fit: Pinterest. Make it aspirational, highly save-worthy, visually rich, and strong as a planning or inspiration image.';
+        default:
+            return null;
+    }
 };
 const BACKGROUND_STYLE_DIRECTIONS = {
     'clean studio background': 'seamless clean studio backdrop, softbox lighting, controlled shadows, uncluttered negative space, premium commercial product photography',
@@ -166,32 +393,65 @@ const buildAdvancedBackgroundDirection = (input) => {
         'Choose a background that fits the product category, brand tone, and target audience without inventing unrelated props.',
     ].join(' ');
 };
-const buildImagePrompt = (brandProfile, input, trendIntelligence) => {
+const buildReferenceImageDirection = (input) => {
+    if (!input.sourceImageUrl) {
+        return [];
+    }
+    const combinedReferenceBrief = [
+        input.productDescription,
+        input.prompt,
+        input.backgroundPrompt,
+    ]
+        .map(normalizePromptText)
+        .filter(Boolean)
+        .join(' ');
+    const userWantsCloseReferenceMatch = REFERENCE_SIMILARITY_PATTERN.test(combinedReferenceBrief);
+    return [
+        'A reference image is attached. Treat it as the primary visual anchor for this generation, not as a weak optional hint.',
+        userWantsCloseReferenceMatch
+            ? 'The user explicitly wants a similar image based on that reference. Match the reference subject category, composition, framing, styling, palette, lighting, background logic, era, and overall mood as closely as possible while still delivering a polished new final image.'
+            : 'Use the reference to preserve the core subject, product form, recognisable details, composition cues, styling, and visual mood while improving polish, lighting, background quality, and commercial usefulness.',
+        'Do not ignore or dilute the reference just because the product name is short, broad, or abstract. Product and brand context should guide adaptation, but the reference image stays dominant unless the user clearly asks to move away from it.',
+        'When the brief is short or vague, infer more from the reference image instead of defaulting to generic category imagery.',
+    ];
+};
+const buildImagePrompt = (brandProfile, input, options = {}) => {
+    const platformDirection = buildPlatformImageDirection(input.platform);
     const parts = [
-        `Create a polished, platform-ready marketing visual for ${input.productName}.`,
+        'Create one polished, premium, platform-ready marketing image.',
+        `Primary subject / offer context: ${input.productName}.`,
         input.brandName
             ? `Brand / business name: ${input.brandName}. Use this only as business context, not as visible text inside the image unless explicitly requested.`
             : 'No brand / business name is being used for this generation. Do not invent one and do not use the workspace owner personal name as the visible brand name.',
+        input.platform
+            ? `Target platform: ${input.platform}.`
+            : 'Target platform was not specified. Choose a composition that feels broadly social-media ready.',
+        platformDirection,
+        ...buildLinkedCampaignImageDirection(options.contentContext),
         input.productDescription
-            ? `Product details: ${input.productDescription}.`
-            : null,
+            ? `User brief: ${input.productDescription}. Treat this as high-priority creative intent.`
+            : 'No detailed brief was provided beyond the product context, so infer the strongest visual direction from the available reference, brand profile, and platform cues.',
         input.prompt
-            ? `User creative direction: ${input.prompt.trim()}.`
+            ? `Additional creative direction: ${input.prompt.trim()}.`
             : 'Creative direction: premium, modern, on-brand product creative shaped by the product brief and brand profile.',
+        ...buildReferenceImageDirection(input),
+        ...buildConnectedAccountImageDirection(options.brandMemories),
+        ...buildRetrievedImageMemoryDirection(options.brandMemories),
         input.sourceImageUrl
-            ? 'A source image is provided. Preserve the real subject identity, recognisable details, and key visual cues while improving composition, lighting, background, and polish.'
+            ? 'Use the attached reference together with the text brief, platform direction, and brand context at the same time. Do not collapse the request into generic imagery.'
             : 'No source image is provided. Create a fresh hero composition centered on the subject described in the brief.',
         buildAdvancedBackgroundDirection(input),
         'Define a clear scene, lighting style, camera angle, mood, color palette, and product focus based on the brief.',
         'Make those visual decisions feel on-brand, audience-aware, and appropriate for the inferred business domain.',
         'Do not assume fashion, ecommerce, or any other niche unless the product input or brand profile supports it.',
+        'Use brand and trend signals as secondary optimization layers only. If they conflict with a clear user brief or reference image, follow the user brief and reference first.',
         'Do not add any visible text, typography, logos, brand names, usernames, watermarks, packaging copy, or poster-style wording unless the user explicitly asks for text inside the image.',
         input.negativePrompt
             ? `Avoid these elements: ${input.negativePrompt}.`
             : 'Avoid extra products, distorted anatomy, wrong materials, warped text, clutter, and low-detail rendering.',
         'Keep the main subject in sharp focus and make the final image social-media ready.',
         ...buildBrandDirection(brandProfile),
-        ...buildTrendDirection(trendIntelligence),
+        ...buildTrendDirection(options.trendIntelligence),
     ];
     return parts.filter(Boolean).join(' ');
 };
@@ -1063,7 +1323,11 @@ const tryProvider = async (provider, prompt, input, signal, onProviderChange) =>
     }
 };
 const generateProductImage = async (brandProfile, input, options = {}) => {
-    const promptUsed = buildImagePrompt(brandProfile, input, options.trendIntelligence);
+    const promptUsed = buildImagePrompt(brandProfile, input, {
+        trendIntelligence: options.trendIntelligence,
+        brandMemories: options.brandMemories,
+        contentContext: options.contentContext,
+    });
     const failures = [];
     const signal = options.signal;
     for (const provider of providers) {

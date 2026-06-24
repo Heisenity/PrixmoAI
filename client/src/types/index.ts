@@ -292,6 +292,7 @@ export interface GenerateImageInput {
   useBrandName?: boolean;
   productName: string;
   productDescription?: string;
+  platform?: string;
   backgroundStyle?: string;
   backgroundPrompt?: string;
   prompt?: string;

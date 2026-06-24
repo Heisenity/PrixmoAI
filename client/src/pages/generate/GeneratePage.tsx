@@ -155,6 +155,7 @@ const createDefaultImageForm = (useBrandName = false) => ({
   useBrandName,
   productName: '',
   productDescription: '',
+  platform: 'Instagram',
   backgroundStyle: '',
   backgroundPrompt: '',
   sourceImageUrl: '',
@@ -163,6 +164,19 @@ const createDefaultImageForm = (useBrandName = false) => ({
 
 const DESCRIPTION_REQUIRED_MESSAGE =
   'Description is mandatory. (A detailed description will create better results.)';
+const IMAGE_REFERENCE_OR_BRIEF_REQUIRED_MESSAGE =
+  'Add a short brief, creative direction, or a reference image before generating.';
+
+const hasImageGenerationSignal = (input: {
+  productDescription: string;
+  prompt: string;
+  sourceImageUrl: string;
+}) =>
+  Boolean(
+    input.productDescription.trim() ||
+      input.prompt.trim() ||
+      input.sourceImageUrl.trim()
+  );
 
 const GENERATE_SIDEBAR_COLLAPSED_STORAGE_KEY =
   'prixmoai.generate.sidebarCollapsed';
@@ -904,8 +918,14 @@ const getUserMessageContent = (message: GenerateConversationMessage) => {
       : '';
 
   if (mode === 'image') {
+    const prompt =
+      typeof input.prompt === 'string' ? input.prompt.trim() : '';
+    const imageBrief = productDescription || prompt;
     const fragments = [
       productName ? `Generate an image for "${productName}"` : 'Generate an image',
+      typeof input.platform === 'string' && input.platform.trim()
+        ? `for ${input.platform.trim()}`
+        : null,
       typeof input.sourceImageUrl === 'string' && input.sourceImageUrl.trim()
         ? 'Reference image attached'
         : null,
@@ -917,8 +937,8 @@ const getUserMessageContent = (message: GenerateConversationMessage) => {
         : null,
     ].filter(Boolean);
 
-    return productDescription
-      ? `${fragments.join(' ')}. ${trimInlineText(productDescription, 140)}`
+    return imageBrief
+      ? `${fragments.join(' ')}. ${trimInlineText(imageBrief, 140)}`
       : `${fragments.join(' ')}.`;
   }
 
@@ -988,6 +1008,8 @@ const hydrateImageInput = (message: GenerateConversationMessage) => {
       typeof input.productDescription === 'string'
         ? input.productDescription
         : '',
+    platform:
+      typeof input.platform === 'string' ? input.platform : createDefaultImageForm().platform,
     backgroundStyle:
       typeof input.backgroundStyle === 'string' ? input.backgroundStyle : '',
     backgroundPrompt:
@@ -2194,8 +2216,8 @@ export const GeneratePage = () => {
       return;
     }
 
-    if (!imageForm.productDescription.trim()) {
-      workspace.setError(DESCRIPTION_REQUIRED_MESSAGE);
+    if (!hasImageGenerationSignal(imageForm)) {
+      workspace.setError(IMAGE_REFERENCE_OR_BRIEF_REQUIRED_MESSAGE);
       return;
     }
 
@@ -2296,8 +2318,8 @@ export const GeneratePage = () => {
   };
 
   const regenerateImage = () => {
-    if (!imageForm.productDescription.trim()) {
-      workspace.setError(DESCRIPTION_REQUIRED_MESSAGE);
+    if (!hasImageGenerationSignal(imageForm)) {
+      workspace.setError(IMAGE_REFERENCE_OR_BRIEF_REQUIRED_MESSAGE);
       return;
     }
 
@@ -3170,6 +3192,20 @@ export const GeneratePage = () => {
                       </span>
                     </button>
                   </div>
+                  <Select
+                    label="Platform"
+                    value={imageForm.platform}
+                    onChange={(event) =>
+                      setImageForm((current) => ({
+                        ...current,
+                        platform: event.target.value,
+                      }))
+                    }
+                  >
+                    {CONTENT_PLATFORM_OPTIONS.map((option) => (
+                      <option key={option}>{option}</option>
+                    ))}
+                  </Select>
                   <div
                     className={`field generate-chat__background-field ${
                       isCustomImageBackground
@@ -3262,10 +3298,11 @@ export const GeneratePage = () => {
                         productDescription: nextValue,
                       }))
                     }
+                    placeholder='Short prompts work here too. Example: "Create a similar image from the reference below."'
                     rows={2}
                   />
                   <label className="field">
-                    <span className="field__label">Optional source image URL</span>
+                    <span className="field__label">Reference image URL</span>
                     <input
                       className="field__control"
                       value={imageForm.sourceImageUrl}
@@ -3277,9 +3314,12 @@ export const GeneratePage = () => {
                       }
                       placeholder="https://..."
                     />
+                    <span className="field__hint">
+                      Paste a direct image URL or a share link. PrixmoAI will use it as the main visual reference.
+                    </span>
                   </label>
                   <div className="field">
-                    <span className="field__label">Upload source image</span>
+                    <span className="field__label">Upload reference image</span>
                     <label className="generator-upload generator-upload--compact">
                       <div className="generator-upload__copy">
                         <Upload size={18} />
@@ -3328,7 +3368,7 @@ export const GeneratePage = () => {
                     />
                     <div className="generator-source-chip__copy">
                       <strong>Reference ready</strong>
-                      <span>Used only for this generation.</span>
+                      <span>Used as the primary visual reference for this generation.</span>
                     </div>
                     <Button
                       type="button"

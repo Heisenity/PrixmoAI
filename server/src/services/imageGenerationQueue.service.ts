@@ -223,6 +223,8 @@ export const startImageGenerationWorker = () => {
           job.data.input,
           {
             trendIntelligence,
+            brandMemories: job.data.brandMemories,
+            contentContext: job.data.contentContext ?? null,
             signal,
             onProviderChange: async (provider) => {
               await updateJobRuntime(job.id!, {

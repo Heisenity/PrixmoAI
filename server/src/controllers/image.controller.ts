@@ -24,6 +24,7 @@ import {
 } from '../services/imageRuntimePolicy.service';
 import {
   importExternalSourceImage,
+  prepareSourceImageForGeneration,
   resolveExternalSourceImage,
   uploadSourceImage as uploadSourceImageToStorage,
 } from '../services/storage.service';
@@ -90,6 +91,19 @@ const resolveBrandPreference = (
     useBrandName: true,
   };
 };
+
+const resolveImagePlatform = (
+  explicitPlatform: string | null | undefined,
+  linkedPlatform: string | null | undefined
+) => {
+  const normalizedExplicitPlatform = explicitPlatform?.trim();
+  return normalizedExplicitPlatform || linkedPlatform || null;
+};
+
+const isImageInputValidationError = (message: string) =>
+  /invalid media url|no preview available for this link|please use an image url/i.test(
+    message
+  );
 
 const escapeXml = (value: string) =>
   value
@@ -200,10 +214,18 @@ export const generateImage = async (
           )
         : Promise.resolve(null),
     ]);
+    const preparedSourceImageUrl = req.body.sourceImageUrl
+      ? await prepareSourceImageForGeneration(req.user.id, req.body.sourceImageUrl)
+      : null;
     const generationInput = {
       ...req.body,
       ...resolveBrandPreference(brandProfile, req.body.useBrandName),
+      sourceImageUrl: preparedSourceImageUrl ?? req.body.sourceImageUrl,
     };
+    const selectedPlatform = resolveImagePlatform(
+      generationInput.platform,
+      linkedContent?.platform
+    );
     const memoryQueryInput = {
       brandName: generationInput.brandName ?? null,
       useBrandName: generationInput.useBrandName,
@@ -213,7 +235,7 @@ export const generateImage = async (
         generationInput.prompt ??
         linkedContent?.productDescription ??
         null,
-      platform: linkedContent?.platform ?? null,
+      platform: selectedPlatform,
       goal: linkedContent?.goal ?? null,
       tone: linkedContent?.tone ?? null,
       audience: linkedContent?.audience ?? null,
@@ -266,7 +288,7 @@ export const generateImage = async (
                 productName: linkedContent.productName,
                 productDescription:
                   linkedContent.productDescription ?? generationInput.prompt ?? null,
-                platform: linkedContent.platform ?? null,
+                platform: selectedPlatform,
                 goal: linkedContent.goal ?? null,
                 tone: linkedContent.tone ?? null,
                 audience: linkedContent.audience ?? null,
@@ -307,6 +329,7 @@ export const generateImage = async (
         brandProfile,
         productName: generationInput.productName,
         productDescription: generationInput.productDescription ?? null,
+        platform: selectedPlatform,
         backgroundStyle: generationInput.backgroundStyle ?? null,
         sourceImageUrl: generationInput.sourceImageUrl ?? null,
       });
@@ -329,6 +352,7 @@ export const generateImage = async (
       contentId: generationInput.contentId ?? null,
       productName: generationInput.productName,
       productDescription: generationInput.productDescription ?? null,
+      platform: selectedPlatform,
       backgroundStyle: generationInput.backgroundStyle ?? null,
       prompt: result.promptUsed,
       sourceImageUrl: generationInput.sourceImageUrl ?? null,
@@ -386,7 +410,7 @@ export const generateImage = async (
         ? error.message
         : 'Failed to generate image';
 
-    return res.status(502).json({
+    return res.status(isImageInputValidationError(message) ? 400 : 502).json({
       status: 'error',
       message,
     });

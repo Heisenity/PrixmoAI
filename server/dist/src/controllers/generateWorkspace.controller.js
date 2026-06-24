@@ -19,6 +19,7 @@ const imageGenerationQueue_service_1 = require("../services/imageGenerationQueue
 const jobRuntime_service_1 = require("../services/jobRuntime.service");
 const runtimeCache_service_1 = require("../services/runtimeCache.service");
 const brandMemory_service_1 = require("../services/brandMemory.service");
+const storage_service_1 = require("../services/storage.service");
 const socialAccountIntelligence_service_1 = require("../services/socialAccountIntelligence.service");
 const createWorkspaceGenerationStream = (res) => {
     let closed = false;
@@ -100,9 +101,15 @@ const buildCopyPromptSummary = (input) => {
         ? `${fragments.join(' ')}. ${description}`
         : `${fragments.join(' ')}.`;
 };
+const resolveImagePlatform = (explicitPlatform, linkedPlatform) => {
+    const normalizedExplicitPlatform = explicitPlatform?.trim();
+    return normalizedExplicitPlatform || linkedPlatform || null;
+};
+const isImageInputValidationError = (message) => /invalid media url|no preview available for this link|please use an image url/i.test(message);
 const buildImagePromptSummary = (input) => {
     const fragments = [
         `Generate an image for "${input.productName}"`,
+        input.platform ? `for ${input.platform}` : null,
         input.sourceImageUrl ? 'Reference image attached' : null,
         input.backgroundStyle ? `Background: ${input.backgroundStyle}` : null,
         input.backgroundPrompt ? `Custom background: ${trimText(input.backgroundPrompt, 80)}` : null,
@@ -743,10 +750,15 @@ const generateWorkspaceImage = async (req, res) => {
                 ? (0, content_1.getGeneratedContentById)(client, req.user.id, req.body.contentId).catch(() => null)
                 : Promise.resolve(null),
         ]);
+        const preparedSourceImageUrl = req.body.sourceImageUrl
+            ? await (0, storage_service_1.prepareSourceImageForGeneration)(req.user.id, req.body.sourceImageUrl)
+            : null;
         const generationInput = {
             ...req.body,
             ...resolveBrandPreference(brandProfile, req.body.useBrandName),
+            sourceImageUrl: preparedSourceImageUrl ?? req.body.sourceImageUrl,
         };
+        const selectedPlatform = resolveImagePlatform(generationInput.platform, linkedContent?.platform);
         const memoryQueryInput = {
             brandName: generationInput.brandName ?? null,
             useBrandName: generationInput.useBrandName,
@@ -755,7 +767,7 @@ const generateWorkspaceImage = async (req, res) => {
                 generationInput.prompt ??
                 linkedContent?.productDescription ??
                 null,
-            platform: linkedContent?.platform ?? null,
+            platform: selectedPlatform,
             goal: linkedContent?.goal ?? null,
             tone: linkedContent?.tone ?? null,
             audience: linkedContent?.audience ?? null,
@@ -792,7 +804,7 @@ const generateWorkspaceImage = async (req, res) => {
                         useBrandName: generationInput.useBrandName,
                         productName: linkedContent.productName,
                         productDescription: linkedContent.productDescription ?? generationInput.prompt ?? null,
-                        platform: linkedContent.platform ?? null,
+                        platform: selectedPlatform,
                         goal: linkedContent.goal ?? null,
                         tone: linkedContent.tone ?? null,
                         audience: linkedContent.audience ?? null,
@@ -840,6 +852,7 @@ const generateWorkspaceImage = async (req, res) => {
                 brandProfile,
                 productName: generationInput.productName,
                 productDescription: generationInput.productDescription ?? null,
+                platform: selectedPlatform,
                 backgroundStyle: generationInput.backgroundStyle ?? null,
                 sourceImageUrl: generationInput.sourceImageUrl ?? null,
             });
@@ -913,6 +926,7 @@ const generateWorkspaceImage = async (req, res) => {
             contentId: generationInput.contentId ?? null,
             productName: generationInput.productName,
             productDescription: generationInput.productDescription ?? null,
+            platform: selectedPlatform,
             backgroundStyle: generationInput.backgroundStyle ?? null,
             prompt: result.promptUsed,
             sourceImageUrl: generationInput.sourceImageUrl ?? null,
@@ -953,13 +967,14 @@ const generateWorkspaceImage = async (req, res) => {
             return;
         }
         logWorkspaceImageFailure(req.user?.id ?? 'unknown-user', error);
-        return res.status(502).json({
-            status: 'error',
-            message: error instanceof imageGen_1.ImageGenerationProvidersExhaustedError
+        const message = error instanceof imageGen_1.ImageGenerationProvidersExhaustedError
+            ? error.message
+            : error instanceof Error
                 ? error.message
-                : error instanceof Error
-                    ? error.message
-                    : 'Failed to generate image',
+                : 'Failed to generate image';
+        return res.status(isImageInputValidationError(message) ? 400 : 502).json({
+            status: 'error',
+            message,
         });
     }
     finally {

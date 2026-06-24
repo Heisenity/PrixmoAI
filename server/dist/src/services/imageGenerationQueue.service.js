@@ -134,6 +134,8 @@ const startImageGenerationWorker = () => {
             });
             const result = await (0, imageGen_1.generateProductImage)(job.data.brandProfile, job.data.input, {
                 trendIntelligence,
+                brandMemories: job.data.brandMemories,
+                contentContext: job.data.contentContext ?? null,
                 signal,
                 onProviderChange: async (provider) => {
                     await (0, jobRuntime_service_1.updateJobRuntime)(job.id, {

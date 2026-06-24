@@ -22,6 +22,7 @@ export const generateImageSchema = z.object({
   useBrandName: z.boolean().optional(),
   productName: z.string().trim().min(1, 'Product name is required'),
   productDescription: optionalTrimmedString(),
+  platform: optionalTrimmedString(),
   backgroundStyle: optionalTrimmedString(),
   backgroundPrompt: optionalTrimmedString(),
   prompt: optionalTrimmedString(),

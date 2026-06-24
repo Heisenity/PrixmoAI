@@ -67,6 +67,7 @@ import {
   syncGeneratedContentSemanticMemory,
   syncGeneratedImageSemanticMemory,
 } from '../services/brandMemory.service';
+import { prepareSourceImageForGeneration } from '../services/storage.service';
 import { prepareConnectedAccountIntelligenceForGeneration } from '../services/socialAccountIntelligence.service';
 
 type AuthenticatedRequest<
@@ -199,9 +200,23 @@ const buildCopyPromptSummary = (input: GenerateConversationCopyInput) => {
     : `${fragments.join(' ')}.`;
 };
 
+const resolveImagePlatform = (
+  explicitPlatform: string | null | undefined,
+  linkedPlatform: string | null | undefined
+) => {
+  const normalizedExplicitPlatform = explicitPlatform?.trim();
+  return normalizedExplicitPlatform || linkedPlatform || null;
+};
+
+const isImageInputValidationError = (message: string) =>
+  /invalid media url|no preview available for this link|please use an image url/i.test(
+    message
+  );
+
 const buildImagePromptSummary = (input: GenerateConversationImageInput) => {
   const fragments = [
     `Generate an image for "${input.productName}"`,
+    input.platform ? `for ${input.platform}` : null,
     input.sourceImageUrl ? 'Reference image attached' : null,
     input.backgroundStyle ? `Background: ${input.backgroundStyle}` : null,
     input.backgroundPrompt ? `Custom background: ${trimText(input.backgroundPrompt, 80)}` : null,
@@ -1016,10 +1031,18 @@ export const generateWorkspaceImage = async (
           )
         : Promise.resolve(null),
     ]);
+    const preparedSourceImageUrl = req.body.sourceImageUrl
+      ? await prepareSourceImageForGeneration(req.user.id, req.body.sourceImageUrl)
+      : null;
     const generationInput = {
       ...req.body,
       ...resolveBrandPreference(brandProfile, req.body.useBrandName),
+      sourceImageUrl: preparedSourceImageUrl ?? req.body.sourceImageUrl,
     };
+    const selectedPlatform = resolveImagePlatform(
+      generationInput.platform,
+      linkedContent?.platform
+    );
     const memoryQueryInput = {
       brandName: generationInput.brandName ?? null,
       useBrandName: generationInput.useBrandName,
@@ -1029,7 +1052,7 @@ export const generateWorkspaceImage = async (
         generationInput.prompt ??
         linkedContent?.productDescription ??
         null,
-      platform: linkedContent?.platform ?? null,
+      platform: selectedPlatform,
       goal: linkedContent?.goal ?? null,
       tone: linkedContent?.tone ?? null,
       audience: linkedContent?.audience ?? null,
@@ -1082,7 +1105,7 @@ export const generateWorkspaceImage = async (
                 productName: linkedContent.productName,
                 productDescription:
                   linkedContent.productDescription ?? generationInput.prompt ?? null,
-                platform: linkedContent.platform ?? null,
+                platform: selectedPlatform,
                 goal: linkedContent.goal ?? null,
                 tone: linkedContent.tone ?? null,
                 audience: linkedContent.audience ?? null,
@@ -1142,6 +1165,7 @@ export const generateWorkspaceImage = async (
         brandProfile,
         productName: generationInput.productName,
         productDescription: generationInput.productDescription ?? null,
+        platform: selectedPlatform,
         backgroundStyle: generationInput.backgroundStyle ?? null,
         sourceImageUrl: generationInput.sourceImageUrl ?? null,
       });
@@ -1228,6 +1252,7 @@ export const generateWorkspaceImage = async (
       contentId: generationInput.contentId ?? null,
       productName: generationInput.productName,
       productDescription: generationInput.productDescription ?? null,
+      platform: selectedPlatform,
       backgroundStyle: generationInput.backgroundStyle ?? null,
       prompt: result.promptUsed,
       sourceImageUrl: generationInput.sourceImageUrl ?? null,
@@ -1282,14 +1307,16 @@ export const generateWorkspaceImage = async (
     }
 
     logWorkspaceImageFailure(req.user?.id ?? 'unknown-user', error);
-    return res.status(502).json({
+    const message =
+      error instanceof ImageGenerationProvidersExhaustedError
+        ? error.message
+        : error instanceof Error
+        ? error.message
+        : 'Failed to generate image';
+
+    return res.status(isImageInputValidationError(message) ? 400 : 502).json({
       status: 'error',
-      message:
-        error instanceof ImageGenerationProvidersExhaustedError
-          ? error.message
-          : error instanceof Error
-          ? error.message
-          : 'Failed to generate image',
+      message,
     });
   } finally {
     cancellation.cleanup();

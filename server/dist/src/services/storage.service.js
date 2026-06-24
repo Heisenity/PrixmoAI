@@ -3,7 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.importExternalSourceImage = exports.resolveExternalSourceImage = exports.uploadSourceImage = void 0;
+exports.importExternalSourceImage = exports.prepareSourceImageForGeneration = exports.isManagedSourceImageUrl = exports.resolveExternalSourceImage = exports.uploadSourceImage = void 0;
 const path_1 = __importDefault(require("path"));
 const constants_1 = require("../config/constants");
 const supabase_1 = require("../db/supabase");
@@ -363,6 +363,24 @@ const resolveExternalSourceImage = async (sourceUrl) => {
     return resolveFromUrl(sourceUrl, 0, false);
 };
 exports.resolveExternalSourceImage = resolveExternalSourceImage;
+const isManagedSourceImageUrl = (value) => value.includes(`/storage/v1/object/public/${constants_1.SUPABASE_SOURCE_IMAGE_BUCKET}/`);
+exports.isManagedSourceImageUrl = isManagedSourceImageUrl;
+const prepareSourceImageForGeneration = async (userId, sourceUrl) => {
+    const normalizedSourceUrl = sourceUrl.trim();
+    if (!normalizedSourceUrl) {
+        return null;
+    }
+    if ((0, exports.isManagedSourceImageUrl)(normalizedSourceUrl)) {
+        return normalizedSourceUrl;
+    }
+    const resolvedMedia = await (0, exports.resolveExternalSourceImage)(normalizedSourceUrl);
+    if (resolvedMedia.mediaType !== 'image') {
+        throw new Error('Please use an image URL as the reference for image generation');
+    }
+    const uploadedSourceImage = await (0, exports.importExternalSourceImage)(userId, normalizedSourceUrl);
+    return uploadedSourceImage.publicUrl;
+};
+exports.prepareSourceImageForGeneration = prepareSourceImageForGeneration;
 const importExternalSourceImage = async (userId, sourceUrl) => {
     const resolvedMedia = await (0, exports.resolveExternalSourceImage)(sourceUrl);
     const response = await fetchExternalMediaResponse(resolvedMedia.resolvedUrl, 'GET');
