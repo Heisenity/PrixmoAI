@@ -1,5 +1,7 @@
 import express from "express";
 import { randomUUID } from "crypto";
+import { existsSync } from "fs";
+import path from "path";
 import helmet from "helmet";
 import cors from "cors";
 import { errorHandler } from "./middleware/errorHandler.middleware";
@@ -39,6 +41,16 @@ import { runWithRequestContext } from './lib/requestContext';
 
 const app = express();
 const PORT = APP_PORT;
+const clientDistCandidates = [
+  path.resolve(__dirname, '../../client/dist'),
+  path.resolve(__dirname, '../../../client/dist'),
+];
+const clientDistPath = clientDistCandidates.find((candidate) =>
+  existsSync(path.join(candidate, 'index.html'))
+);
+const clientIndexPath = clientDistPath
+  ? path.join(clientDistPath, 'index.html')
+  : null;
 
 // 1. Security Headers
 app.use(helmet());
@@ -67,6 +79,11 @@ app.use(express.json({ limit: '80mb' }));
 app.use(express.urlencoded({ extended: true, limit: '80mb' }));
 
 app.get('/', (req, res) => {
+  if (clientIndexPath) {
+    res.sendFile(clientIndexPath);
+    return;
+  }
+
   res.status(200).json({
     message: "Welcome to the API",
     version: version
@@ -92,6 +109,13 @@ app.use('/api/generate', generateRouter);
 app.use('/api/images', imageRouter);
 app.use('/api/runtime', runtimeRouter);
 app.use('/api/scheduler', schedulerRouter);
+
+if (clientDistPath && clientIndexPath) {
+  app.use(express.static(clientDistPath));
+  app.get(/^\/(?!api(?:\/|$)|health$).*/, (_req, res) => {
+    res.sendFile(clientIndexPath);
+  });
+}
 
 app.use((req, _res, next) => {
   const error = new Error(`Route not found: ${req.originalUrl}`) as Error & {
