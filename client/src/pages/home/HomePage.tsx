@@ -12,6 +12,7 @@ import {
   Check,
   CircleX,
   ImagePlus,
+  Play,
   Quote,
   Sparkles,
   Star,
@@ -19,10 +20,9 @@ import {
   WandSparkles,
   type LucideIcon,
 } from 'lucide-react';
-import { useRef, useState, type PropsWithChildren } from 'react';
+import { useEffect, useRef, useState, type PropsWithChildren } from 'react';
 import { Link } from 'react-router-dom';
 import '../../styles/home.css';
-import { ProviderLogo } from '../../components/auth/ProviderLogo';
 import { BlackHoleCanvas } from '../../components/home/BlackHoleCanvas';
 import { Footer } from '../../components/layout/Footer';
 import { Navbar } from '../../components/layout/Navbar';
@@ -31,10 +31,7 @@ import { buttonClassName } from '../../components/ui/button';
 import { Card } from '../../components/ui/card';
 import { useAuth } from '../../hooks/useAuth';
 import { APP_NAME } from '../../lib/constants';
-import { getPlayfulErrorMessage } from '../../lib/errorTone';
 import { cn } from '../../lib/utils';
-
-type OAuthProvider = 'google' | 'github' | 'facebook';
 
 const socialProofItems = [
   'Clothing Brands',
@@ -44,6 +41,276 @@ const socialProofItems = [
   'Gyms',
   'Home Decor',
 ] as const;
+
+type HeroOutputId =
+  | 'strategy'
+  | 'content'
+  | 'reel'
+  | 'influencer'
+  | 'schedule'
+  | 'insights';
+
+type HeroAgentCardDefinition = {
+  id: HeroOutputId;
+  agent: string;
+  title: string;
+  detail: string;
+  icon: LucideIcon;
+  restOffset: { x: number; y: number };
+  floatDuration: number;
+  floatDelay: number;
+  hideOnMobile?: boolean;
+};
+
+const heroAgentCards: readonly HeroAgentCardDefinition[] = [
+  {
+    id: 'content',
+    agent: 'Content Agent',
+    title: 'Caption Generated',
+    detail: 'Instagram • Ready to post',
+    icon: Sparkles,
+    restOffset: { x: -126, y: -118 },
+    floatDuration: 9.4,
+    floatDelay: 0.2,
+  },
+  {
+    id: 'strategy',
+    agent: 'Strategy Agent',
+    title: 'Campaign Plan Ready',
+    detail: '7-day content strategy',
+    icon: BarChart3,
+    restOffset: { x: 126, y: -118 },
+    floatDuration: 11.2,
+    floatDelay: 0.6,
+  },
+  {
+    id: 'reel',
+    agent: 'Reel Agent',
+    title: 'Reel Created',
+    detail: 'Hook + CTA optimized',
+    icon: WandSparkles,
+    restOffset: { x: -148, y: -6 },
+    floatDuration: 10.4,
+    floatDelay: 1,
+    hideOnMobile: true,
+  },
+  {
+    id: 'schedule',
+    agent: 'Scheduling Agent',
+    title: 'Post Scheduled',
+    detail: 'Today • 7:30 PM',
+    icon: CalendarClock,
+    restOffset: { x: 122, y: 116 },
+    floatDuration: 12.4,
+    floatDelay: 1.2,
+  },
+  {
+    id: 'influencer',
+    agent: 'Influencer Agent',
+    title: 'AI Influencer Activated',
+    detail: 'UGC promo ready',
+    icon: Star,
+    restOffset: { x: 148, y: 4 },
+    floatDuration: 8.8,
+    floatDelay: 0.8,
+    hideOnMobile: true,
+  },
+  {
+    id: 'insights',
+    agent: 'Insights Agent',
+    title: 'Content Gap Detected',
+    detail: 'Your competitors missed this trend',
+    icon: BarChart3,
+    restOffset: { x: -122, y: 114 },
+    floatDuration: 10.8,
+    floatDelay: 1.4,
+    hideOnMobile: true,
+  },
+] as const;
+
+type HeroSequencePhase =
+  | 'idle'
+  | 'absorbingInputs'
+  | 'whiteHoleFlash'
+  | 'emittingOutputs'
+  | 'returnToBlackhole';
+
+type HeroUserInputDefinition = {
+  id: string;
+  text: string;
+  restOffset: { x: number; y: number };
+  spiralTurns: number;
+  power: number;
+  hideOnMobile?: boolean;
+};
+
+const heroUserInputs: readonly HeroUserInputDefinition[] = [
+  {
+    id: 'saree-leads',
+    text: 'Need more leads for my saree business',
+    restOffset: { x: -136, y: -112 },
+    spiralTurns: 0.36,
+    power: 1.72,
+  },
+  {
+    id: 'product-reels',
+    text: 'Create reels for my new product launch',
+    restOffset: { x: 136, y: -104 },
+    spiralTurns: -0.32,
+    power: 1.86,
+  },
+  {
+    id: 'instagram-marketing',
+    text: 'Help me market on Instagram',
+    restOffset: { x: -154, y: -8 },
+    spiralTurns: 0.28,
+    power: 1.68,
+    hideOnMobile: true,
+  },
+  {
+    id: 'better-engagement',
+    text: 'I want better engagement this week',
+    restOffset: { x: 148, y: 10 },
+    spiralTurns: -0.38,
+    power: 1.78,
+  },
+  {
+    id: 'festive-offer',
+    text: 'Promote my festive offer',
+    restOffset: { x: -132, y: 104 },
+    spiralTurns: 0.3,
+    power: 1.7,
+    hideOnMobile: true,
+  },
+  {
+    id: 'brand-content',
+    text: 'Need content for my brand',
+    restOffset: { x: 132, y: 112 },
+    spiralTurns: -0.34,
+    power: 1.74,
+  },
+] as const;
+
+const HERO_IDLE_MS = 1600;
+const HERO_INPUT_READ_MS = 2000;
+const HERO_INPUT_TRAVEL_MS = 1200;
+const HERO_INPUT_DURATION_MS = HERO_INPUT_READ_MS + HERO_INPUT_TRAVEL_MS;
+const HERO_INPUT_HOLD_MS = HERO_INPUT_READ_MS;
+const HERO_INPUT_STEP_MS = HERO_INPUT_DURATION_MS + 180;
+const HERO_PROCESS_MS = 450;
+const HERO_WHITE_HOLE_MS = 650;
+const HERO_EMIT_MS = 980;
+const HERO_EMIT_STAGGER_MS = 180;
+const HERO_RETURN_IDLE_MS = 6000;
+const HERO_EVENT_HORIZON_RADIUS = 54;
+const HERO_TIDAL_RADIUS = 118;
+const HERO_INPUT_FRAME_COUNT = 60;
+
+const getAngleToCenter = ({ x, y }: { x: number; y: number }) =>
+  (Math.atan2(y, x) * 180) / Math.PI;
+
+const clampNumber = (value: number, min: number, max: number) =>
+  Math.min(max, Math.max(min, value));
+
+const buildHeroInputMotion = ({
+  power,
+  restOffset,
+  spiralTurns,
+}: HeroUserInputDefinition) => {
+  const startRadius = Math.sqrt(restOffset.x ** 2 + restOffset.y ** 2);
+  const startAngle = Math.atan2(restOffset.y, restOffset.x);
+  const x: number[] = [];
+  const y: number[] = [];
+  const scale: number[] = [];
+  const scaleX: number[] = [];
+  const scaleY: number[] = [];
+  const opacity: number[] = [];
+  const rotate: number[] = [];
+  const filter: string[] = [];
+  const tailOpacity: number[] = [];
+  const tailScaleX: number[] = [];
+  const tailScaleY: number[] = [];
+  const tailFilter: string[] = [];
+  const spiralOpacity: number[] = [];
+  const spiralScale: number[] = [];
+  const spiralRotate: number[] = [];
+  const times: number[] = [];
+  const holdRatio = HERO_INPUT_HOLD_MS / HERO_INPUT_DURATION_MS;
+  const holdFrameCount = Math.max(2, Math.round(HERO_INPUT_FRAME_COUNT * holdRatio));
+  const travelFrameCount = Math.max(HERO_INPUT_FRAME_COUNT - holdFrameCount, 2);
+
+  for (let index = 0; index < HERO_INPUT_FRAME_COUNT; index += 1) {
+    const isHolding = index < holdFrameCount;
+    const travelT = isHolding
+      ? 0
+      : (index - holdFrameCount) / Math.max(travelFrameCount - 1, 1);
+    const curveT = Math.pow(travelT, 1.45);
+    const radius = startRadius * Math.pow(Math.max(0, 1 - curveT), power);
+    const stretchProgress = clampNumber(
+      (HERO_TIDAL_RADIUS - radius) / Math.max(HERO_TIDAL_RADIUS - HERO_EVENT_HORIZON_RADIUS, 1),
+      0,
+      1,
+    );
+    const stretchCurve = Math.pow(stretchProgress, 2.2);
+    const theta =
+      startAngle + spiralTurns * Math.PI * 2 * (travelT + 0.24 * stretchCurve);
+    const point = {
+      x: radius * Math.cos(theta),
+      y: radius * Math.sin(theta),
+      radius,
+    };
+    const collapseProgress = clampNumber((travelT - 0.82) / 0.18, 0, 1);
+    const collapseCurve = Math.pow(collapseProgress, 1.45);
+    const angleToCenter = (Math.atan2(-point.y, -point.x) * 180) / Math.PI;
+
+    if (isHolding) {
+      times.push((index / Math.max(holdFrameCount - 1, 1)) * holdRatio);
+    } else {
+      times.push(
+        holdRatio +
+          ((index - holdFrameCount) / Math.max(travelFrameCount - 1, 1)) *
+            (1 - holdRatio),
+      );
+    }
+
+    x.push(point.x);
+    y.push(point.y);
+    scale.push(clampNumber(1 - 0.08 * travelT - 0.26 * stretchCurve - 0.58 * collapseCurve, 0.05, 1));
+    scaleX.push(1 + 2.05 * stretchCurve + 0.85 * collapseCurve);
+    scaleY.push(clampNumber(1 - 0.78 * stretchCurve - 0.36 * collapseCurve, 0.04, 1));
+    opacity.push(clampNumber(1 - 0.38 * stretchCurve - 0.62 * collapseCurve, 0, 1));
+    rotate.push(angleToCenter * clampNumber(travelT * 1.18, 0, 1));
+    filter.push(`blur(${(1.6 * stretchCurve + 4.4 * collapseCurve).toFixed(2)}px)`);
+    tailOpacity.push(clampNumber(0.08 + 0.82 * stretchCurve - 0.26 * collapseCurve, 0, 0.94));
+    tailScaleX.push(0.82 + 2.8 * stretchCurve + 0.92 * collapseCurve);
+    tailScaleY.push(clampNumber(0.92 - 0.7 * stretchCurve - 0.24 * collapseCurve, 0.12, 0.92));
+    tailFilter.push(`blur(${(8 + 9 * stretchCurve + 3 * collapseCurve).toFixed(2)}px)`);
+    spiralOpacity.push(
+      clampNumber((stretchCurve - 0.05) * 1.3 + 0.42 * collapseCurve, 0, 0.98),
+    );
+    spiralScale.push(0.74 + 0.54 * stretchCurve + 0.36 * collapseCurve);
+    spiralRotate.push(28 * travelT + 190 * stretchCurve + 120 * collapseCurve);
+  }
+
+  return {
+    filter,
+    opacity,
+    rotate,
+    scale,
+    scaleX,
+    scaleY,
+    tailFilter,
+    tailOpacity,
+    tailScaleX,
+    tailScaleY,
+    spiralOpacity,
+    spiralRotate,
+    spiralScale,
+    times,
+    x,
+    y,
+  };
+};
 
 const problemCards = [
   {
@@ -300,7 +567,7 @@ const ScrollScrub = ({
   children,
   className,
 }: PropsWithChildren<{ className?: string }>) => {
-  const prefersReducedMotion = useReducedMotion();
+  const prefersReducedMotion = useReducedMotion() ?? false;
 
   return (
     <motion.div
@@ -337,13 +604,550 @@ const FeatureIcon = ({ icon: Icon }: { icon: LucideIcon }) => (
   </span>
 );
 
+const heroEase = [0.22, 1, 0.36, 1] as const;
+const MotionLink = motion(Link);
+
+const heroContentVariants = {
+  hidden: { opacity: 0 },
+  show: {
+    opacity: 1,
+    transition: {
+      delayChildren: 0.08,
+      staggerChildren: 0.08,
+    },
+  },
+};
+
+const heroItemVariants = {
+  hidden: { opacity: 0, y: 18 },
+  show: {
+    opacity: 1,
+    y: 0,
+    transition: {
+      duration: 0.72,
+      ease: heroEase,
+    },
+  },
+};
+
+const HeroAgentCard = ({
+  card,
+  index,
+  phase,
+  isHovered,
+  onHoverChange,
+  prefersReducedMotion,
+}: {
+  card: HeroAgentCardDefinition;
+  index: number;
+  phase: HeroSequencePhase;
+  isHovered: boolean;
+  onHoverChange: (isHovered: boolean) => void;
+  prefersReducedMotion: boolean;
+}) => {
+  const Icon = card.icon;
+  const angleToCenter = getAngleToCenter(card.restOffset);
+  const canHover = phase === 'returnToBlackhole';
+  const hiddenOutput = {
+    opacity: 0,
+    x: 0,
+    y: 0,
+    scale: 0.96,
+    scaleX: 1,
+    scaleY: 1,
+    rotate: 0,
+    filter: 'blur(2px)',
+  };
+  const idleAnimation = {
+    opacity: 1,
+    x: [
+      card.restOffset.x,
+      card.restOffset.x + 4,
+      card.restOffset.x,
+      card.restOffset.x - 4,
+      card.restOffset.x,
+    ],
+    y: [
+      card.restOffset.y,
+      card.restOffset.y - 5,
+      card.restOffset.y,
+      card.restOffset.y + 4,
+      card.restOffset.y,
+    ],
+    scale: 1,
+    scaleX: 1,
+    scaleY: 1,
+    rotate: [0, 0.35, 0, -0.35, 0],
+    filter: 'blur(0px)',
+  };
+  const getAnimation = () => {
+    if (prefersReducedMotion) {
+      return {
+        opacity: 1,
+        x: card.restOffset.x,
+        y: card.restOffset.y,
+        scale: 1,
+        scaleX: 1,
+        scaleY: 1,
+        rotate: 0,
+        filter: 'blur(0px)',
+      };
+    }
+
+    if (phase === 'idle' || phase === 'absorbingInputs' || phase === 'whiteHoleFlash') {
+      return hiddenOutput;
+    }
+
+    if (phase === 'emittingOutputs') {
+      return {
+        opacity: [0, 0.55, 1],
+        x: [0, card.restOffset.x * 0.55, card.restOffset.x],
+        y: [0, card.restOffset.y * 0.55, card.restOffset.y],
+        scale: [0.22, 0.82, 1],
+        scaleX: [1.18, 1.04, 1],
+        scaleY: [0.72, 0.96, 1],
+        rotate: [angleToCenter * 0.5, angleToCenter * 0.16, 0],
+        filter: ['blur(8px)', 'blur(3px)', 'blur(0px)'],
+      };
+    }
+
+    return idleAnimation;
+  };
+  const getTransition = () => {
+    if (prefersReducedMotion) {
+      return { duration: 0 };
+    }
+
+    if (phase === 'emittingOutputs') {
+      return {
+        duration: HERO_EMIT_MS / 1000,
+        delay: (index * HERO_EMIT_STAGGER_MS) / 1000,
+        ease: heroEase,
+        times: [0, 0.58, 1],
+      };
+    }
+
+    if (phase === 'returnToBlackhole') {
+      return {
+        duration: card.floatDuration,
+        delay: card.floatDelay,
+        repeat: Number.POSITIVE_INFINITY,
+        ease: 'easeInOut',
+      };
+    }
+
+    return { duration: 0.28, ease: heroEase };
+  };
+
+  return (
+    <motion.div
+      className={cn(
+        'hero-agent-card-shell',
+        card.hideOnMobile && 'hero-agent-card-shell--mobile-hidden',
+      )}
+      initial={false}
+    >
+      <motion.div
+        className={cn(
+          'hero-agent-card',
+          phase === 'emittingOutputs' && 'hero-agent-card--active',
+          phase !== 'idle' && phase !== 'returnToBlackhole' && 'hero-agent-card--processing',
+          isHovered && 'hero-agent-card--hovered',
+        )}
+        animate={getAnimation()}
+        transition={getTransition()}
+        style={{ transformOrigin: '50% 50%' }}
+        whileHover={
+          prefersReducedMotion || !canHover
+            ? undefined
+            : { y: card.restOffset.y - 4, scale: 1.015 }
+        }
+        onHoverStart={() => {
+          if (canHover) {
+            onHoverChange(true);
+          }
+        }}
+        onHoverEnd={() => onHoverChange(false)}
+      >
+        <span className="hero-agent-card__icon">
+          <Icon size={14} />
+        </span>
+        <div className="hero-agent-card__copy">
+          <span className="hero-agent-card__agent">{card.agent}</span>
+          <strong>{card.title}</strong>
+          <span>{card.detail}</span>
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+};
+
+const HeroWhiteHolePulse = ({
+  cycle,
+  phase,
+  prefersReducedMotion,
+}: {
+  cycle: number;
+  phase: HeroSequencePhase;
+  prefersReducedMotion: boolean;
+}) => {
+  if (prefersReducedMotion) {
+    return null;
+  }
+
+  return (
+    <>
+      <motion.div
+        key={`whitehole-core-${cycle}`}
+        className="hero-agent-engine__whitehole-core"
+        initial={{ opacity: 0, scale: 0.76 }}
+        animate={
+          phase === 'emittingOutputs'
+            ? { opacity: [0.28, 0.94, 0.82], scale: [1, 1.38, 1.56] }
+            : phase === 'whiteHoleFlash'
+              ? { opacity: [0, 0.52, 0.36], scale: [0.76, 1.14, 1.28] }
+            : phase === 'returnToBlackhole'
+              ? { opacity: 0, scale: 0.88 }
+            : { opacity: 0, scale: 0.76 }
+        }
+        transition={{
+          duration:
+            phase === 'returnToBlackhole'
+              ? 0.82
+              : HERO_WHITE_HOLE_MS / 1000,
+          ease: heroEase,
+        }}
+      />
+      <motion.div
+        key={`whitehole-pulse-${cycle}`}
+        className="hero-agent-engine__whitehole-pulse"
+        initial={{ opacity: 0, scale: 0.58 }}
+        animate={
+          phase === 'emittingOutputs'
+            ? { opacity: [0.16, 0.72, 0.34, 0.08], scale: [0.9, 1.28, 1.54, 1.7] }
+            : phase === 'whiteHoleFlash'
+              ? { opacity: [0, 0.34, 0.12, 0], scale: [0.58, 1.04, 1.28, 1.42] }
+            : phase === 'returnToBlackhole'
+              ? { opacity: 0, scale: 0.96 }
+            : { opacity: 0, scale: 0.58 }
+        }
+        transition={{
+          duration:
+            phase === 'returnToBlackhole'
+              ? 0.82
+              : (HERO_WHITE_HOLE_MS + HERO_EMIT_MS) / 1000,
+          ease: heroEase,
+          times:
+            phase === 'returnToBlackhole'
+              ? undefined
+              : [0, 0.38, 0.74, 1],
+        }}
+      />
+      <motion.div
+        key={`whitehole-ring-${cycle}`}
+        className="hero-agent-engine__whitehole-ring"
+        initial={{ opacity: 0, scale: 0.42 }}
+        animate={
+          phase === 'emittingOutputs'
+            ? { opacity: [0.14, 0.7, 0.16], scale: [0.84, 1.36, 1.78] }
+            : phase === 'whiteHoleFlash'
+              ? { opacity: [0, 0.42, 0], scale: [0.42, 1.18, 1.56] }
+            : phase === 'returnToBlackhole'
+              ? { opacity: 0, scale: 1.02 }
+            : { opacity: 0, scale: 0.42 }
+        }
+        transition={{
+          duration:
+            phase === 'returnToBlackhole'
+              ? 0.82
+              : (HERO_WHITE_HOLE_MS + 420) / 1000,
+          ease: heroEase,
+          times:
+            phase === 'returnToBlackhole'
+              ? undefined
+              : [0, 0.54, 1],
+        }}
+      />
+    </>
+  );
+};
+
+const HeroUserInputCard = ({
+  activeIndex,
+  input,
+  index,
+  phase,
+  prefersReducedMotion,
+}: {
+  activeIndex: number;
+  input: HeroUserInputDefinition;
+  index: number;
+  phase: HeroSequencePhase;
+  prefersReducedMotion: boolean;
+}) => {
+  const motionPath = buildHeroInputMotion(input);
+  const isActive = phase === 'absorbingInputs' && index === activeIndex;
+  const isVisibleAtRest =
+    (phase === 'idle' && index === 0) ||
+    (phase === 'absorbingInputs' && index === activeIndex);
+  const isAbsorbed =
+    phase === 'absorbingInputs'
+      ? index < activeIndex
+      : phase === 'whiteHoleFlash' || phase === 'emittingOutputs' || phase === 'returnToBlackhole';
+  const inputPullsFromRight = input.restOffset.x < 0;
+  const restingState = {
+    opacity: 1,
+    x: input.restOffset.x,
+    y: input.restOffset.y,
+    scale: 1,
+    scaleX: 1,
+    scaleY: 1,
+    rotate: 0,
+    filter: 'blur(0px)',
+  };
+  const floatingRestState = {
+    opacity: 1,
+    x: [
+      input.restOffset.x,
+      input.restOffset.x + 3,
+      input.restOffset.x,
+      input.restOffset.x - 3,
+      input.restOffset.x,
+    ],
+    y: [
+      input.restOffset.y,
+      input.restOffset.y - 4,
+      input.restOffset.y,
+      input.restOffset.y + 4,
+      input.restOffset.y,
+    ],
+    scale: 1,
+    scaleX: 1,
+    scaleY: 1,
+    rotate: [0, 0.28, 0, -0.28, 0],
+    filter: 'blur(0px)',
+  };
+  const absorbedState = {
+    opacity: 0,
+    x: 0,
+    y: 0,
+    scale: 0.04,
+    scaleX: 2.8,
+    scaleY: 0.05,
+    rotate: motionPath.rotate[motionPath.rotate.length - 1] ?? 0,
+    filter: 'blur(6px)',
+  };
+  const hiddenQueuedState = {
+    opacity: 0,
+    x: input.restOffset.x,
+    y: input.restOffset.y,
+    scale: 0.96,
+    scaleX: 1,
+    scaleY: 1,
+    rotate: 0,
+    filter: 'blur(0px)',
+  };
+  const activeTransition = {
+    duration: HERO_INPUT_DURATION_MS / 1000,
+    ease: 'linear' as const,
+    times: motionPath.times,
+  };
+
+  if (prefersReducedMotion) {
+    return null;
+  }
+
+  return (
+    <motion.div
+      key={input.id}
+      className={cn(
+        'hero-user-input-shell',
+        input.hideOnMobile && 'hero-user-input-shell--mobile-hidden',
+      )}
+      initial={{
+        opacity: 1,
+        x: input.restOffset.x,
+        y: input.restOffset.y,
+        scale: 1,
+        scaleX: 1,
+        scaleY: 1,
+        rotate: 0,
+        filter: 'blur(0px)',
+      }}
+      animate={
+        isActive
+            ? {
+              opacity: motionPath.opacity,
+              x: motionPath.x,
+              y: motionPath.y,
+              scale: motionPath.scale,
+              scaleX: motionPath.scaleX,
+              scaleY: motionPath.scaleY,
+              rotate: motionPath.rotate,
+              filter: motionPath.filter,
+            }
+          : isAbsorbed
+            ? absorbedState
+            : isVisibleAtRest && phase === 'idle'
+              ? floatingRestState
+              : isVisibleAtRest
+                ? restingState
+                : hiddenQueuedState
+      }
+        transition={
+          isActive
+            ? activeTransition
+          : phase === 'idle'
+            ? {
+              duration: 5.8 + index * 0.35,
+              delay: index * 0.12,
+              repeat: Number.POSITIVE_INFINITY,
+              ease: 'easeInOut',
+            }
+          : { duration: 0.32, ease: heroEase }
+      }
+      style={{ transformOrigin: inputPullsFromRight ? '84% 50%' : '16% 50%' }}
+    >
+      <motion.span
+        aria-hidden="true"
+        className={cn(
+          'hero-user-input-trail',
+          !inputPullsFromRight && 'hero-user-input-trail--reverse',
+        )}
+        initial={false}
+        animate={
+          isActive
+            ? {
+                opacity: motionPath.tailOpacity,
+                scaleX: motionPath.tailScaleX,
+                scaleY: motionPath.tailScaleY,
+                filter: motionPath.tailFilter,
+              }
+            : {
+                opacity: 0,
+                scaleX: 0.88,
+                scaleY: 0.88,
+                filter: 'blur(8px)',
+              }
+        }
+        transition={isActive ? activeTransition : { duration: 0.2, ease: heroEase }}
+      />
+      <motion.span
+        aria-hidden="true"
+        className="hero-user-input-spiral"
+        initial={false}
+        animate={
+          isActive
+            ? {
+                opacity: motionPath.spiralOpacity,
+                scale: motionPath.spiralScale,
+                rotate: motionPath.spiralRotate,
+              }
+            : {
+                opacity: 0,
+                scale: 0.72,
+                rotate: 0,
+              }
+        }
+        transition={isActive ? activeTransition : { duration: 0.2, ease: heroEase }}
+      />
+      <motion.div
+        className={cn(
+          'hero-user-input-card',
+          isActive && 'hero-user-input-card--active',
+          isActive && !inputPullsFromRight && 'hero-user-input-card--active-reverse',
+          !isActive && isVisibleAtRest && !isAbsorbed && 'hero-user-input-card--inactive',
+        )}
+        initial={false}
+        animate={
+          isActive
+            ? {
+                borderRadius: ['16px', '16px', '22px', '999px', '999px'],
+                opacity: [1, 0.98, 0.6, 0.14, 0],
+                filter: ['blur(0px)', 'blur(0px)', 'blur(0.6px)', 'blur(2px)', 'blur(4px)'],
+              }
+            : {
+                borderRadius: '16px',
+                opacity: 1,
+                filter: 'blur(0px)',
+              }
+        }
+        transition={
+          isActive
+            ? { ...activeTransition, times: [0, 0.5, 0.76, 0.9, 1] }
+            : { duration: 0.2, ease: heroEase }
+        }
+      >
+        <span>User input</span>
+        <strong>{input.text}</strong>
+      </motion.div>
+    </motion.div>
+  );
+};
+
 export const HomePage = () => {
   const heroRef = useRef<HTMLDivElement | null>(null);
   const showcaseRef = useRef<HTMLElement | null>(null);
-  const { session, signInWithOAuth, isConfigured } = useAuth();
-  const [authPending, setAuthPending] = useState<OAuthProvider | null>(null);
-  const [authError, setAuthError] = useState<string | null>(null);
-  const prefersReducedMotion = useReducedMotion();
+  const { session } = useAuth();
+  const prefersReducedMotion = useReducedMotion() ?? false;
+  const [heroSequencePhase, setHeroSequencePhase] = useState<HeroSequencePhase>('idle');
+  const [heroInputIndex, setHeroInputIndex] = useState(0);
+  const [heroSequenceCycle, setHeroSequenceCycle] = useState(0);
+  const [hoveredHeroOutput, setHoveredHeroOutput] = useState<HeroOutputId | null>(null);
+
+  useEffect(() => {
+    if (prefersReducedMotion) {
+      setHeroSequencePhase('idle');
+      return undefined;
+    }
+
+    const timeoutIds: number[] = [];
+    const schedule = (callback: () => void, delay: number) => {
+      timeoutIds.push(window.setTimeout(callback, delay));
+    };
+    const inputStartMs = HERO_IDLE_MS;
+    const allInputsAbsorbedMs =
+      inputStartMs +
+      (heroUserInputs.length - 1) * HERO_INPUT_STEP_MS +
+      HERO_INPUT_DURATION_MS;
+    const whiteHoleStartMs = allInputsAbsorbedMs + HERO_PROCESS_MS;
+    const emitStartMs = whiteHoleStartMs + HERO_WHITE_HOLE_MS;
+    const returnToIdleStartMs =
+      emitStartMs + HERO_EMIT_MS + (heroAgentCards.length - 1) * HERO_EMIT_STAGGER_MS;
+
+    setHeroSequencePhase('idle');
+    setHeroInputIndex(0);
+
+    schedule(() => {
+      setHeroSequencePhase('absorbingInputs');
+    }, inputStartMs);
+
+    heroUserInputs.forEach((_, index) => {
+      schedule(() => {
+        setHeroInputIndex(index);
+      }, inputStartMs + index * HERO_INPUT_STEP_MS);
+    });
+
+    schedule(() => {
+      setHeroSequencePhase('whiteHoleFlash');
+    }, whiteHoleStartMs);
+
+    schedule(() => {
+      setHeroSequencePhase('emittingOutputs');
+    }, emitStartMs);
+
+    schedule(() => {
+      setHeroSequencePhase('returnToBlackhole');
+    }, returnToIdleStartMs);
+
+    schedule(() => {
+      setHeroSequenceCycle((current) => current + 1);
+    }, returnToIdleStartMs + HERO_RETURN_IDLE_MS);
+
+    return () => {
+      timeoutIds.forEach((timeoutId) => window.clearTimeout(timeoutId));
+    };
+  }, [heroSequenceCycle, prefersReducedMotion]);
 
   const { scrollYProgress } = useScroll({
     target: heroRef,
@@ -354,8 +1158,6 @@ export const HomePage = () => {
     offset: ['start 96%', 'end 14%'],
   });
 
-  const orbitRotate = useTransform(scrollYProgress, [0, 1], [0, 160]);
-  const orbitScale = useTransform(scrollYProgress, [0, 0.8, 1], [1, 1.05, 0.96]);
   const heroVoidY = useTransform(scrollYProgress, [0, 1], ['0%', '6%']);
   const showcaseScroll = showcaseScrollYProgress;
   const showcaseY = useTransform(showcaseScroll, [0, 1], [22, -10]);
@@ -395,26 +1197,6 @@ export const HomePage = () => {
   const showcaseOutputScale = useTransform(showcaseScroll, [0, 1], [0.988, 1.015]);
   const showcaseOutputMediaScale = useTransform(showcaseScroll, [0, 1], [0.99, 1.02]);
 
-  const handleOAuth = async (provider: OAuthProvider) => {
-    if (!isConfigured) {
-      setAuthError('Supabase client env is missing on the frontend.');
-      return;
-    }
-
-    setAuthPending(provider);
-    setAuthError(null);
-
-    try {
-      await signInWithOAuth(provider);
-    } catch (error) {
-      setAuthError(
-        error instanceof Error ? error.message : 'Failed to start social sign-in.'
-      );
-    } finally {
-      setAuthPending(null);
-    }
-  };
-
   return (
     <div className="home-page home-page--marketing">
       <Navbar />
@@ -427,121 +1209,201 @@ export const HomePage = () => {
           <div className="landing-hero__void-rings landing-hero__void-rings--one" />
           <div className="landing-hero__void-rings landing-hero__void-rings--two" />
           <div className="landing-hero__void-rings landing-hero__void-rings--three" />
-          <motion.div
-            className="blackhole-core-shell blackhole-core-shell--backdrop"
-            style={{ rotate: orbitRotate, scale: orbitScale }}
-          >
-            <div className="blackhole__shadow" />
-            <div className="blackhole__core" />
-            <div className="blackhole__accretion" />
-            <div className="blackhole__halo" />
-            <div className="blackhole__orbit blackhole__orbit--inner" />
-            <div className="blackhole__orbit blackhole__orbit--outer" />
-            <div className="blackhole__glow-tail" />
-          </motion.div>
-          <motion.span
-            className="blackhole__node-particle blackhole__node-particle--hero-one"
-            animate={prefersReducedMotion ? undefined : { rotate: 360 }}
-            transition={{ duration: 3.8, ease: 'linear', repeat: Number.POSITIVE_INFINITY }}
-          />
-          <motion.span
-            className="blackhole__node-particle blackhole__node-particle--hero-two"
-            animate={prefersReducedMotion ? undefined : { rotate: -360 }}
-            transition={{ duration: 5.1, ease: 'linear', repeat: Number.POSITIVE_INFINITY }}
-          />
         </motion.div>
 
-        <div className="hero__grid landing-hero__grid landing-hero__grid--single">
+        <div className="hero__grid landing-hero__grid">
           <motion.div
             className="landing-hero__content"
-            initial={{ opacity: 0, y: 30 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.8, ease: [0.22, 1, 0.36, 1] }}
+            variants={heroContentVariants}
+            initial={prefersReducedMotion ? false : 'hidden'}
+            animate={prefersReducedMotion ? undefined : 'show'}
           >
-            <Badge className="landing-pill">AI-Powered Branding for Indian Businesses</Badge>
-            <h1>
-              Create. Schedule
-              <br></br>
-              <span> Grow Your </span>
-              <br></br>
-              <span> Social Media </span>
-              <br></br>
-              In Few Seconds
-            </h1>
-            <p className="landing-copy landing-copy--lead">
-              <span className="landing-copy__lead-line">
-                
-              </span>
-              <span className="landing-copy__lead-subline">
-               
-                
-                The fastest way to create and publish social media content
-              </span>
-            </p>
+            <motion.div variants={heroItemVariants}>
+              <Badge className="landing-pill">AI MARKETING AGENT FOR BUSINESSES</Badge>
+            </motion.div>
 
-            <div className="landing-hero__actions">
-              <Link
+            <motion.h1 className="landing-hero__title" variants={heroItemVariants}>
+              Automate Marketing
+              <br />
+              From Idea to <span className="landing-hero__headline-accent">Published Post</span>
+            </motion.h1>
+
+            <motion.p className="landing-copy landing-copy--lead" variants={heroItemVariants}>
+              <span className="landing-copy__body">
+                PrixmoAI brings content, reels, AI influencers, campaign planning, and
+                scheduling into one agentic workspace helping businesses move from idea to
+                execution faster.
+              </span>
+            </motion.p>
+
+            <motion.div className="landing-hero__actions" variants={heroItemVariants}>
+              <MotionLink
                 to={session ? '/app/generate' : '/signup'}
                 className={buttonClassName('primary', 'lg')}
+                whileHover={prefersReducedMotion ? undefined : { y: -3, scale: 1.01 }}
+                whileTap={prefersReducedMotion ? undefined : { scale: 0.985 }}
               >
                 Start Free
                 <ArrowRight size={18} />
-              </Link>
-              <Link to="/login" className={buttonClassName('secondary', 'lg')}>
-                Login
-              </Link>
-            </div>
-
-            <p className="landing-trust">
-              Free forever • No credit card • 500+ businesses trust {APP_NAME}
-            </p>
-
-            <div className="landing-auth-panel landing-auth-panel--hero">
-              <button
-                type="button"
-                className="landing-auth-panel__oauth"
-                disabled={authPending !== null}
-                onClick={() => {
-                  void handleOAuth('google');
-                }}
+              </MotionLink>
+              <motion.a
+                href="#product-demo"
+                className={buttonClassName('secondary', 'lg')}
+                whileHover={prefersReducedMotion ? undefined : { y: -3, scale: 1.01 }}
+                whileTap={prefersReducedMotion ? undefined : { scale: 0.985 }}
               >
-                <ProviderLogo provider="google" />
-                <span>{authPending === 'google' ? 'Connecting...' : 'Google'}</span>
-              </button>
-              <button
-                type="button"
-                className="landing-auth-panel__oauth"
-                disabled={authPending !== null}
-                onClick={() => {
-                  void handleOAuth('github');
-                }}
-              >
-                <ProviderLogo provider="github" />
-                <span>{authPending === 'github' ? 'Connecting...' : 'GitHub'}</span>
-              </button>
-              <button
-                type="button"
-                className="landing-auth-panel__oauth"
-                disabled={authPending !== null}
-                onClick={() => {
-                  void handleOAuth('facebook');
-                }}
-              >
-                <ProviderLogo provider="facebook" />
-                <span>{authPending === 'facebook' ? 'Connecting...' : 'Facebook'}</span>
-              </button>
+                Watch Demo
+                <Play size={18} />
+              </motion.a>
+            </motion.div>
 
-              {authError ? (
-                <p className={cn('landing-auth-panel__note', 'landing-auth-panel__note--error')}>
-                  {getPlayfulErrorMessage(authError)}
-                </p>
-              ) : null}
-            </div>
+          </motion.div>
+
+          <motion.div
+            className="landing-hero__visual landing-hero__visual--hero"
+            initial={prefersReducedMotion ? false : { opacity: 0, x: 28, y: 20 }}
+            animate={prefersReducedMotion ? undefined : { opacity: 1, x: 0, y: 0 }}
+            transition={{ duration: 0.84, delay: 0.18, ease: heroEase }}
+          >
+            <Card
+              glow
+              className={cn(
+                'hero-agent-engine',
+                hoveredHeroOutput && 'hero-agent-engine--hovered',
+                (
+                  heroSequencePhase === 'whiteHoleFlash' ||
+                  heroSequencePhase === 'emittingOutputs' ||
+                  heroSequencePhase === 'returnToBlackhole'
+                ) &&
+                  'hero-agent-engine--white-hole',
+              )}
+            >
+              <div className="hero-agent-engine__ambient" aria-hidden="true" />
+              <div className="hero-agent-engine__top-label">
+                <span>PRIXMOAI CORE</span>
+                <strong>Marketing Orchestration Engine</strong>
+              </div>
+              <div className="hero-agent-engine__stage">
+                <HeroWhiteHolePulse
+                  cycle={heroSequenceCycle}
+                  phase={heroSequencePhase}
+                  prefersReducedMotion={prefersReducedMotion}
+                />
+                <motion.span
+                  className="hero-agent-engine__orbit-ring hero-agent-engine__orbit-ring--one"
+                  animate={prefersReducedMotion ? undefined : { rotate: 360 }}
+                  transition={{
+                    duration: 18,
+                    ease: 'linear',
+                    repeat: Number.POSITIVE_INFINITY,
+                  }}
+                >
+                  <span
+                    className={cn(
+                      'hero-agent-engine__orbit-dot',
+                      hoveredHeroOutput && 'hero-agent-engine__orbit-dot--active',
+                    )}
+                  />
+                </motion.span>
+                <motion.span
+                  className="hero-agent-engine__orbit-ring hero-agent-engine__orbit-ring--two"
+                  animate={prefersReducedMotion ? undefined : { rotate: -360 }}
+                  transition={{
+                    duration: 24,
+                    ease: 'linear',
+                    repeat: Number.POSITIVE_INFINITY,
+                  }}
+                >
+                  <span
+                    className={cn(
+                      'hero-agent-engine__orbit-dot',
+                      'hero-agent-engine__orbit-dot--mint',
+                      hoveredHeroOutput && 'hero-agent-engine__orbit-dot--active',
+                    )}
+                  />
+                </motion.span>
+
+                {heroUserInputs.map((input, index) => (
+                  <HeroUserInputCard
+                    key={input.id}
+                    activeIndex={heroInputIndex}
+                    input={input}
+                    index={index}
+                    phase={heroSequencePhase}
+                    prefersReducedMotion={prefersReducedMotion}
+                  />
+                ))}
+
+                {heroAgentCards.map((card, index) => (
+                  <HeroAgentCard
+                    key={card.id}
+                    card={card}
+                    index={index}
+                    phase={heroSequencePhase}
+                    isHovered={card.id === hoveredHeroOutput}
+                    onHoverChange={(isHovered) =>
+                      setHoveredHeroOutput(isHovered ? card.id : null)
+                    }
+                    prefersReducedMotion={prefersReducedMotion}
+                  />
+                ))}
+
+                <motion.div
+                  className="hero-agent-engine__core-shell"
+                  animate={
+                    prefersReducedMotion
+                      ? undefined
+                      : hoveredHeroOutput
+                        ? { scale: [1, 1.024, 1], rotate: [0, 0.2, 0] }
+                        : { scale: 1, rotate: 0 }
+                  }
+                  transition={
+                    hoveredHeroOutput
+                      ? {
+                          duration: 2.4,
+                          ease: 'easeInOut',
+                          repeat: Number.POSITIVE_INFINITY,
+                        }
+                      : { duration: 0.3, ease: heroEase }
+                  }
+                >
+                  <motion.div
+                    className="hero-agent-engine__core-glow"
+                    aria-hidden="true"
+                    animate={
+                      prefersReducedMotion
+                        ? undefined
+                        : hoveredHeroOutput
+                          ? { opacity: [0.72, 1, 0.72], scale: [1, 1.08, 1] }
+                          : { opacity: 1, scale: 1 }
+                    }
+                    transition={
+                      hoveredHeroOutput
+                        ? {
+                            duration: 2.1,
+                            ease: 'easeInOut',
+                            repeat: Number.POSITIVE_INFINITY,
+                          }
+                        : { duration: 0.3, ease: heroEase }
+                    }
+                  />
+                  <BlackHoleCanvas
+                    className="hero-agent-engine__canvas"
+                    particleCount={44}
+                    quality="cinematic"
+                  />
+                </motion.div>
+              </div>
+              <div className="landing-copy__eyebrow hero-agent-engine__subline">
+                Deploy AI agents for modern marketing
+              </div>
+            </Card>
           </motion.div>
         </div>
+
       </section>
 
-      <section ref={showcaseRef} className="section landing-showcase-section">
+      <section id="product-demo" ref={showcaseRef} className="section landing-showcase-section">
         <div className="landing-showcase-section__sticky">
           <motion.div
             className="landing-hero__visual landing-hero__visual--showcase"

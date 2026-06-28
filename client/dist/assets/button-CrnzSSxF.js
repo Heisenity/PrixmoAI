@@ -1,0 +1,1 @@
+import{j as n}from"./react-vendor-CX4wztkR.js";import{c as r}from"./index-GXmuNBNY.js";const u=(t="primary",o="md",s)=>r("button",`button--${t}`,`button--${o}`,s),c=({children:t,className:o,variant:s="primary",size:m="md",...a})=>n.jsx("button",{className:u(s,m,o),...a,children:t});export{c as B,u as b};

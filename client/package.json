@@ -4,12 +4,12 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "doppler run -- vite",
     "doppler:dev": "doppler run -- vite",
-    "build": "vite build",
+    "build": "doppler run -- vite build",
     "doppler:build": "doppler run -- vite build",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "doppler run -- tsc --noEmit",
     "doppler:typecheck": "doppler run -- tsc --noEmit"
   },
   "dependencies": {
