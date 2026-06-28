@@ -1,7 +1,8 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.storeArchivePayloadInR2 = exports.storeGeneratedVideoInR2 = exports.storeGeneratedImageInR2 = exports.storeGeneratedContentInR2 = exports.isR2GeneratedStorageConfigured = void 0;
+exports.loadArchivePayloadFromR2 = exports.storeArchivePayloadInR2 = exports.storeGeneratedVideoInR2 = exports.storeGeneratedImageInR2 = exports.storeGeneratedContentInR2 = exports.parseArchiveObjectKey = exports.isR2GeneratedStorageConfigured = void 0;
 const crypto_1 = require("crypto");
+const zlib_1 = require("zlib");
 const client_s3_1 = require("@aws-sdk/client-s3");
 const constants_1 = require("../config/constants");
 const requestCancellation_1 = require("../lib/requestCancellation");
@@ -118,9 +119,34 @@ const buildPublicUrl = (baseUrl, objectKey) => `${baseUrl.replace(/\/+$/, '')}/$
     .split('/')
     .map((segment) => encodeURIComponent(segment))
     .join('/')}`;
+const parseArchiveObjectKey = (archiveKey) => {
+    if (!archiveKey?.trim()) {
+        return null;
+    }
+    const separatorIndex = archiveKey.indexOf(':');
+    return separatorIndex >= 0 ? archiveKey.slice(separatorIndex + 1) : archiveKey;
+};
+exports.parseArchiveObjectKey = parseArchiveObjectKey;
 const toCleanMetadata = (metadata) => Object.fromEntries(Object.entries(metadata)
     .filter(([, value]) => typeof value === 'string' && value.trim())
     .map(([key, value]) => [key.toLowerCase(), value.trim()]));
+const readObjectBodyBuffer = async (body) => {
+    if (!body) {
+        return Buffer.alloc(0);
+    }
+    if (typeof body.transformToByteArray === 'function') {
+        return Buffer.from(await body.transformToByteArray());
+    }
+    const chunks = [];
+    for await (const chunk of body) {
+        if (typeof chunk === 'string') {
+            chunks.push(Buffer.from(chunk));
+            continue;
+        }
+        chunks.push(Buffer.from(chunk));
+    }
+    return Buffer.concat(chunks);
+};
 const uploadBufferToR2 = async (kind, userId, productName, buffer, contentType, metadata, signal) => {
     const config = requireR2Config();
     const objectKey = buildObjectKey(kind, userId, productName, contentType);
@@ -231,7 +257,8 @@ exports.storeGeneratedVideoInR2 = storeGeneratedVideoInR2;
 const storeArchivePayloadInR2 = async (input) => {
     const config = requireR2Config();
     const contentType = 'application/json';
-    const buffer = Buffer.from(JSON.stringify(input.payload, null, 2), 'utf8');
+    const serializedPayload = Buffer.from(JSON.stringify(input.payload), 'utf8');
+    const buffer = (0, zlib_1.gzipSync)(serializedPayload);
     // ponytail: keep archives under the existing generated bucket; split buckets only if lifecycle rules need to diverge.
     const objectKey = buildArchiveObjectKey(input.scope, contentType);
     (0, requestCancellation_1.throwIfRequestCancelled)(input.signal, 'Archive cancelled.');
@@ -241,9 +268,12 @@ const storeArchivePayloadInR2 = async (input) => {
             Key: objectKey,
             Body: buffer,
             ContentType: contentType,
+            ContentEncoding: 'gzip',
             CacheControl: 'private, max-age=0, no-cache',
             Metadata: toCleanMetadata({
                 archive_scope: input.scope,
+                archive_format: 'json',
+                archive_encoding: 'gzip',
                 ...(input.metadata ?? {}),
             }),
         }), {
@@ -268,3 +298,29 @@ const storeArchivePayloadInR2 = async (input) => {
     };
 };
 exports.storeArchivePayloadInR2 = storeArchivePayloadInR2;
+const loadArchivePayloadFromR2 = async (input) => {
+    (0, requestCancellation_1.throwIfRequestCancelled)(input.signal, 'Archive load cancelled.');
+    let response;
+    try {
+        response = await getR2Client().send(new client_s3_1.GetObjectCommand({
+            Bucket: requireR2Config().bucket,
+            Key: input.objectKey,
+        }), {
+            abortSignal: input.signal,
+        });
+    }
+    catch (error) {
+        if (input.signal?.aborted || (0, requestCancellation_1.isAbortError)(error)) {
+            throw new requestCancellation_1.RequestCancelledError('Archive load cancelled.');
+        }
+        throw new Error(error instanceof Error
+            ? `Failed to load archive payload from R2: ${error.message}`
+            : 'Failed to load archive payload from R2');
+    }
+    const responseBuffer = await readObjectBodyBuffer(response.Body);
+    const bodyBuffer = response.ContentEncoding?.toLowerCase() === 'gzip'
+        ? (0, zlib_1.gunzipSync)(responseBuffer)
+        : responseBuffer;
+    return JSON.parse(bodyBuffer.toString('utf8') || 'null');
+};
+exports.loadArchivePayloadFromR2 = loadArchivePayloadFromR2;

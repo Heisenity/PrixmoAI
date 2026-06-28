@@ -1,12 +1,7 @@
 "use strict";
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.requireSupabaseAdmin = exports.requireUserClient = exports.createUserClient = exports.supabaseAdmin = exports.supabaseAuth = exports.isSupabaseAdminConfigured = exports.isSupabaseAuthConfigured = void 0;
 const supabase_js_1 = require("@supabase/supabase-js");
-const dotenv_1 = __importDefault(require("dotenv"));
-dotenv_1.default.config();
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseAnonKey = process.env.SUPABASE_ANON_KEY;
 const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -19,10 +14,10 @@ const clientOptions = {
 exports.isSupabaseAuthConfigured = Boolean(supabaseUrl && supabaseAnonKey);
 exports.isSupabaseAdminConfigured = Boolean(supabaseUrl && supabaseServiceRoleKey);
 if (!exports.isSupabaseAuthConfigured) {
-    console.warn('Supabase auth client is not configured. Set SUPABASE_URL and SUPABASE_ANON_KEY in server/.env.');
+    console.warn('Supabase auth client is not configured. Set SUPABASE_URL and SUPABASE_ANON_KEY in Doppler or the injected runtime environment.');
 }
 if (!exports.isSupabaseAdminConfigured) {
-    console.warn('Supabase admin client is not configured. Set SUPABASE_SERVICE_ROLE_KEY in server/.env for server-side queries and webhooks.');
+    console.warn('Supabase admin client is not configured. Set SUPABASE_SERVICE_ROLE_KEY in Doppler or the injected runtime environment for server-side queries and webhooks.');
 }
 exports.supabaseAuth = exports.isSupabaseAuthConfigured && supabaseUrl && supabaseAnonKey
     ? (0, supabase_js_1.createClient)(supabaseUrl, supabaseAnonKey, clientOptions)

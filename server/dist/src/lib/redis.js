@@ -5,9 +5,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.getBullMqConfig = exports.buildRedisKey = exports.getRedisClient = exports.createRedisConnection = exports.isRedisConfigured = void 0;
 const ioredis_1 = __importDefault(require("ioredis"));
-const dotenv_1 = __importDefault(require("dotenv"));
 const constants_1 = require("../config/constants");
-dotenv_1.default.config();
 exports.isRedisConfigured = Boolean(constants_1.REDIS_URL);
 const extractRedisUrl = (input) => {
     const normalizedInput = input.trim();

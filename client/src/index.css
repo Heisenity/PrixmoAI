@@ -14138,6 +14138,16 @@ img {
   line-height: 1.35;
 }
 
+.generate-chat__reference-upload {
+  display: flex;
+  align-items: center;
+  min-height: 50px;
+}
+
+.generate-chat__reference-upload .generator-upload__copy {
+  align-items: center;
+}
+
 .generator-source-chip {
   display: grid;
   grid-template-columns: 54px minmax(0, 1fr) auto;

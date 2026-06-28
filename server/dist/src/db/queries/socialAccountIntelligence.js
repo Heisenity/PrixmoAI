@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.listRecentSocialAccountPosts = exports.listDueSocialAccountIntelligenceProfiles = exports.getSocialAccountIntelligenceProfileBySocialAccountId = exports.upsertSocialAccountIntelligenceProfile = exports.createSocialAccountPostInsight = exports.upsertSocialAccountPostRaw = exports.createSocialAccountProfileSnapshot = exports.findActiveSocialAccountSyncRun = exports.updateSocialAccountSyncRun = exports.createSocialAccountSyncRun = void 0;
+const r2Storage_service_1 = require("../../services/r2Storage.service");
 const toRecord = (value) => value && typeof value === 'object' && !Array.isArray(value)
     ? value
     : {};
@@ -11,6 +12,35 @@ const toRecordArray = (value) => Array.isArray(value)
     ? value.filter((item) => Boolean(item) && typeof item === 'object' && !Array.isArray(item))
     : [];
 const compactObject = (value) => Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined));
+const hydrateArchivedSocialAccountPosts = async (rows) => {
+    const archivedRows = rows.filter((row) => row.raw_payload_archived_at && typeof row.raw_payload_archive_key === 'string');
+    if (!archivedRows.length) {
+        return rows;
+    }
+    const archivedPayloadEntries = await Promise.all(archivedRows.map(async (row) => {
+        const objectKey = (0, r2Storage_service_1.parseArchiveObjectKey)(row.raw_payload_archive_key);
+        if (!objectKey) {
+            return null;
+        }
+        try {
+            return [row.id, await (0, r2Storage_service_1.loadArchivePayloadFromR2)({ objectKey })];
+        }
+        catch {
+            return null;
+        }
+    }));
+    const archivedPayloadMap = new Map(archivedPayloadEntries.filter((entry) => Boolean(entry)));
+    return rows.map((row) => {
+        const archivedPayload = archivedPayloadMap.get(row.id);
+        if (!archivedPayload) {
+            return row;
+        }
+        return {
+            ...row,
+            raw_payload: toRecord(toRecord(archivedPayload).rawPayload),
+        };
+    });
+};
 const toSyncRun = (row) => ({
     id: row.id,
     userId: row.user_id,
@@ -267,6 +297,9 @@ const upsertSocialAccountPostRaw = async (client, input) => {
         reach_count: input.reachCount ?? 0,
         video_views_count: input.videoViewsCount ?? 0,
         raw_payload: input.rawPayload ?? {},
+        raw_payload_archived_at: null,
+        raw_payload_archive_manifest_id: null,
+        raw_payload_archive_key: null,
         last_metrics_synced_at: input.lastMetricsSyncedAt ?? new Date().toISOString(),
     }, { onConflict: 'user_id,social_account_id,external_post_id' })
         .select('*')
@@ -296,6 +329,9 @@ const createSocialAccountPostInsight = async (client, input) => {
         video_views_count: input.videoViewsCount ?? 0,
         metrics: input.metrics ?? {},
         raw_payload: input.rawPayload ?? {},
+        payload_archived_at: null,
+        payload_archive_manifest_id: null,
+        payload_archive_key: null,
     }, { onConflict: 'social_account_post_raw_id,sync_run_id' })
         .select('*')
         .single();
@@ -379,6 +415,7 @@ const listRecentSocialAccountPosts = async (client, socialAccountId, limit = 50)
     if (error) {
         throw new Error(error.message || 'Failed to fetch stored social account posts');
     }
-    return (data ?? []).map(toPostRaw);
+    const hydratedRows = await hydrateArchivedSocialAccountPosts((data ?? []));
+    return hydratedRows.map(toPostRaw);
 };
 exports.listRecentSocialAccountPosts = listRecentSocialAccountPosts;

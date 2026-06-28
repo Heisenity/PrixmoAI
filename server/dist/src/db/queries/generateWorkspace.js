@@ -1,9 +1,65 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.getGenerateConversationThread = exports.createGeneratedAssets = exports.createGenerateMessage = exports.softDeleteGenerateConversation = exports.updateGenerateConversation = exports.getGenerateConversationById = exports.createGenerateConversation = exports.listGenerateConversations = void 0;
+const r2Storage_service_1 = require("../../services/r2Storage.service");
 const toRecord = (value) => value && typeof value === 'object' && !Array.isArray(value)
     ? value
     : {};
+const asNullableString = (value) => typeof value === 'string' ? value : null;
+const loadArchivedPayloadMap = async (rows, getArchiveKey) => {
+    const archivedPayloadEntries = await Promise.all(rows.map(async (row) => {
+        const objectKey = (0, r2Storage_service_1.parseArchiveObjectKey)(getArchiveKey(row));
+        if (!objectKey) {
+            return null;
+        }
+        try {
+            return [row.id, await (0, r2Storage_service_1.loadArchivePayloadFromR2)({ objectKey })];
+        }
+        catch {
+            return null;
+        }
+    }));
+    return new Map(archivedPayloadEntries.filter((entry) => Boolean(entry)));
+};
+const hydrateArchivedGenerateMessages = async (rows) => {
+    const archivedRows = rows.filter((row) => row.archived_at && row.archive_key);
+    if (!archivedRows.length) {
+        return rows;
+    }
+    const archivedPayloadMap = await loadArchivedPayloadMap(archivedRows, (row) => row.archive_key);
+    return rows.map((row) => {
+        const archivedPayload = archivedPayloadMap.get(row.id);
+        if (!archivedPayload) {
+            return row;
+        }
+        const payloadRecord = toRecord(archivedPayload);
+        return {
+            ...row,
+            content: asNullableString(payloadRecord.content) ??
+                row.content ??
+                row.content_preview ??
+                null,
+            metadata: toRecord(payloadRecord.metadata),
+        };
+    });
+};
+const hydrateArchivedGeneratedAssets = async (rows) => {
+    const archivedRows = rows.filter((row) => row.archived_at && row.archive_key);
+    if (!archivedRows.length) {
+        return rows;
+    }
+    const archivedPayloadMap = await loadArchivedPayloadMap(archivedRows, (row) => row.archive_key);
+    return rows.map((row) => {
+        const archivedPayload = archivedPayloadMap.get(row.id);
+        if (!archivedPayload) {
+            return row;
+        }
+        return {
+            ...row,
+            payload: toRecord(toRecord(archivedPayload).payload),
+        };
+    });
+};
 const toGenerateConversation = (row) => ({
     id: row.id,
     userId: row.user_id,
@@ -21,7 +77,7 @@ const toGenerateConversationMessage = (row) => ({
     userId: row.user_id,
     role: row.role,
     messageType: row.message_type,
-    content: row.content,
+    content: row.content ?? row.content_preview ?? null,
     metadata: toRecord(row.metadata),
     generationId: row.generation_id,
     createdAt: row.created_at,
@@ -186,14 +242,16 @@ const getGenerateConversationThread = async (client, userId, conversationId) => 
     if (assetsError) {
         throw new Error(assetsError.message || 'Failed to fetch generated assets');
     }
+    const hydratedMessageRows = await hydrateArchivedGenerateMessages((messagesData ?? []));
+    const hydratedAssetRows = await hydrateArchivedGeneratedAssets((assetsData ?? []));
     const assetsByMessageId = new Map();
-    for (const assetRow of assetsData ?? []) {
+    for (const assetRow of hydratedAssetRows) {
         const asset = toGenerateConversationAsset(assetRow);
         const collection = assetsByMessageId.get(asset.messageId) ?? [];
         collection.push(asset);
         assetsByMessageId.set(asset.messageId, collection);
     }
-    const messages = (messagesData ?? []).map((messageRow) => {
+    const messages = hydratedMessageRows.map((messageRow) => {
         const message = toGenerateConversationMessage(messageRow);
         return {
             ...message,

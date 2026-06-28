@@ -3314,13 +3314,10 @@ export const GeneratePage = () => {
                       }
                       placeholder="https://..."
                     />
-                    <span className="field__hint">
-                      Paste a direct image URL or a share link. PrixmoAI will use it as the main visual reference.
-                    </span>
                   </label>
                   <div className="field">
                     <span className="field__label">Upload reference image</span>
-                    <label className="generator-upload generator-upload--compact">
+                    <label className="generator-upload generator-upload--compact generate-chat__reference-upload">
                       <div className="generator-upload__copy">
                         <Upload size={18} />
                         <div>

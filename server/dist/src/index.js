@@ -5,6 +5,8 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = __importDefault(require("express"));
 const crypto_1 = require("crypto");
+const fs_1 = require("fs");
+const path_1 = __importDefault(require("path"));
 const helmet_1 = __importDefault(require("helmet"));
 const cors_1 = __importDefault(require("cors"));
 const errorHandler_middleware_1 = require("./middleware/errorHandler.middleware");
@@ -25,6 +27,7 @@ const contentGenerationQueue_service_1 = require("./services/contentGenerationQu
 const imageGenerationQueue_service_1 = require("./services/imageGenerationQueue.service");
 const schedulerPublisher_service_1 = require("./services/schedulerPublisher.service");
 const socialAccountIntelligence_service_1 = require("./services/socialAccountIntelligence.service");
+const historicalArchive_service_1 = require("./services/historicalArchive.service");
 const timezone_1 = require("./lib/timezone");
 const package_json_1 = require("../package.json");
 const redis_1 = require("./lib/redis");
@@ -32,6 +35,14 @@ const superAdmin_1 = require("./lib/superAdmin");
 const requestContext_1 = require("./lib/requestContext");
 const app = (0, express_1.default)();
 const PORT = constants_1.APP_PORT;
+const clientDistCandidates = [
+    path_1.default.resolve(__dirname, '../../client/dist'),
+    path_1.default.resolve(__dirname, '../../../client/dist'),
+];
+const clientDistPath = clientDistCandidates.find((candidate) => (0, fs_1.existsSync)(path_1.default.join(candidate, 'index.html')));
+const clientIndexPath = clientDistPath
+    ? path_1.default.join(clientDistPath, 'index.html')
+    : null;
 // 1. Security Headers
 app.use((0, helmet_1.default)());
 app.use((0, cors_1.default)());
@@ -50,6 +61,10 @@ app.post('/api/billing/webhook', express_1.default.raw({ type: 'application/json
 app.use(express_1.default.json({ limit: '80mb' }));
 app.use(express_1.default.urlencoded({ extended: true, limit: '80mb' }));
 app.get('/', (req, res) => {
+    if (clientIndexPath) {
+        res.sendFile(clientIndexPath);
+        return;
+    }
     res.status(200).json({
         message: "Welcome to the API",
         version: package_json_1.version
@@ -73,6 +88,12 @@ app.use('/api/generate', generate_routes_1.default);
 app.use('/api/images', image_routes_1.default);
 app.use('/api/runtime', runtime_routes_1.default);
 app.use('/api/scheduler', scheduler_routes_1.default);
+if (clientDistPath && clientIndexPath) {
+    app.use(express_1.default.static(clientDistPath));
+    app.get(/^\/(?!api(?:\/|$)|health$).*/, (_req, res) => {
+        res.sendFile(clientIndexPath);
+    });
+}
 app.use((req, _res, next) => {
     const error = new Error(`Route not found: ${req.originalUrl}`);
     error.statusCode = 404;
@@ -124,4 +145,5 @@ app.listen(PORT, () => {
         .catch((error) => {
         console.warn(`[runtime] Failed to ensure the configured super admin account: ${error instanceof Error ? error.message : String(error)}`);
     });
+    (0, historicalArchive_service_1.startHistoricalArchiveWorker)();
 });

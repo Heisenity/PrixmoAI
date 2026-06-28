@@ -1,17 +1,12 @@
 "use strict";
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.generateContentPack = exports.generateStructuredDataWithGroqFallback = exports.generateStructuredDataWithFallback = exports.generateStructuredDataWithProviderOrder = exports.generateContentPackWithFallback = exports.hasMeaningfulReelScript = exports.generateReelScript = exports.generateHashtags = exports.generateCaptions = exports.ContentGenerationProvidersExhaustedError = void 0;
-const dotenv_1 = __importDefault(require("dotenv"));
 const zod_1 = require("zod");
 const constants_1 = require("../config/constants");
 const caption_prompt_1 = require("./prompts/caption.prompt");
 const hashtag_prompt_1 = require("./prompts/hashtag.prompt");
 const script_prompt_1 = require("./prompts/script.prompt");
 const requestCancellation_1 = require("../lib/requestCancellation");
-dotenv_1.default.config();
 const CONTENT_GENERATION_RETRY_MESSAGE = 'We couldn’t complete your request right now. Please try again in a moment.';
 class ContentGenerationProvidersExhaustedError extends Error {
     constructor(failures) {
