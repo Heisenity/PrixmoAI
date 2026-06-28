@@ -342,7 +342,6 @@ export const useScheduler = (options: UseSchedulerOptions = {}) => {
         setAccounts(cached.value.accounts);
         setPosts(cached.value.posts);
         setItems(cached.value.items);
-        setError(null);
       }
 
       if (!silent && !cached?.value) {
