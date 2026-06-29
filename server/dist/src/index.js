@@ -43,6 +43,10 @@ const clientDistPath = clientDistCandidates.find((candidate) => (0, fs_1.existsS
 const clientIndexPath = clientDistPath
     ? path_1.default.join(clientDistPath, 'index.html')
     : null;
+const BLOCKED_PUBLIC_HOSTS = new Set([
+    'prixmoai-web.onrender.com',
+    'prixmoai-app.onrender.com',
+]);
 // 1. Security Headers
 app.use((0, helmet_1.default)());
 app.use((0, cors_1.default)());
@@ -56,6 +60,21 @@ app.use((req, res, next) => {
         isSuperAdminRequest: false,
         superAdminTestPlan: null,
     }, () => next());
+});
+app.use((req, res, next) => {
+    const hostHeader = req.header('x-forwarded-host') || req.header('host') || req.hostname || '';
+    const host = hostHeader
+        .split(',')[0]
+        ?.trim()
+        .toLowerCase()
+        .replace(/:\d+$/, '');
+    if (!host || !BLOCKED_PUBLIC_HOSTS.has(host)) {
+        next();
+        return;
+    }
+    res.status(410).json({
+        message: 'This public Render URL is no longer available.',
+    });
 });
 app.post('/api/billing/webhook', express_1.default.raw({ type: 'application/json' }), billing_controller_1.handleRazorpayWebhook);
 app.use(express_1.default.json({ limit: '80mb' }));

@@ -51,6 +51,10 @@ const clientDistPath = clientDistCandidates.find((candidate) =>
 const clientIndexPath = clientDistPath
   ? path.join(clientDistPath, 'index.html')
   : null;
+const BLOCKED_PUBLIC_HOSTS = new Set([
+  'prixmoai-web.onrender.com',
+  'prixmoai-app.onrender.com',
+]);
 
 // 1. Security Headers
 app.use(helmet());
@@ -69,6 +73,24 @@ app.use((req, res, next) => {
     },
     () => next()
   );
+});
+app.use((req, res, next) => {
+  const hostHeader =
+    req.header('x-forwarded-host') || req.header('host') || req.hostname || '';
+  const host = hostHeader
+    .split(',')[0]
+    ?.trim()
+    .toLowerCase()
+    .replace(/:\d+$/, '');
+
+  if (!host || !BLOCKED_PUBLIC_HOSTS.has(host)) {
+    next();
+    return;
+  }
+
+  res.status(410).json({
+    message: 'This public Render URL is no longer available.',
+  });
 });
 app.post(
   '/api/billing/webhook',
