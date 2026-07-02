@@ -1,6 +1,6 @@
 import { Outlet, useLocation } from 'react-router-dom';
 import { useEffect, useState } from 'react';
-import { Sidebar } from './Sidebar';
+import { MobileWorkspaceNav, Sidebar } from './Sidebar';
 
 const WORKSPACE_SIDEBAR_STORAGE_KEY = 'prixmoai.workspace.sidebarCollapsed';
 
@@ -87,12 +87,14 @@ export const PageWrapper = () => {
         isGenerateRoute ? 'workspace-shell--generate-only' : ''
       }`}
     >
-      {!isGenerateRoute ? (
+      {isGenerateRoute ? (
+        <MobileWorkspaceNav />
+      ) : (
         <Sidebar
           collapsed={isSidebarCollapsed}
           onToggleCollapse={() => setIsSidebarCollapsed((current) => !current)}
         />
-      ) : null}
+      )}
       <div
         className={`workspace-shell__main ${
           isGenerateRoute ? 'workspace-shell__main--generate' : ''

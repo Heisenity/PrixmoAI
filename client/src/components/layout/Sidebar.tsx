@@ -42,6 +42,49 @@ const workspaceLinks = [
   { label: 'Settings', href: '/app/settings', icon: Settings },
 ];
 
+const getVisibleWorkspaceLinks = (isAdmin: boolean) =>
+  isAdmin
+    ? [
+        ...workspaceLinks,
+        { label: 'Admin Health', href: '/app/admin-health', icon: ShieldCheck },
+      ]
+    : workspaceLinks;
+
+const MobileWorkspaceLinks = ({
+  links,
+}: {
+  links: ReturnType<typeof getVisibleWorkspaceLinks>;
+}) => (
+  <nav className="sidebar__mobile-nav" aria-label="Mobile workspace navigation">
+    {links.map((item) => {
+      const Icon = item.icon;
+
+      return (
+        <NavLink
+          key={item.href}
+          to={item.href}
+          className={({ isActive }) =>
+            cn('sidebar__mobile-link', isActive && 'sidebar__mobile-link--active')
+          }
+        >
+          <Icon size={18} />
+          <span>{item.label === 'Admin Health' ? 'Health' : item.label}</span>
+        </NavLink>
+      );
+    })}
+  </nav>
+);
+
+export const MobileWorkspaceNav = () => {
+  const { isAdmin } = useAdminAccess();
+
+  return (
+    <aside className="sidebar sidebar--mobile-only">
+      <MobileWorkspaceLinks links={getVisibleWorkspaceLinks(isAdmin)} />
+    </aside>
+  );
+};
+
 type SidebarProps = {
   collapsed: boolean;
   onToggleCollapse: () => void;
@@ -97,13 +140,7 @@ export const Sidebar = ({ collapsed, onToggleCollapse }: SidebarProps) => {
     usageWindowLabel: planDetails.usageWindowLabel,
   });
   const visibleWorkspaceLinks = useMemo(
-    () =>
-      isAdmin
-        ? [
-            ...workspaceLinks,
-            { label: 'Admin Health', href: '/app/admin-health', icon: ShieldCheck },
-          ]
-        : workspaceLinks,
+    () => getVisibleWorkspaceLinks(isAdmin),
     [isAdmin]
   );
 
@@ -159,6 +196,8 @@ export const Sidebar = ({ collapsed, onToggleCollapse }: SidebarProps) => {
 
   return (
     <aside className={cn('sidebar', collapsed && 'sidebar--collapsed')}>
+      <MobileWorkspaceLinks links={visibleWorkspaceLinks} />
+
       <div className="sidebar__header">
         <div className="sidebar__brand" title={APP_NAME}>
           <span className="topbar__brand-dot" />

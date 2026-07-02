@@ -3549,6 +3549,12 @@ img {
   --workspace-sidebar-width: 0px;
 }
 
+.workspace-shell--generate-only > .sidebar,
+.sidebar--mobile-only,
+.sidebar__mobile-nav {
+  display: none;
+}
+
 .sidebar {
   width: var(--workspace-sidebar-width);
   min-width: var(--workspace-sidebar-width);
@@ -5043,6 +5049,273 @@ img {
   .profile-panel__logo-preview {
     grid-template-columns: 1fr;
     display: grid;
+  }
+}
+
+@media (max-width: 720px) {
+  .workspace-shell,
+  .workspace-shell--sidebar-collapsed {
+    display: block;
+    height: auto;
+    min-height: 100dvh;
+    max-height: none;
+    overflow: visible;
+  }
+
+  .sidebar,
+  .workspace-shell--generate-only > .sidebar {
+    position: fixed;
+    inset: auto 0 0;
+    display: block;
+    width: 100%;
+    min-width: 0;
+    height: calc(68px + env(safe-area-inset-bottom));
+    padding: 0.45rem 0.5rem calc(0.45rem + env(safe-area-inset-bottom));
+    border: 0;
+    border-top: 1px solid rgba(143, 216, 255, 0.12);
+    background: rgba(7, 11, 18, 0.96);
+    box-shadow: 0 -18px 50px rgba(0, 0, 0, 0.34);
+    backdrop-filter: blur(18px) saturate(1.15);
+    z-index: 1000;
+  }
+
+  .sidebar__header,
+  .sidebar__center,
+  .sidebar__footer {
+    display: none;
+  }
+
+  .sidebar__mobile-nav {
+    display: flex;
+    height: 100%;
+    gap: 0.2rem;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
+  }
+
+  .sidebar__mobile-nav::-webkit-scrollbar {
+    display: none;
+  }
+
+  .sidebar__mobile-link {
+    flex: 1 0 68px;
+    min-width: 68px;
+    display: grid;
+    place-items: center;
+    align-content: center;
+    gap: 0.25rem;
+    border-radius: 14px;
+    color: var(--text-muted);
+    font-size: 0.63rem;
+    font-weight: 700;
+    line-height: 1;
+    transition: color 160ms ease, background 160ms ease, transform 160ms ease;
+  }
+
+  .sidebar__mobile-link--active {
+    color: var(--text);
+    background: linear-gradient(180deg, rgba(143, 216, 255, 0.13), rgba(115, 240, 213, 0.07));
+  }
+
+  .sidebar__mobile-link:active {
+    transform: scale(0.96);
+  }
+
+  .workspace-shell__main,
+  .workspace-shell__main--generate,
+  .workspace-shell--generate-only .workspace-shell__main {
+    height: auto;
+    max-height: none;
+    min-height: 100dvh;
+    padding: 0.8rem 0.7rem calc(84px + env(safe-area-inset-bottom));
+    overflow: visible;
+    contain: none;
+  }
+
+  .workspace-header {
+    padding: 0.75rem 0 1.25rem;
+  }
+
+  .workspace-header h1 {
+    font-size: clamp(2rem, 10vw, 2.8rem);
+    line-height: 1.02;
+  }
+
+  .workspace-content,
+  .workspace-content--generate {
+    gap: 0.85rem;
+    overflow: visible;
+  }
+
+  .workspace-content > *,
+  .workspace-content--generate > .generate-chat {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .stats-card,
+  .dashboard-panel,
+  .generator-form,
+  .best-post,
+  .plan-card,
+  .post-card,
+  .generate-preview,
+  .generated-image-card,
+  .script-card,
+  .caption-card,
+  .weekly-card,
+  .scheduler-channel-shell,
+  .scheduler-queue-panel,
+  .admin-health-card,
+  .admin-health-hero {
+    padding: 1rem;
+    border-radius: 20px;
+  }
+
+  .dashboard-panel__header,
+  .generator-form__header,
+  .generator-form__footer,
+  .scheduler-overview,
+  .scheduler-bulk-builder__header-actions,
+  .analytics-header,
+  .analytics-toolbar__filters,
+  .analytics-toolbar__actions,
+  .admin-health-section-head,
+  .admin-health-actions,
+  .admin-health-metrics {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .scheduler-overview,
+  .scheduler-channel-grid,
+  .analytics-dashboard__custom-range {
+    grid-template-columns: 1fr;
+  }
+
+  .button,
+  .scheduler-composer__submit,
+  .admin-health-button {
+    min-height: 44px;
+  }
+
+  .generate-chat,
+  .generate-chat--sidebar-collapsed {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.75rem;
+    overflow: visible;
+  }
+
+  .generate-chat__sidebar,
+  .generate-chat__sidebar--collapsed {
+    display: grid;
+    grid-template-rows: auto auto auto auto auto;
+    gap: 0.6rem;
+    height: auto;
+    padding: 0.75rem;
+    overflow: visible;
+  }
+
+  .generate-chat__sidebar--collapsed .generate-chat__brand strong,
+  .generate-chat__sidebar--collapsed .generate-chat__brand p,
+  .generate-chat__sidebar--collapsed .generate-chat__new-chat span,
+  .generate-chat__sidebar--collapsed .generate-chat__account-copy,
+  .generate-chat__sidebar--collapsed .generate-chat__account-trigger > svg {
+    display: initial;
+  }
+
+  .generate-chat__search {
+    min-height: 42px;
+  }
+
+  .generate-chat__conversation-list {
+    display: flex;
+    gap: 0.55rem;
+    max-height: 104px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 0 0 0.25rem;
+    scroll-snap-type: x proximity;
+  }
+
+  .generate-chat__conversation-item {
+    flex: 0 0 min(230px, 76vw);
+    min-height: 88px;
+    scroll-snap-align: start;
+  }
+
+  .generate-chat__account {
+    min-height: 0;
+  }
+
+  .generate-chat__account-menu,
+  .generate-chat__account-menu--collapsed {
+    position: fixed;
+    left: 0.7rem;
+    right: 0.7rem;
+    bottom: calc(78px + env(safe-area-inset-bottom));
+    width: auto;
+    max-height: min(70dvh, 520px);
+    overflow-y: auto;
+    z-index: 1100;
+  }
+
+  .generate-chat__workspace-shell,
+  .generate-chat__workspace-shell--composer-collapsed {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    overflow: visible;
+  }
+
+  .generate-chat__composer {
+    order: -1;
+  }
+
+  .generate-chat__thread-panel {
+    min-height: 320px;
+  }
+
+  .generate-chat__thread {
+    max-height: none;
+  }
+
+  .generate-chat__composer-header,
+  .generate-chat__composer-toolbar,
+  .generate-chat__actions--header,
+  .generate-chat__source-row,
+  .generate-chat__reference-fields,
+  .generate-chat__form-grid,
+  .generator-source-row,
+  .generator-reference-grid {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+
+  .generate-chat__composer-controls,
+  .generate-chat__actions--header,
+  .scheduler-queue__tabs,
+  .scheduler-url-import__controls,
+  .admin-health-actions {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .analytics-table-card,
+  .analytics-heatmap,
+  .admin-health-json {
+    max-width: 100%;
+    overflow-x: auto;
+  }
+
+  .generated-image-lightbox,
+  .scheduler-channel-modal,
+  .scheduler-edit-modal,
+  .analytics-post-drawer,
+  .analytics-empty-modal {
+    padding: 0.65rem;
   }
 }
 
@@ -15013,5 +15286,112 @@ img {
 
   .admin-health-table-row--queue {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  .workspace-shell .workspace-shell__main--generate,
+  .workspace-shell--generate-only .workspace-shell__main {
+    height: auto;
+    max-height: none;
+    padding: 0.8rem 0.7rem calc(84px + env(safe-area-inset-bottom));
+    overflow: visible;
+  }
+
+  .workspace-content--generate {
+    display: grid;
+    gap: 0.85rem;
+    overflow: visible;
+  }
+
+  .workspace-content--generate > .generate-chat,
+  .generate-chat,
+  .generate-chat--sidebar-collapsed {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    height: auto;
+    min-height: 0;
+    overflow: visible;
+  }
+
+  .generate-chat__sidebar,
+  .generate-chat__sidebar--collapsed {
+    display: grid;
+    grid-template-rows: auto auto auto auto auto;
+    height: auto;
+    min-height: 0;
+    max-height: none;
+    padding: 0.75rem;
+    overflow: visible;
+  }
+
+  .generate-chat__conversation-list {
+    display: flex;
+    gap: 0.55rem;
+    max-height: 104px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 0 0 0.25rem;
+  }
+
+  .generate-chat__conversation-item {
+    flex: 0 0 min(230px, 76vw);
+    min-height: 88px;
+  }
+
+  .generate-chat__workspace-column,
+  .generate-chat__thread-panel,
+  .generate-chat__composer {
+    height: auto;
+    min-height: 0;
+    max-height: none;
+    overflow: visible;
+  }
+
+  .generate-chat__workspace-shell,
+  .generate-chat__workspace-shell--composer-collapsed {
+    display: flex;
+    flex-direction: column;
+    grid-template-columns: none;
+    grid-template-rows: none;
+    height: auto;
+    overflow: visible;
+  }
+
+  .generate-chat__composer {
+    order: -1;
+  }
+
+  .generate-chat__thread-panel {
+    min-height: 320px;
+  }
+
+  .generate-chat__thread,
+  .generate-chat__composer-body {
+    height: auto;
+    max-height: none;
+    overflow: visible;
+  }
+
+  .scheduler-overview,
+  .scheduler-channel-grid,
+  .analytics-dashboard__custom-range {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .scheduler-overview__metric {
+    min-height: 132px;
+  }
+
+  .analytics-header,
+  .analytics-toolbar,
+  .analytics-toolbar__filters,
+  .analytics-toolbar__actions,
+  .admin-health-section-head,
+  .admin-health-actions,
+  .admin-health-metrics {
+    min-width: 0;
+    align-items: stretch;
+    flex-direction: column;
   }
 }

@@ -1673,6 +1673,13 @@ export const GeneratePage = () => {
   ]);
 
   useEffect(() => {
+    if (window.matchMedia('(max-width: 720px)').matches) {
+      setIsConversationSidebarCollapsed(false);
+      setIsComposerCollapsed(false);
+    }
+  }, []);
+
+  useEffect(() => {
     if (typeof window === 'undefined') {
       return;
     }
