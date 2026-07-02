@@ -47,8 +47,32 @@ const BLOCKED_PUBLIC_HOSTS = new Set([
     'prixmoai-web.onrender.com',
     'prixmoai-app.onrender.com',
 ]);
+const supabaseOrigin = (() => {
+    const supabaseUrl = process.env.SUPABASE_URL?.trim();
+    if (!supabaseUrl) {
+        return null;
+    }
+    try {
+        return new URL(supabaseUrl).origin;
+    }
+    catch {
+        return null;
+    }
+})();
 // 1. Security Headers
-app.use((0, helmet_1.default)());
+app.use((0, helmet_1.default)({
+    contentSecurityPolicy: {
+        directives: {
+            connectSrc: [
+                "'self'",
+                ...(supabaseOrigin ? [supabaseOrigin] : []),
+                'https://*.supabase.co',
+                'wss://*.supabase.co',
+            ],
+            imgSrc: ["'self'", 'data:', 'https:'],
+        },
+    },
+}));
 app.use((0, cors_1.default)());
 app.use((req, res, next) => {
     const incomingRequestId = req.header('x-request-id')?.trim();
