@@ -487,6 +487,7 @@ const createLocalPlannerId = () => {
 };
 
 const RECENT_TOAST_DEDUPE_WINDOW_MS = 1_500;
+const MEDIA_OPERATION_TIMEOUT_MS = 120_000;
 
 const schedulerGeneratedIntentProcessingIds = new Set<string>();
 const schedulerGeneratedIntentHandledIds = new Set<string>();
@@ -810,6 +811,7 @@ export const SchedulerPage = () => {
     target: string;
   } | null>(null);
   const [isMediaDragActive, setIsMediaDragActive] = useState(false);
+  const [isPreparingMedia, setIsPreparingMedia] = useState(false);
   const [mediaUrlInputValue, setMediaUrlInputValue] = useState('');
   const [resolvedMediaPreview, setResolvedMediaPreview] =
     useState<ResolvedExternalMedia | null>(null);
@@ -1208,6 +1210,7 @@ export const SchedulerPage = () => {
       title,
       prompt,
       metadata,
+      signal,
     }: {
       sourceType: 'upload' | 'generated' | 'url';
       file?: File;
@@ -1218,6 +1221,7 @@ export const SchedulerPage = () => {
       title?: string | null;
       prompt?: string | null;
       metadata?: Record<string, unknown>;
+      signal?: AbortSignal;
     }) => {
       let uploaded:
         | {
@@ -1241,22 +1245,28 @@ export const SchedulerPage = () => {
       } else if (sourceUrl?.trim()) {
         if (shouldApplyGeneratedWatermark) {
           try {
-            mediaBlob = await fetchMediaBlob(sourceUrl.trim());
+            mediaBlob = await fetchMediaBlob(sourceUrl.trim(), signal);
             mediaType = 'image';
             mimeType = mediaBlob.type || 'image/png';
-          } catch {
+          } catch (error) {
+            if (signal?.aborted) {
+              throw error;
+            }
+
             uploaded = await scheduler.importExternalMediaUrl(sourceUrl.trim(), {
               surfaceGlobalError: false,
+              signal,
             });
-            mediaBlob = await fetchMediaBlob(uploaded.sourceImageUrl);
+            mediaBlob = await fetchMediaBlob(uploaded.sourceImageUrl, signal);
             mediaType = uploaded.mediaType;
             mimeType = uploaded.contentType;
           }
         } else {
           uploaded = await scheduler.importExternalMediaUrl(sourceUrl.trim(), {
             surfaceGlobalError: false,
+            signal,
           });
-          mediaBlob = await fetchMediaBlob(uploaded.sourceImageUrl);
+          mediaBlob = await fetchMediaBlob(uploaded.sourceImageUrl, signal);
           mediaType = uploaded.mediaType;
           mimeType = uploaded.contentType;
         }
@@ -1310,6 +1320,7 @@ export const SchedulerPage = () => {
         if (prepared.adjusted) {
           finalUpload = await scheduler.uploadPostMedia(prepared.file, {
             surfaceGlobalError: false,
+            signal,
           });
           finalWidth = prepared.width;
           finalHeight = prepared.height;
@@ -1332,6 +1343,7 @@ export const SchedulerPage = () => {
           if (!finalUpload) {
             finalUpload = await scheduler.uploadPostMedia(prepared.file, {
               surfaceGlobalError: false,
+              signal,
             });
           }
 
@@ -1357,6 +1369,7 @@ export const SchedulerPage = () => {
             }),
             {
               surfaceGlobalError: false,
+              signal,
             }
           );
         }
@@ -1403,7 +1416,7 @@ export const SchedulerPage = () => {
           watermarkApplied: shouldApplyGeneratedWatermark && mediaType === 'image',
           instagramPreparation,
         },
-      });
+      }, { signal });
 
       return mediaAsset;
     },
@@ -2778,6 +2791,8 @@ export const SchedulerPage = () => {
       return;
     }
 
+    setIsPreparingMedia(true);
+
     try {
       setComposerError(null);
       setComposerNotice(null);
@@ -2812,17 +2827,28 @@ export const SchedulerPage = () => {
           type: file.type,
         });
 
-        const mediaAsset = await createPreparedPlannerMediaAsset({
-          sourceType: 'upload',
-          file,
-          fallbackFileName: file.name,
-          title: file.name,
-          metadata: {
-            uploadedFrom: 'scheduler-bulk',
-          },
-        }).finally(() => {
+        const controller = new AbortController();
+        const timeoutId = window.setTimeout(
+          () => controller.abort(),
+          MEDIA_OPERATION_TIMEOUT_MS
+        );
+        let mediaAsset: MediaAsset;
+
+        try {
+          mediaAsset = await createPreparedPlannerMediaAsset({
+            sourceType: 'upload',
+            file,
+            fallbackFileName: file.name,
+            title: file.name,
+            signal: controller.signal,
+            metadata: {
+              uploadedFrom: 'scheduler-bulk',
+            },
+          });
+        } finally {
+          window.clearTimeout(timeoutId);
           activePlannerImportKeysRef.current.delete(dedupeKey);
-        });
+        }
 
         logSchedulerDebug('file upload succeeded', {
           dedupeKey,
@@ -2859,12 +2885,12 @@ export const SchedulerPage = () => {
         }
 
         createdAssets.push(finalAsset);
+        setPlannerAssets((current) => [...current, finalAsset]);
       }
 
       clearSchedulerGeneratedMediaIntent();
       setDismissedGeneratedMediaIntentId(null);
       if (createdAssets.length) {
-        setPlannerAssets((current) => [...current, ...createdAssets]);
         if (acceptedCarryoverApplied) {
           setPendingAcceptedCaptionCarryover(null);
           clearSchedulerAcceptedCaptionCarryover();
@@ -2893,11 +2919,17 @@ export const SchedulerPage = () => {
       }
     } catch (uploadError) {
       setComposerNotice(null);
+      const uploadMessage = uploadError instanceof Error ? uploadError.message : '';
       setComposerError(
-        uploadError instanceof Error
-          ? uploadError.message
+        (uploadError instanceof DOMException && uploadError.name === 'AbortError') ||
+          /request cancelled|timed out/i.test(uploadMessage)
+          ? 'Media upload timed out. Check the server connection and try again.'
+          : uploadError instanceof Error
+            ? uploadError.message
           : 'Failed to upload one or more media files.'
       );
+    } finally {
+      setIsPreparingMedia(false);
     }
   };
 
@@ -3298,7 +3330,7 @@ export const SchedulerPage = () => {
         <Card className="scheduler-overview__metric">
           <span className="scheduler-overview__label">Scheduler state</span>
           <strong className="scheduler-overview__value">
-            {scheduler.isLoading || scheduler.isMutating || scheduler.isUploadingMedia
+            {scheduler.isLoading || scheduler.isMutating || scheduler.isUploadingMedia || isPreparingMedia
               ? 'Syncing'
               : scheduler.schedulerStatus === 'error'
                 ? 'Error'
@@ -3510,6 +3542,7 @@ export const SchedulerPage = () => {
               className={`field field--full generator-upload generator-upload--compact scheduler-upload ${
                 isMediaDragActive ? 'scheduler-upload--active' : ''
               }`}
+              aria-busy={scheduler.isUploadingMedia || isPreparingMedia}
               onDragOver={(event) => {
                 event.preventDefault();
                 setIsMediaDragActive(true);
@@ -3521,7 +3554,7 @@ export const SchedulerPage = () => {
             >
               <div className="scheduler-upload__label-row">
                 <span className="field__label">Upload media</span>
-                {scheduler.isUploadingMedia ? (
+                {scheduler.isUploadingMedia || isPreparingMedia ? (
                   <div
                     className="scheduler-upload__loader"
                     role="status"
@@ -3545,7 +3578,9 @@ export const SchedulerPage = () => {
                   <strong>
                     {scheduler.isUploadingMedia
                       ? 'Uploading media...'
-                      : 'Upload multiple images or videos'}
+                      : isPreparingMedia
+                        ? 'Preparing media...'
+                        : 'Upload multiple images or videos'}
                   </strong>
                   <span>Drag and drop JPG, PNG, WEBP, MP4, or MOV files</span>
                 </div>
@@ -3554,6 +3589,7 @@ export const SchedulerPage = () => {
                 type="file"
                 multiple
                 accept="image/*,video/*"
+                disabled={scheduler.isBusy || isPreparingMedia}
                 onChange={(event) => {
                   void handleMediaFileChange(event);
                 }}

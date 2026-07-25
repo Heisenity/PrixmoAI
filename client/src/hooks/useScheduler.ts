@@ -35,6 +35,7 @@ import type {
 type SchedulerUiStatus = 'ready' | 'syncing' | 'error';
 type SchedulerMediaRequestOptions = {
   surfaceGlobalError?: boolean;
+  signal?: AbortSignal;
 };
 
 const isUpcomingScheduledPost = (scheduledFor: string, status: ScheduledPostStatus) => {
@@ -47,11 +48,23 @@ const isUpcomingScheduledPost = (scheduledFor: string, status: ScheduledPostStat
   return Number.isFinite(scheduledAtMs) && scheduledAtMs > Date.now();
 };
 
-const readFileAsDataUrl = (file: File): Promise<string> =>
+const readFileAsDataUrl = (file: File, signal?: AbortSignal): Promise<string> =>
   new Promise((resolve, reject) => {
     const reader = new FileReader();
+    const abortRead = () => {
+      reader.abort();
+    };
+    const cleanup = () => {
+      signal?.removeEventListener('abort', abortRead);
+    };
+
+    if (signal?.aborted) {
+      reject(new Error('Request cancelled by user.'));
+      return;
+    }
 
     reader.onload = () => {
+      cleanup();
       if (typeof reader.result === 'string') {
         resolve(reader.result);
         return;
@@ -61,9 +74,15 @@ const readFileAsDataUrl = (file: File): Promise<string> =>
     };
 
     reader.onerror = () => {
+      cleanup();
       reject(new Error('Failed to read media file'));
     };
+    reader.onabort = () => {
+      cleanup();
+      reject(new Error('Request cancelled by user.'));
+    };
 
+    signal?.addEventListener('abort', abortRead, { once: true });
     reader.readAsDataURL(file);
   });
 
@@ -438,7 +457,10 @@ export const useScheduler = (options: UseSchedulerOptions = {}) => {
     }
   };
 
-  const createMediaAssetRecord = async (input: CreateMediaAssetInput) => {
+  const createMediaAssetRecord = async (
+    input: CreateMediaAssetInput,
+    options?: Pick<SchedulerMediaRequestOptions, 'signal'>
+  ) => {
     if (!token) {
       throw new Error('Sign in again to manage media assets.');
     }
@@ -450,6 +472,7 @@ export const useScheduler = (options: UseSchedulerOptions = {}) => {
       return await apiRequest<MediaAsset>('/api/scheduler/media-assets', {
         method: 'POST',
         token,
+        signal: options?.signal,
         body: input,
       });
     } catch (mutationError) {
@@ -852,10 +875,11 @@ export const useScheduler = (options: UseSchedulerOptions = {}) => {
     setIsUploadingMedia(true);
 
     try {
-      const dataUrl = await readFileAsDataUrl(file);
+      const dataUrl = await readFileAsDataUrl(file, options?.signal);
       const uploaded = await apiRequest<UploadedSourceImage>('/api/images/upload-source', {
         method: 'POST',
         token,
+        signal: options?.signal,
         body: {
           fileName: file.name,
           contentType: file.type,
@@ -917,6 +941,7 @@ export const useScheduler = (options: UseSchedulerOptions = {}) => {
       const uploaded = await apiRequest<UploadedSourceImage>('/api/images/import-source-url', {
         method: 'POST',
         token,
+        signal: options?.signal,
         body: {
           url: url.trim(),
         },

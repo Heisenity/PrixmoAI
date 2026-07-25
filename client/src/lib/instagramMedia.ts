@@ -4,6 +4,7 @@ export const INSTAGRAM_FEED_MIN_RATIO = 0.8;
 export const INSTAGRAM_FEED_MAX_RATIO = 1.91;
 export const INSTAGRAM_REELS_TARGET_RATIO = 9 / 16;
 const INSTAGRAM_REELS_TOLERANCE = 0.08;
+const MEDIA_METADATA_TIMEOUT_MS = 20_000;
 
 export type MediaDimensions = {
   width: number;
@@ -96,6 +97,22 @@ const canvasToBlob = (canvas: HTMLCanvasElement, type: string, quality?: number)
     );
   });
 
+const withTimeout = <T>(promise: Promise<T>, message: string) =>
+  new Promise<T>((resolve, reject) => {
+    const timeoutId = window.setTimeout(() => reject(new Error(message)), MEDIA_METADATA_TIMEOUT_MS);
+
+    promise.then(
+      (value) => {
+        window.clearTimeout(timeoutId);
+        resolve(value);
+      },
+      (error) => {
+        window.clearTimeout(timeoutId);
+        reject(error);
+      }
+    );
+  });
+
 export const validateInstagramAspectRatio = (
   width: number,
   height: number
@@ -136,7 +153,10 @@ export const readImageDimensionsFromBlob = async (blob: Blob): Promise<MediaDime
   const blobUrl = createBlobUrl(blob);
 
   try {
-    const image = await loadImage(blobUrl);
+    const image = await withTimeout(
+      loadImage(blobUrl),
+      'Media preview timed out while reading image dimensions.'
+    );
     return {
       width: image.naturalWidth,
       height: image.naturalHeight,
@@ -155,8 +175,15 @@ export const readVideoDimensionsFromBlob = async (blob: Blob): Promise<MediaDime
     video.preload = 'metadata';
     video.muted = true;
     video.playsInline = true;
+    const timeoutId = window.setTimeout(() => {
+      cleanup();
+      reject(new Error('Media preview timed out while reading video dimensions.'));
+    }, MEDIA_METADATA_TIMEOUT_MS);
 
     const cleanup = () => {
+      window.clearTimeout(timeoutId);
+      video.onloadedmetadata = null;
+      video.onerror = null;
       video.removeAttribute('src');
       video.load();
       revokeBlobUrl(blobUrl);
@@ -165,6 +192,7 @@ export const readVideoDimensionsFromBlob = async (blob: Blob): Promise<MediaDime
     video.onloadedmetadata = () => {
       const width = video.videoWidth;
       const height = video.videoHeight;
+      const durationSeconds = Number.isFinite(video.duration) ? video.duration : null;
 
       cleanup();
 
@@ -177,7 +205,7 @@ export const readVideoDimensionsFromBlob = async (blob: Blob): Promise<MediaDime
         width,
         height,
         aspectRatio: width / height,
-        durationSeconds: Number.isFinite(video.duration) ? video.duration : null,
+        durationSeconds,
       });
     };
 
@@ -189,8 +217,8 @@ export const readVideoDimensionsFromBlob = async (blob: Blob): Promise<MediaDime
     video.src = blobUrl;
   });
 
-export const fetchMediaBlob = async (url: string) => {
-  const response = await fetch(url);
+export const fetchMediaBlob = async (url: string, signal?: AbortSignal) => {
+  const response = await fetch(url, { signal });
 
   if (!response.ok) {
     throw new Error('Unable to load media for Instagram validation.');
@@ -227,7 +255,10 @@ export const prepareInstagramCompatibleImage = async (
   const imageUrl = createBlobUrl(blob);
 
   try {
-    const image = await loadImage(imageUrl);
+    const image = await withTimeout(
+      loadImage(imageUrl),
+      'Media preview timed out while preparing the Instagram image.'
+    );
     const targetWidth = 1080;
     const targetHeight =
       validation.reason === 'too_tall' ? 1350 : Math.round(targetWidth / INSTAGRAM_FEED_MAX_RATIO);
@@ -249,7 +280,10 @@ export const prepareInstagramCompatibleImage = async (
     ctx.fillRect(0, 0, targetWidth, targetHeight);
     drawContainedImage(ctx, image, targetWidth, targetHeight);
 
-    const processedBlob = await canvasToBlob(canvas, 'image/jpeg', 0.92);
+    const processedBlob = await withTimeout(
+      canvasToBlob(canvas, 'image/jpeg', 0.92),
+      'Media preview timed out while preparing the Instagram image.'
+    );
 
     return {
       file: new File([processedBlob], fileName.replace(/\.[^.]+$/, '') + '-instagram-fit.jpg', {
