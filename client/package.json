@@ -6,10 +6,10 @@
   "scripts": {
     "dev": "doppler run -- vite",
     "doppler:dev": "doppler run -- vite",
-    "build": "doppler run -- vite build",
+    "build": "vite build",
     "doppler:build": "doppler run -- vite build",
     "preview": "vite preview",
-    "typecheck": "doppler run -- tsc --noEmit",
+    "typecheck": "tsc --noEmit",
     "doppler:typecheck": "doppler run -- tsc --noEmit"
   },
   "dependencies": {

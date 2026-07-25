@@ -48,6 +48,30 @@ const INSTAGRAM_REELS_TARGET_RATIO = 9 / 16;
 const INSTAGRAM_REELS_TOLERANCE = 0.08;
 const META_OAUTH_POPUP_MESSAGE_TYPE = 'prixmoai:meta-oauth';
 const SCHEDULER_ACTIONABLE_STATUSES = new Set(['pending', 'scheduled']);
+const readFirstHeaderValue = (value) => value?.split(',')[0]?.trim() || null;
+const readUrlOrigin = (value) => {
+    if (!value) {
+        return null;
+    }
+    try {
+        const url = new URL(value);
+        return url.protocol === 'http:' || url.protocol === 'https:' ? url.origin : null;
+    }
+    catch {
+        return null;
+    }
+};
+const getRequestPublicOrigin = (req) => {
+    const proto = readFirstHeaderValue(req.header('x-forwarded-proto')) || req.protocol;
+    const host = readFirstHeaderValue(req.header('x-forwarded-host') || req.header('host'));
+    if (!host || !/^https?$/i.test(proto)) {
+        return null;
+    }
+    return `${proto.toLowerCase()}://${host}`;
+};
+const buildRequestCallbackUri = (req) => new URL('/api/scheduler/oauth/meta/callback', getRequestPublicOrigin(req) || constants_1.SERVER_PUBLIC_URL)
+    .toString();
+const getRequestClientOrigin = (req) => readUrlOrigin(req.header('origin') ?? null) || new URL(constants_1.CLIENT_APP_URL).origin;
 const coerceProfileValue = (value) => {
     const normalized = value?.trim();
     return normalized ? normalized : null;
@@ -439,8 +463,7 @@ const applyMetaOAuthPopupHeaders = (res, nonce) => {
         Pragma: 'no-cache',
     });
 };
-const buildMetaOAuthPopupHtml = (payload, fallbackRedirectUrl, nonce) => {
-    const targetOrigin = new URL(constants_1.CLIENT_APP_URL).origin;
+const buildMetaOAuthPopupHtml = (payload, fallbackRedirectUrl, targetOrigin, nonce) => {
     return `<!doctype html>
 <html lang="en">
   <head>
@@ -518,22 +541,24 @@ const buildMetaOAuthPopupHtml = (payload, fallbackRedirectUrl, nonce) => {
   </body>
 </html>`;
 };
-const respondWithMetaOAuthResult = (res, responseMode, payload) => {
+const respondWithMetaOAuthResult = (res, responseMode, payload, clientOrigin) => {
     const fallbackRedirectUrl = payload.status === 'error'
-        ? (0, meta_service_1.getMetaOAuthErrorRedirectUrl)(payload.message)
+        ? (0, meta_service_1.getMetaOAuthErrorRedirectUrl)(payload.message, clientOrigin)
         : payload.status === 'select_facebook_pages'
-            ? (0, meta_service_1.getMetaOAuthFacebookPageSelectionRedirectUrl)(payload.selectionId, payload.message)
-            : (0, meta_service_1.getMetaOAuthSuccessRedirectUrl)(payload.message);
+            ? (0, meta_service_1.getMetaOAuthFacebookPageSelectionRedirectUrl)(payload.selectionId, payload.message, clientOrigin)
+            : (0, meta_service_1.getMetaOAuthSuccessRedirectUrl)(payload.message, clientOrigin);
+    const targetOrigin = readUrlOrigin(clientOrigin ?? null) || new URL(constants_1.CLIENT_APP_URL).origin;
     if (responseMode === 'popup') {
         const nonce = (0, crypto_1.randomBytes)(16).toString('base64');
         applyMetaOAuthPopupHeaders(res, nonce);
         return res
             .status(200)
             .type('html')
-            .send(buildMetaOAuthPopupHtml(payload, fallbackRedirectUrl, nonce));
+            .send(buildMetaOAuthPopupHtml(payload, fallbackRedirectUrl, targetOrigin, nonce));
     }
     return res.redirect(302, fallbackRedirectUrl);
 };
+const respondWithMetaOAuthClaimResult = (res, claim, payload) => respondWithMetaOAuthResult(res, claim?.responseMode, payload, claim?.clientOrigin);
 const resolveScheduledPostDefaults = async (client, userId, input) => {
     const socialAccount = await (0, socialAccounts_1.getSocialAccountById)(client, userId, input.socialAccountId);
     if (!socialAccount) {
@@ -718,11 +743,15 @@ const startMetaOAuth = async (req, res) => {
                 },
             });
         }
+        const redirectUri = buildRequestCallbackUri(req);
+        const clientOrigin = getRequestClientOrigin(req);
         const authUrl = (0, meta_service_1.buildMetaOAuthUrl)((0, meta_service_1.createSignedMetaOAuthState)({
             userId: req.user.id,
             platform: req.body.platform,
             accountId: resolved.accountId,
             profileUrl: resolved.profileUrl ?? null,
+            redirectUri,
+            clientOrigin,
             responseMode: 'popup',
         }));
         return res.status(200).json({
@@ -730,9 +759,7 @@ const startMetaOAuth = async (req, res) => {
             data: {
                 authUrl,
                 // The popup posts back from the server callback origin, not the app origin.
-                popupOrigin: new URL(req.body.platform === 'instagram'
-                    ? constants_1.META_INSTAGRAM_REDIRECT_URI
-                    : constants_1.META_FACEBOOK_REDIRECT_URI).origin,
+                popupOrigin: new URL(redirectUri).origin,
             },
         });
     }
@@ -758,13 +785,13 @@ const handleMetaOAuthCallback = async (req, res) => {
     }
     const errorParam = req.query.error_description || req.query.error_message;
     if (errorParam) {
-        return respondWithMetaOAuthResult(res, claim?.responseMode, {
+        return respondWithMetaOAuthClaimResult(res, claim, {
             status: 'error',
             message: errorParam,
         });
     }
     if (!req.query.code || !req.query.state) {
-        return respondWithMetaOAuthResult(res, claim?.responseMode, {
+        return respondWithMetaOAuthClaimResult(res, claim, {
             status: 'error',
             message: 'Meta did not return the verification code. Start the connection again.',
         });
@@ -785,23 +812,23 @@ const handleMetaOAuthCallback = async (req, res) => {
                 const message = accountLimit === 0
                     ? 'Social account connections are not included in your current plan'
                     : `Your current plan allows ${accountLimit} connected social account${accountLimit === 1 ? '' : 's'}. Upgrade to connect more.`;
-                return respondWithMetaOAuthResult(res, claim.responseMode, {
+                return respondWithMetaOAuthClaimResult(res, claim, {
                     status: 'error',
                     message,
                 });
             }
         }
-        const exchange = await (0, meta_service_1.exchangeMetaAuthorizationCode)(req.query.code, claim.platform);
+        const exchange = await (0, meta_service_1.exchangeMetaAuthorizationCode)(req.query.code, claim.platform, claim.redirectUri);
         if (!hasExplicitClaim && claim.platform === 'facebook') {
             if (exchange.platform !== 'facebook') {
-                return respondWithMetaOAuthResult(res, claim.responseMode, {
+                return respondWithMetaOAuthClaimResult(res, claim, {
                     status: 'error',
                     message: 'Facebook verification returned the wrong Meta response.',
                 });
             }
             const connectablePages = exchange.pages.filter((page) => page.access_token);
             if (!connectablePages.length) {
-                return respondWithMetaOAuthResult(res, claim.responseMode, {
+                return respondWithMetaOAuthClaimResult(res, claim, {
                     status: 'error',
                     message: (0, meta_service_1.buildFacebookNoPagesMessage)(exchange.debug),
                 });
@@ -819,7 +846,7 @@ const handleMetaOAuthCallback = async (req, res) => {
                         const message = accountLimit === 0
                             ? 'Social account connections are not included in your current plan'
                             : `Your current plan allows ${accountLimit} connected social account${accountLimit === 1 ? '' : 's'}. Upgrade to connect more.`;
-                        return respondWithMetaOAuthResult(res, claim.responseMode, {
+                        return respondWithMetaOAuthClaimResult(res, claim, {
                             status: 'error',
                             message,
                         });
@@ -836,7 +863,7 @@ const handleMetaOAuthCallback = async (req, res) => {
                             : String(intelligenceError),
                     });
                 });
-                return respondWithMetaOAuthResult(res, claim.responseMode, {
+                return respondWithMetaOAuthClaimResult(res, claim, {
                     status: 'success',
                     message: 'Facebook Page connected.',
                 });
@@ -856,7 +883,7 @@ const handleMetaOAuthCallback = async (req, res) => {
                     pages: connectablePages,
                 },
             });
-            return respondWithMetaOAuthResult(res, claim.responseMode, {
+            return respondWithMetaOAuthClaimResult(res, claim, {
                 status: 'select_facebook_pages',
                 selectionId: session.id,
                 message: 'Choose the Facebook Page you want to connect.',
@@ -877,7 +904,7 @@ const handleMetaOAuthCallback = async (req, res) => {
                     : String(intelligenceError),
             });
         });
-        return respondWithMetaOAuthResult(res, claim.responseMode, {
+        return respondWithMetaOAuthClaimResult(res, claim, {
             status: 'success',
             message: claim.platform === 'instagram'
                 ? 'Instagram account connected.'
@@ -885,7 +912,7 @@ const handleMetaOAuthCallback = async (req, res) => {
         });
     }
     catch (error) {
-        return respondWithMetaOAuthResult(res, claim?.responseMode, {
+        return respondWithMetaOAuthClaimResult(res, claim, {
             status: 'error',
             message: error instanceof Error
                 ? error.message
@@ -902,7 +929,7 @@ const listPendingMetaFacebookPages = async (req, res) => {
         });
     }
     try {
-        const client = (0, supabase_1.requireUserClient)(req.accessToken);
+        const client = (0, supabase_1.requireSupabaseAdmin)();
         const session = await (0, oauthConnectionSessions_1.getOAuthConnectionSessionById)(client, req.user.id, req.params.id);
         if (!session) {
             return res.status(404).json({
@@ -947,7 +974,7 @@ const finalizePendingMetaFacebookPages = async (req, res) => {
     }
     try {
         const userId = req.user.id;
-        const client = (0, supabase_1.requireUserClient)(req.accessToken);
+        const client = (0, supabase_1.requireSupabaseAdmin)();
         const session = await (0, oauthConnectionSessions_1.getOAuthConnectionSessionById)(client, userId, req.body.selectionId);
         if (!session) {
             return res.status(404).json({

@@ -214,9 +214,6 @@ const awaitMetaOAuthPopupResult = async (
   authUrl: string,
   popupOrigin: string
 ): Promise<MetaOAuthPopupResult | null> => {
-  popup.location.replace(authUrl);
-  popup.focus();
-
   return await new Promise<MetaOAuthPopupResult>((resolve, reject) => {
     let settled = false;
 
@@ -294,6 +291,19 @@ const awaitMetaOAuthPopupResult = async (
     }, 5 * 60_000);
 
     window.addEventListener('message', handleMessage);
+
+    try {
+      popup.location.replace(authUrl);
+      popup.focus();
+    } catch (error) {
+      cleanup(() => {
+        reject(
+          error instanceof Error
+            ? error
+            : new Error('Unable to open the Meta login window.')
+        );
+      });
+    }
   });
 };
 
