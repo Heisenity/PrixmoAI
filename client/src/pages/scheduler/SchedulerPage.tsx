@@ -685,15 +685,19 @@ const readPlannerAssetInstagramMetadata = (metadata: Record<string, unknown>) =>
     !Array.isArray(metadata.instagramPreparation)
       ? (metadata.instagramPreparation as Record<string, unknown>)
       : null;
+  const instagramStatus =
+    typeof instagramRecord?.status === 'string' ? instagramRecord.status : null;
+  const warning =
+    instagramStatus === 'unsupported_video' &&
+    typeof instagramRecord?.warning === 'string'
+      ? instagramRecord.warning
+      : null;
 
   return {
-    instagramValidationMessage:
-      instagramRecord && typeof instagramRecord.warning === 'string'
-        ? instagramRecord.warning
-        : null,
+    instagramValidationMessage: warning,
     instagramAdjusted:
       instagramRecord?.adjusted === true || instagramRecord?.status === 'adjusted',
-    instagramUnsupportedVideo: instagramRecord?.status === 'unsupported_video',
+    instagramUnsupportedVideo: instagramStatus === 'unsupported_video',
   };
 };
 
@@ -1437,8 +1441,7 @@ export const SchedulerPage = () => {
           finalMimeType = finalUpload.contentType;
           instagramPreparation = {
             status: 'unknown',
-            warning:
-              'PrixmoAI could not read this image size, so it was uploaded without automatic Instagram fitting.',
+            warning: null,
             adjusted: false,
             mode: null,
             originalWidth: finalWidth,
@@ -1521,9 +1524,7 @@ export const SchedulerPage = () => {
               : 'unsupported_video',
           warning:
             videoSupport?.message ??
-            (dimensions
-              ? 'Instagram can publish this video without aspect-ratio adjustment.'
-              : 'PrixmoAI could not read this video size, so it was uploaded without aspect-ratio validation.'),
+            null,
           adjusted: false,
           mode: null,
           originalWidth: dimensions?.width ?? null,
