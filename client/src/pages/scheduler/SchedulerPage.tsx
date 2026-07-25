@@ -782,6 +782,7 @@ export const SchedulerPage = () => {
   >([]);
   const [isLoadingPendingFacebookPages, setIsLoadingPendingFacebookPages] =
     useState(false);
+  const [isConnectingFacebookPages, setIsConnectingFacebookPages] = useState(false);
   const [activeQueueTab, setActiveQueueTab] = useState<QueueTabId>('scheduled');
   const [disconnectTarget, setDisconnectTarget] = useState<SocialAccount | null>(null);
   const [disconnectValue, setDisconnectValue] = useState('');
@@ -3068,6 +3069,10 @@ export const SchedulerPage = () => {
   };
 
   const togglePendingFacebookPage = (pageId: string) => {
+    if (pendingFacebookSelection?.pages.find((page) => page.pageId === pageId)?.alreadyConnected) {
+      return;
+    }
+
     setSelectedPendingFacebookPageIds((current) =>
       current.includes(pageId)
         ? current.filter((value) => value !== pageId)
@@ -3080,16 +3085,38 @@ export const SchedulerPage = () => {
       return;
     }
 
-    const result = await scheduler.finalizePendingMetaFacebookPages(
-      pendingFacebookSelection.selectionId,
-      selectedPendingFacebookPageIds
+    const selectedConnectablePageIds = selectedPendingFacebookPageIds.filter((pageId) =>
+      pendingFacebookSelection.pages.some(
+        (page) => page.pageId === pageId && !page.alreadyConnected
+      )
     );
-    const count = result.connectedAccounts.length;
-    setOauthNotice(
-      count === 1 ? 'Facebook Page connected.' : `${count} Facebook Pages connected.`
-    );
-    setPendingFacebookSelection(null);
-    setSelectedPendingFacebookPageIds([]);
+
+    if (!selectedConnectablePageIds.length) {
+      return;
+    }
+
+    try {
+      setIsConnectingFacebookPages(true);
+      setOauthError(null);
+      const result = await scheduler.finalizePendingMetaFacebookPages(
+        pendingFacebookSelection.selectionId,
+        selectedConnectablePageIds
+      );
+      const count = result.connectedAccounts.length;
+      setOauthNotice(
+        count === 1 ? 'Facebook Page connected.' : `${count} Facebook Pages connected.`
+      );
+      setPendingFacebookSelection(null);
+      setSelectedPendingFacebookPageIds([]);
+    } catch (error) {
+      setOauthError(
+        error instanceof Error
+          ? error.message
+          : 'Facebook Pages could not be connected. Please try again.'
+      );
+    } finally {
+      setIsConnectingFacebookPages(false);
+    }
   };
 
   const handleDisconnectAccount = async () => {
@@ -4468,6 +4495,46 @@ export const SchedulerPage = () => {
               </div>
             ) : pendingFacebookSelection ? (
               <>
+                <div className="scheduler-facebook-selection__toolbar">
+                  <div>
+                    <strong>
+                      {selectedPendingFacebookPageIds.length} of{' '}
+                      {
+                        pendingFacebookSelection.pages.filter(
+                          (page) => !page.alreadyConnected
+                        ).length
+                      } selected
+                    </strong>
+                    <span>Tick the Pages you want PrixmoAI to schedule for.</span>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => {
+                      const connectablePageIds = pendingFacebookSelection.pages
+                        .filter((page) => !page.alreadyConnected)
+                        .map((page) => page.pageId);
+                      const allSelected = connectablePageIds.every((pageId) =>
+                        selectedPendingFacebookPageIds.includes(pageId)
+                      );
+
+                      setSelectedPendingFacebookPageIds(allSelected ? [] : connectablePageIds);
+                    }}
+                    disabled={
+                      isConnectingFacebookPages ||
+                      pendingFacebookSelection.pages.every((page) => page.alreadyConnected)
+                    }
+                  >
+                    <Check size={14} />
+                    {pendingFacebookSelection.pages
+                      .filter((page) => !page.alreadyConnected)
+                      .every((page) => selectedPendingFacebookPageIds.includes(page.pageId))
+                      ? 'Clear selection'
+                      : 'Select all'}
+                  </Button>
+                </div>
+
                 <div className="scheduler-facebook-selection">
                   {pendingFacebookSelection.pages.map((page) => {
                     const isSelected = selectedPendingFacebookPageIds.includes(page.pageId);
@@ -4476,15 +4543,19 @@ export const SchedulerPage = () => {
                       <button
                         key={page.pageId}
                         type="button"
-                        className={`scheduler-facebook-selection__card ${
-                          isSelected ? 'scheduler-facebook-selection__card--selected' : ''
-                        }`}
+                        className={cn(
+                          'scheduler-facebook-selection__card',
+                          isSelected && 'scheduler-facebook-selection__card--selected',
+                          page.alreadyConnected && 'scheduler-facebook-selection__card--disabled'
+                        )}
                         onClick={() => togglePendingFacebookPage(page.pageId)}
+                        disabled={page.alreadyConnected || isConnectingFacebookPages}
                       >
                         <div className="scheduler-facebook-selection__checkbox">
                           <input
                             type="checkbox"
                             checked={isSelected}
+                            disabled={page.alreadyConnected || isConnectingFacebookPages}
                             onChange={() => togglePendingFacebookPage(page.pageId)}
                             onClick={(event) => event.stopPropagation()}
                           />
@@ -4520,7 +4591,14 @@ export const SchedulerPage = () => {
                   </span>
                 </div>
 
-                <div className="scheduler-channel-disconnect__actions">
+                <div className="scheduler-channel-disconnect__actions scheduler-facebook-selection__actions">
+                  <span className="scheduler-facebook-selection__action-copy">
+                    {selectedPendingFacebookPageIds.length
+                      ? `${selectedPendingFacebookPageIds.length} Page${
+                          selectedPendingFacebookPageIds.length === 1 ? '' : 's'
+                        } ready to connect`
+                      : 'Select at least one Page to continue'}
+                  </span>
                   <Button
                     type="button"
                     variant="ghost"
@@ -4528,6 +4606,7 @@ export const SchedulerPage = () => {
                       setPendingFacebookSelection(null);
                       setSelectedPendingFacebookPageIds([]);
                     }}
+                    disabled={isConnectingFacebookPages}
                   >
                     Cancel
                   </Button>
@@ -4537,11 +4616,21 @@ export const SchedulerPage = () => {
                       void handleFinalizePendingFacebookPages();
                     }}
                     disabled={
-                      !selectedPendingFacebookPageIds.length || scheduler.isBusy
+                      !selectedPendingFacebookPageIds.length || isConnectingFacebookPages
                     }
                   >
-                    <Facebook size={16} />
-                    Connect selected Pages
+                    {isConnectingFacebookPages ? (
+                      <LoaderCircle size={16} className="analytics-icon-spin" />
+                    ) : (
+                      <Facebook size={16} />
+                    )}
+                    {isConnectingFacebookPages
+                      ? 'Connecting Pages...'
+                      : selectedPendingFacebookPageIds.length
+                        ? `Connect ${selectedPendingFacebookPageIds.length} Page${
+                            selectedPendingFacebookPageIds.length === 1 ? '' : 's'
+                          }`
+                        : 'Connect Pages'}
                   </Button>
                 </div>
               </>
