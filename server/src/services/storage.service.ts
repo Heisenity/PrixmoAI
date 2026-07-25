@@ -15,6 +15,12 @@ const ALLOWED_SOURCE_MEDIA_TYPES = new Set([
   ...ALLOWED_SOURCE_IMAGE_TYPES,
   ...ALLOWED_SOURCE_VIDEO_TYPES,
 ]);
+const SUPABASE_PUBLIC_OBJECT_PATH_PREFIX = [
+  'storage',
+  'v1',
+  'object',
+  'public',
+];
 
 const DATA_URL_PATTERN = /^data:([a-zA-Z0-9.+/-]+);base64,(.+)$/;
 const META_TAG_PATTERN = /<meta\b[^>]*>/gi;
@@ -246,6 +252,99 @@ const assertAllowedMediaType = (contentType: string) => {
   }
 
   return normalizedContentType;
+};
+
+const getConfiguredSupabaseOrigin = () => {
+  const configuredUrl = process.env.SUPABASE_URL?.trim();
+
+  if (!configuredUrl) {
+    return null;
+  }
+
+  try {
+    const url = new URL(configuredUrl);
+    return url.protocol === 'http:' || url.protocol === 'https:'
+      ? url.origin
+      : null;
+  } catch {
+    return null;
+  }
+};
+
+const normalizeMimeType = (mimeType: string) =>
+  mimeType.split(';')[0]?.trim().toLowerCase() || '';
+
+export const isAllowedSourceMediaMimeType = (
+  mediaType: SchedulerMediaType,
+  mimeType: string
+) => {
+  const normalizedMimeType = normalizeMimeType(mimeType);
+
+  if (mediaType === 'image') {
+    return ALLOWED_SOURCE_IMAGE_TYPES.has(normalizedMimeType);
+  }
+
+  return ALLOWED_SOURCE_VIDEO_TYPES.has(normalizedMimeType);
+};
+
+export const isManagedSourceMediaPublicUrl = (
+  userId: string,
+  value: string
+) => {
+  return Boolean(getManagedSourceMediaStoragePath(userId, value));
+};
+
+const getManagedSourceMediaStoragePath = (userId: string, value: string) => {
+  const configuredOrigin = getConfiguredSupabaseOrigin();
+
+  if (!configuredOrigin) {
+    return null;
+  }
+
+  try {
+    const url = new URL(value);
+
+    if (url.origin !== configuredOrigin) {
+      return null;
+    }
+
+    const segments = url.pathname.split('/').filter(Boolean);
+
+    if (
+      segments.length <= SUPABASE_PUBLIC_OBJECT_PATH_PREFIX.length + 2 ||
+      !SUPABASE_PUBLIC_OBJECT_PATH_PREFIX.every(
+        (segment, index) => segments[index] === segment
+      ) ||
+      segments[SUPABASE_PUBLIC_OBJECT_PATH_PREFIX.length] !==
+        SUPABASE_SOURCE_IMAGE_BUCKET ||
+      segments[SUPABASE_PUBLIC_OBJECT_PATH_PREFIX.length + 1] !== userId
+    ) {
+      return null;
+    }
+
+    return segments
+      .slice(SUPABASE_PUBLIC_OBJECT_PATH_PREFIX.length + 1)
+      .map(decodeURIComponent)
+      .join('/');
+  } catch {
+    return null;
+  }
+};
+
+export const deleteManagedSourceMedia = async (
+  userId: string,
+  publicUrl: string
+) => {
+  const storagePath = getManagedSourceMediaStoragePath(userId, publicUrl);
+
+  if (!storagePath) {
+    return;
+  }
+
+  const supabaseAdmin = requireSupabaseAdmin();
+  await supabaseAdmin.storage
+    .from(SUPABASE_SOURCE_IMAGE_BUCKET)
+    .remove([storagePath]);
 };
 
 const fetchExternalMediaResponse = async (url: string, method: 'HEAD' | 'GET') => {

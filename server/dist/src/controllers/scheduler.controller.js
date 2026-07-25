@@ -23,6 +23,11 @@ const parsePositiveInt = (value, fallback) => {
     const parsed = Number.parseInt(value, 10);
     return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 };
+const redactSocialAccountTokens = (account) => ({
+    ...account,
+    accessToken: null,
+    refreshToken: null,
+});
 const RESERVED_PROFILE_SEGMENTS = new Set([
     'p',
     'reel',
@@ -404,7 +409,6 @@ const serializeForInlineScript = (value) => JSON.stringify(value)
     .replace(/&/g, '\\u0026')
     .replace(/\u2028/g, '\\u2028')
     .replace(/\u2029/g, '\\u2029');
-const isManagedSchedulerMediaUrl = (value) => value.includes(`/storage/v1/object/public/${constants_1.SUPABASE_SOURCE_IMAGE_BUCKET}/`);
 const inferManagedMediaTypeFromUrl = (value) => {
     const normalized = value.toLowerCase();
     if (normalized.includes('.mp4') ||
@@ -429,7 +433,7 @@ const resolveSchedulerMediaUrl = async (userId, mediaUrl, mediaType) => {
             mediaType: null,
         };
     }
-    if (isManagedSchedulerMediaUrl(normalized)) {
+    if ((0, storage_service_1.isManagedSourceMediaPublicUrl)(userId, normalized)) {
         return {
             mediaUrl: normalized,
             mediaType: mediaType ?? inferManagedMediaTypeFromUrl(normalized),
@@ -440,6 +444,24 @@ const resolveSchedulerMediaUrl = async (userId, mediaUrl, mediaType) => {
         mediaUrl: imported.publicUrl,
         mediaType: imported.mediaType,
     };
+};
+const validateSchedulerMediaAssetInput = (userId, input) => {
+    if (input.sourceType === 'generated') {
+        if (!input.contentId &&
+            !input.generatedImageId &&
+            !(0, storage_service_1.isManagedSourceMediaPublicUrl)(userId, input.storageUrl)) {
+            return 'Invalid media asset input';
+        }
+        return null;
+    }
+    if (!(0, storage_service_1.isManagedSourceMediaPublicUrl)(userId, input.storageUrl)) {
+        return 'Invalid media asset input';
+    }
+    if (input.mimeType &&
+        !(0, storage_service_1.isAllowedSourceMediaMimeType)(input.mediaType, input.mimeType)) {
+        return 'Invalid media asset input';
+    }
+    return null;
 };
 const buildMetaOAuthPopupCsp = (nonce) => [
     "default-src 'none'",
@@ -676,7 +698,7 @@ const createConnectedSocialAccount = async (req, res) => {
         return res.status(201).json({
             status: 'success',
             message: 'Social account connected successfully',
-            data: account,
+            data: redactSocialAccountTokens(account),
         });
     }
     catch (error) {
@@ -1044,7 +1066,7 @@ const finalizePendingMetaFacebookPages = async (req, res) => {
                 ? 'Facebook Page connected.'
                 : `${connectedAccounts.length} Facebook Pages connected.`,
             data: {
-                connectedAccounts,
+                connectedAccounts: connectedAccounts.map(redactSocialAccountTokens),
             },
         });
     }
@@ -1074,7 +1096,10 @@ const listConnectedSocialAccounts = async (req, res) => {
         });
         return res.status(200).json({
             status: 'success',
-            data: accounts,
+            data: {
+                ...accounts,
+                items: accounts.items.map(redactSocialAccountTokens),
+            },
         });
     }
     catch (error) {
@@ -1107,7 +1132,7 @@ const updateConnectedSocialAccount = async (req, res) => {
         return res.status(200).json({
             status: 'success',
             message: 'Social account updated successfully',
-            data: account,
+            data: redactSocialAccountTokens(account),
         });
     }
     catch (error) {
@@ -1160,6 +1185,13 @@ const createSchedulerMediaAsset = async (req, res) => {
         });
     }
     try {
+        const validationError = validateSchedulerMediaAssetInput(req.user.id, req.body);
+        if (validationError) {
+            return res.status(400).json({
+                status: 'fail',
+                message: validationError,
+            });
+        }
         const client = (0, supabase_1.requireUserClient)(req.accessToken);
         if (req.body.contentId) {
             const content = await (0, content_1.getGeneratedContentById)(client, req.user.id, req.body.contentId);
@@ -1179,7 +1211,26 @@ const createSchedulerMediaAsset = async (req, res) => {
                 });
             }
         }
-        const asset = await (0, scheduleBatches_1.createMediaAsset)(client, req.user.id, req.body);
+        if (req.body.sourceType !== 'generated') {
+            const existingAsset = await (0, scheduleBatches_1.getMediaAssetByStorageUrl)(client, req.user.id, req.body.storageUrl);
+            if (existingAsset) {
+                return res.status(200).json({
+                    status: 'success',
+                    message: 'Media asset already exists',
+                    data: existingAsset,
+                });
+            }
+        }
+        let asset;
+        try {
+            asset = await (0, scheduleBatches_1.createMediaAsset)(client, req.user.id, req.body);
+        }
+        catch (createError) {
+            if (req.body.sourceType !== 'generated') {
+                await (0, storage_service_1.deleteManagedSourceMedia)(req.user.id, req.body.storageUrl).catch(() => undefined);
+            }
+            throw createError;
+        }
         return res.status(201).json({
             status: 'success',
             message: 'Media asset created successfully',

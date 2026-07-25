@@ -3,7 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.importExternalSourceImage = exports.prepareSourceImageForGeneration = exports.isManagedSourceImageUrl = exports.resolveExternalSourceImage = exports.uploadSourceImage = void 0;
+exports.importExternalSourceImage = exports.prepareSourceImageForGeneration = exports.isManagedSourceImageUrl = exports.resolveExternalSourceImage = exports.uploadSourceImage = exports.deleteManagedSourceMedia = exports.isManagedSourceMediaPublicUrl = exports.isAllowedSourceMediaMimeType = void 0;
 const path_1 = __importDefault(require("path"));
 const constants_1 = require("../config/constants");
 const supabase_1 = require("../db/supabase");
@@ -19,6 +19,12 @@ const ALLOWED_SOURCE_MEDIA_TYPES = new Set([
     ...ALLOWED_SOURCE_IMAGE_TYPES,
     ...ALLOWED_SOURCE_VIDEO_TYPES,
 ]);
+const SUPABASE_PUBLIC_OBJECT_PATH_PREFIX = [
+    'storage',
+    'v1',
+    'object',
+    'public',
+];
 const DATA_URL_PATTERN = /^data:([a-zA-Z0-9.+/-]+);base64,(.+)$/;
 const META_TAG_PATTERN = /<meta\b[^>]*>/gi;
 const LINK_TAG_PATTERN = /<link\b[^>]*>/gi;
@@ -183,6 +189,72 @@ const assertAllowedMediaType = (contentType) => {
     }
     return normalizedContentType;
 };
+const getConfiguredSupabaseOrigin = () => {
+    const configuredUrl = process.env.SUPABASE_URL?.trim();
+    if (!configuredUrl) {
+        return null;
+    }
+    try {
+        const url = new URL(configuredUrl);
+        return url.protocol === 'http:' || url.protocol === 'https:'
+            ? url.origin
+            : null;
+    }
+    catch {
+        return null;
+    }
+};
+const normalizeMimeType = (mimeType) => mimeType.split(';')[0]?.trim().toLowerCase() || '';
+const isAllowedSourceMediaMimeType = (mediaType, mimeType) => {
+    const normalizedMimeType = normalizeMimeType(mimeType);
+    if (mediaType === 'image') {
+        return ALLOWED_SOURCE_IMAGE_TYPES.has(normalizedMimeType);
+    }
+    return ALLOWED_SOURCE_VIDEO_TYPES.has(normalizedMimeType);
+};
+exports.isAllowedSourceMediaMimeType = isAllowedSourceMediaMimeType;
+const isManagedSourceMediaPublicUrl = (userId, value) => {
+    return Boolean(getManagedSourceMediaStoragePath(userId, value));
+};
+exports.isManagedSourceMediaPublicUrl = isManagedSourceMediaPublicUrl;
+const getManagedSourceMediaStoragePath = (userId, value) => {
+    const configuredOrigin = getConfiguredSupabaseOrigin();
+    if (!configuredOrigin) {
+        return null;
+    }
+    try {
+        const url = new URL(value);
+        if (url.origin !== configuredOrigin) {
+            return null;
+        }
+        const segments = url.pathname.split('/').filter(Boolean);
+        if (segments.length <= SUPABASE_PUBLIC_OBJECT_PATH_PREFIX.length + 2 ||
+            !SUPABASE_PUBLIC_OBJECT_PATH_PREFIX.every((segment, index) => segments[index] === segment) ||
+            segments[SUPABASE_PUBLIC_OBJECT_PATH_PREFIX.length] !==
+                constants_1.SUPABASE_SOURCE_IMAGE_BUCKET ||
+            segments[SUPABASE_PUBLIC_OBJECT_PATH_PREFIX.length + 1] !== userId) {
+            return null;
+        }
+        return segments
+            .slice(SUPABASE_PUBLIC_OBJECT_PATH_PREFIX.length + 1)
+            .map(decodeURIComponent)
+            .join('/');
+    }
+    catch {
+        return null;
+    }
+};
+const deleteManagedSourceMedia = async (userId, publicUrl) => {
+    const storagePath = getManagedSourceMediaStoragePath(userId, publicUrl);
+    if (!storagePath) {
+        return;
+    }
+    const supabaseAdmin = (0, supabase_1.requireSupabaseAdmin)();
+    await supabaseAdmin.storage
+        .from(constants_1.SUPABASE_SOURCE_IMAGE_BUCKET)
+        .remove([storagePath]);
+};
+exports.deleteManagedSourceMedia = deleteManagedSourceMedia;
 const fetchExternalMediaResponse = async (url, method) => {
     try {
         return await fetch(url, {

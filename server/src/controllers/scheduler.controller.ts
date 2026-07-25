@@ -9,6 +9,7 @@ import {
   createScheduleBatch,
   createScheduledItem,
   deleteScheduleBatch,
+  getMediaAssetByStorageUrl,
   getMediaAssetById,
   getScheduleBatchesByUser,
   getScheduleBatchById,
@@ -61,6 +62,7 @@ import type {
   CreateSocialAccountInput,
   ScheduleBatchStatus,
   SchedulerMediaType,
+  SocialAccount,
   SocialPlatform,
 } from '../types';
 import { handleVerifiedSocialAccountConnected } from '../services/socialAccountIntelligence.service';
@@ -95,7 +97,12 @@ import {
   scheduleScheduledPostPublish,
   unscheduleScheduledPostPublish,
 } from '../services/schedulerPublisher.service';
-import { importExternalSourceImage } from '../services/storage.service';
+import {
+  deleteManagedSourceMedia,
+  importExternalSourceImage,
+  isAllowedSourceMediaMimeType,
+  isManagedSourceMediaPublicUrl,
+} from '../services/storage.service';
 import { recordBrandMemoryFeedback } from '../services/brandMemory.service';
 
 type AuthenticatedRequest<
@@ -116,6 +123,12 @@ const parsePositiveInt = (value: unknown, fallback: number): number => {
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 };
+
+const redactSocialAccountTokens = (account: SocialAccount): SocialAccount => ({
+  ...account,
+  accessToken: null,
+  refreshToken: null,
+});
 
 const RESERVED_PROFILE_SEGMENTS = new Set([
   'p',
@@ -700,9 +713,6 @@ const serializeForInlineScript = (value: unknown) =>
     .replace(/\u2028/g, '\\u2028')
     .replace(/\u2029/g, '\\u2029');
 
-const isManagedSchedulerMediaUrl = (value: string) =>
-  value.includes(`/storage/v1/object/public/${SUPABASE_SOURCE_IMAGE_BUCKET}/`);
-
 const inferManagedMediaTypeFromUrl = (
   value: string
 ): SchedulerMediaType | null => {
@@ -743,7 +753,7 @@ const resolveSchedulerMediaUrl = async (
     };
   }
 
-  if (isManagedSchedulerMediaUrl(normalized)) {
+  if (isManagedSourceMediaPublicUrl(userId, normalized)) {
     return {
       mediaUrl: normalized,
       mediaType: mediaType ?? inferManagedMediaTypeFromUrl(normalized),
@@ -755,6 +765,36 @@ const resolveSchedulerMediaUrl = async (
     mediaUrl: imported.publicUrl,
     mediaType: imported.mediaType,
   };
+};
+
+const validateSchedulerMediaAssetInput = (
+  userId: string,
+  input: CreateMediaAssetBody
+) => {
+  if (input.sourceType === 'generated') {
+    if (
+      !input.contentId &&
+      !input.generatedImageId &&
+      !isManagedSourceMediaPublicUrl(userId, input.storageUrl)
+    ) {
+      return 'Invalid media asset input';
+    }
+
+    return null;
+  }
+
+  if (!isManagedSourceMediaPublicUrl(userId, input.storageUrl)) {
+    return 'Invalid media asset input';
+  }
+
+  if (
+    input.mimeType &&
+    !isAllowedSourceMediaMimeType(input.mediaType, input.mimeType)
+  ) {
+    return 'Invalid media asset input';
+  }
+
+  return null;
 };
 
 const buildMetaOAuthPopupCsp = (nonce: string) =>
@@ -1122,7 +1162,7 @@ export const createConnectedSocialAccount = async (
     return res.status(201).json({
       status: 'success',
       message: 'Social account connected successfully',
-      data: account,
+      data: redactSocialAccountTokens(account),
     });
   } catch (error) {
     const message =
@@ -1708,7 +1748,7 @@ export const finalizePendingMetaFacebookPages = async (
           ? 'Facebook Page connected.'
           : `${connectedAccounts.length} Facebook Pages connected.`,
       data: {
-        connectedAccounts,
+        connectedAccounts: connectedAccounts.map(redactSocialAccountTokens),
       },
     });
   } catch (error) {
@@ -1752,7 +1792,10 @@ export const listConnectedSocialAccounts = async (
 
     return res.status(200).json({
       status: 'success',
-      data: accounts,
+      data: {
+        ...accounts,
+        items: accounts.items.map(redactSocialAccountTokens),
+      },
     });
   } catch (error) {
     return res.status(500).json({
@@ -1801,7 +1844,7 @@ export const updateConnectedSocialAccount = async (
     return res.status(200).json({
       status: 'success',
       message: 'Social account updated successfully',
-      data: account,
+      data: redactSocialAccountTokens(account),
     });
   } catch (error) {
     return res.status(500).json({
@@ -1869,6 +1912,18 @@ export const createSchedulerMediaAsset = async (
   }
 
   try {
+    const validationError = validateSchedulerMediaAssetInput(
+      req.user.id,
+      req.body
+    );
+
+    if (validationError) {
+      return res.status(400).json({
+        status: 'fail',
+        message: validationError,
+      });
+    }
+
     const client = requireUserClient(req.accessToken);
 
     if (req.body.contentId) {
@@ -1897,7 +1952,39 @@ export const createSchedulerMediaAsset = async (
       }
     }
 
-    const asset = await createMediaAsset(client, req.user.id, req.body as CreateMediaAssetInput);
+    if (req.body.sourceType !== 'generated') {
+      const existingAsset = await getMediaAssetByStorageUrl(
+        client,
+        req.user.id,
+        req.body.storageUrl
+      );
+
+      if (existingAsset) {
+        return res.status(200).json({
+          status: 'success',
+          message: 'Media asset already exists',
+          data: existingAsset,
+        });
+      }
+    }
+
+    let asset: MediaAsset;
+
+    try {
+      asset = await createMediaAsset(
+        client,
+        req.user.id,
+        req.body as CreateMediaAssetInput
+      );
+    } catch (createError) {
+      if (req.body.sourceType !== 'generated') {
+        await deleteManagedSourceMedia(req.user.id, req.body.storageUrl).catch(
+          () => undefined
+        );
+      }
+
+      throw createError;
+    }
 
     return res.status(201).json({
       status: 'success',

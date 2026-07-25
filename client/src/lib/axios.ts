@@ -96,7 +96,7 @@ const toSearchParams = (query?: ApiRequestOptions['query']) => {
   return search ? `?${search}` : '';
 };
 
-const toReadableApiMessage = (value: unknown): string => {
+export const toReadableApiMessage = (value: unknown): string => {
   if (!value) {
     return '';
   }

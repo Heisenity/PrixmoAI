@@ -5,6 +5,24 @@ export const INSTAGRAM_FEED_MAX_RATIO = 1.91;
 export const INSTAGRAM_REELS_TARGET_RATIO = 9 / 16;
 const INSTAGRAM_REELS_TOLERANCE = 0.08;
 const MEDIA_METADATA_TIMEOUT_MS = 20_000;
+const SCHEDULER_ALLOWED_MEDIA_BY_MIME = {
+  'image/jpeg': { mediaType: 'image', extension: 'jpg' },
+  'image/png': { mediaType: 'image', extension: 'png' },
+  'image/webp': { mediaType: 'image', extension: 'webp' },
+  'video/mp4': { mediaType: 'video', extension: 'mp4' },
+  'video/quicktime': { mediaType: 'video', extension: 'mov' },
+} as const satisfies Record<
+  string,
+  { mediaType: SchedulerMediaType; extension: string }
+>;
+const SCHEDULER_ALLOWED_MIME_BY_EXTENSION = {
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  png: 'image/png',
+  webp: 'image/webp',
+  mp4: 'video/mp4',
+  mov: 'video/quicktime',
+} as const;
 
 export type MediaDimensions = {
   width: number;
@@ -30,6 +48,71 @@ export type InstagramPreparedImage = {
   originalAspectRatio: number;
   adjustmentMode: 'fit' | null;
   warning: string | null;
+};
+
+export type NormalizedSchedulerMediaFile = {
+  file: File;
+  mediaType: SchedulerMediaType;
+  contentType: keyof typeof SCHEDULER_ALLOWED_MEDIA_BY_MIME;
+  extension: string | null;
+  wasMimeTypeInferred: boolean;
+};
+
+const getFileExtension = (fileName: string) => {
+  const match = /\.([^.]+)$/.exec(fileName.trim().toLowerCase());
+  return match?.[1] ?? null;
+};
+
+export const normalizeSchedulerMediaFile = (file: File): NormalizedSchedulerMediaFile => {
+  const extension = getFileExtension(file.name);
+  const mimeType = file.type.trim().toLowerCase();
+  const mimeDescriptor =
+    SCHEDULER_ALLOWED_MEDIA_BY_MIME[
+      mimeType as keyof typeof SCHEDULER_ALLOWED_MEDIA_BY_MIME
+    ];
+  const extensionMimeType = extension
+    ? SCHEDULER_ALLOWED_MIME_BY_EXTENSION[
+        extension as keyof typeof SCHEDULER_ALLOWED_MIME_BY_EXTENSION
+      ]
+    : null;
+
+  if (mimeType) {
+    if (!mimeDescriptor) {
+      throw new Error('Only JPG, PNG, WEBP, MP4, and MOV media are supported.');
+    }
+
+    if (
+      extensionMimeType &&
+      extensionMimeType !== mimeType
+    ) {
+      throw new Error('The file extension does not match the selected media type.');
+    }
+
+    return {
+      file,
+      mediaType: mimeDescriptor.mediaType,
+      contentType: mimeType as keyof typeof SCHEDULER_ALLOWED_MEDIA_BY_MIME,
+      extension,
+      wasMimeTypeInferred: false,
+    };
+  }
+
+  if (!extensionMimeType) {
+    throw new Error('Only JPG, PNG, WEBP, MP4, and MOV media are supported.');
+  }
+
+  const inferredFile = new File([file], file.name, {
+    type: extensionMimeType,
+    lastModified: file.lastModified,
+  });
+
+  return {
+    file: inferredFile,
+    mediaType: SCHEDULER_ALLOWED_MEDIA_BY_MIME[extensionMimeType].mediaType,
+    contentType: extensionMimeType,
+    extension,
+    wasMimeTypeInferred: true,
+  };
 };
 
 const createBlobUrl = (blob: Blob) => URL.createObjectURL(blob);

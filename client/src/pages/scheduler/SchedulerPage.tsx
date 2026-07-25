@@ -39,10 +39,12 @@ import { Select } from '../../components/ui/select';
 import { useAuth } from '../../hooks/useAuth';
 import { useContent } from '../../hooks/useContent';
 import { useScheduler } from '../../hooks/useScheduler';
+import type { SchedulerUploadProgress } from '../../hooks/useScheduler';
 import {
   fetchMediaBlob,
   getMediaDimensions,
   isInstagramVideoRatioSupported,
+  normalizeSchedulerMediaFile,
   prepareInstagramCompatibleImage,
 } from '../../lib/instagramMedia';
 import { createRasterImageFileFromBlob } from '../../lib/generatedImageExport';
@@ -478,6 +480,26 @@ type SchedulerToast = {
   isExiting: boolean;
 };
 
+type SchedulerMediaUploadStatus =
+  | 'queued'
+  | 'preparing'
+  | 'uploading'
+  | 'success'
+  | 'error'
+  | 'cancelled';
+
+type SchedulerMediaUploadItem = {
+  id: string;
+  dedupeKey: string;
+  file: File;
+  fileName: string;
+  status: SchedulerMediaUploadStatus;
+  loadedBytes: number;
+  totalBytes: number;
+  percent: number;
+  errorMessage: string | null;
+};
+
 const createLocalPlannerId = () => {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return crypto.randomUUID();
@@ -488,6 +510,8 @@ const createLocalPlannerId = () => {
 
 const RECENT_TOAST_DEDUPE_WINDOW_MS = 1_500;
 const MEDIA_OPERATION_TIMEOUT_MS = 120_000;
+const MEDIA_UPLOAD_SUCCESS_VISIBLE_MS = 1_400;
+const SCHEDULER_MEDIA_UPLOAD_MAX_FILES = 10;
 
 const schedulerGeneratedIntentProcessingIds = new Set<string>();
 const schedulerGeneratedIntentHandledIds = new Set<string>();
@@ -505,6 +529,52 @@ const logSchedulerDebug = (
 
 const buildUploadFileDedupeKey = (file: File) =>
   `upload:${file.name}:${file.size}:${file.lastModified}:${file.type}`;
+
+const formatMediaUploadBytes = (value: number) => {
+  if (!Number.isFinite(value) || value <= 0) {
+    return '0 B';
+  }
+
+  const units = ['B', 'KB', 'MB', 'GB'];
+  const unitIndex = Math.min(
+    Math.floor(Math.log(value) / Math.log(1024)),
+    units.length - 1
+  );
+  const amount = value / 1024 ** unitIndex;
+
+  return `${amount >= 10 || unitIndex === 0 ? Math.round(amount) : amount.toFixed(1)} ${
+    units[unitIndex]
+  }`;
+};
+
+const calculateUploadPercent = (loadedBytes: number, totalBytes: number) =>
+  totalBytes > 0
+    ? Math.max(0, Math.min(100, Math.round((loadedBytes / totalBytes) * 100)))
+    : 0;
+
+const getMediaUploadStatusLabel = (status: SchedulerMediaUploadStatus) => {
+  if (status === 'preparing') {
+    return 'Preparing';
+  }
+
+  if (status === 'uploading') {
+    return 'Uploading';
+  }
+
+  if (status === 'success') {
+    return 'Added';
+  }
+
+  if (status === 'error') {
+    return 'Needs retry';
+  }
+
+  if (status === 'cancelled') {
+    return 'Cancelled';
+  }
+
+  return 'Queued';
+};
 
 const buildUrlDedupeKey = (value: string) => `url:${value.trim().toLowerCase()}`;
 
@@ -812,6 +882,7 @@ export const SchedulerPage = () => {
   } | null>(null);
   const [isMediaDragActive, setIsMediaDragActive] = useState(false);
   const [isPreparingMedia, setIsPreparingMedia] = useState(false);
+  const [mediaUploadItems, setMediaUploadItems] = useState<SchedulerMediaUploadItem[]>([]);
   const [mediaUrlInputValue, setMediaUrlInputValue] = useState('');
   const [resolvedMediaPreview, setResolvedMediaPreview] =
     useState<ResolvedExternalMedia | null>(null);
@@ -841,6 +912,10 @@ export const SchedulerPage = () => {
   const hasLoadedDraftsRef = useRef(false);
   const plannerAssetKeysRef = useRef<Set<string>>(new Set());
   const activePlannerImportKeysRef = useRef<Set<string>>(new Set());
+  const mediaUploadItemsRef = useRef<SchedulerMediaUploadItem[]>([]);
+  const mediaUploadControllersRef = useRef<Record<string, AbortController>>({});
+  const mediaUploadAbortReasonRef = useRef<Record<string, 'cancel' | 'timeout'>>({});
+  const mediaUploadSuccessTimersRef = useRef<Record<string, number>>({});
   const recentToastTimestampsRef = useRef<Record<string, number>>({});
   const generatedIntentEffectRunsRef = useRef(0);
   const hasHydratedPersistedPlannerRef = useRef(false);
@@ -1100,6 +1175,21 @@ export const SchedulerPage = () => {
     []
   );
 
+  useEffect(
+    () => () => {
+      Object.values(mediaUploadControllersRef.current).forEach((controller) => {
+        controller.abort();
+      });
+      Object.values(mediaUploadSuccessTimersRef.current).forEach((timerId) => {
+        window.clearTimeout(timerId);
+      });
+      mediaUploadControllersRef.current = {};
+      mediaUploadAbortReasonRef.current = {};
+      mediaUploadSuccessTimersRef.current = {};
+    },
+    []
+  );
+
   useEffect(() => {
     if (
       !pendingAcceptedCaptionCarryover ||
@@ -1211,6 +1301,7 @@ export const SchedulerPage = () => {
       prompt,
       metadata,
       signal,
+      onUploadProgress,
     }: {
       sourceType: 'upload' | 'generated' | 'url';
       file?: File;
@@ -1222,6 +1313,7 @@ export const SchedulerPage = () => {
       prompt?: string | null;
       metadata?: Record<string, unknown>;
       signal?: AbortSignal;
+      onUploadProgress?: (progress: SchedulerUploadProgress) => void;
     }) => {
       let uploaded:
         | {
@@ -1238,10 +1330,11 @@ export const SchedulerPage = () => {
         sourceType === 'generated' && metadata?.requiresWatermark === true;
 
       if (file) {
-        mediaBlob = file;
-        mediaType = inferMediaTypeFromMimeType(file.type);
-        mimeType = file.type || null;
-        fileName = file.name || fallbackFileName;
+        const normalizedMedia = normalizeSchedulerMediaFile(file);
+        mediaBlob = normalizedMedia.file;
+        mediaType = normalizedMedia.mediaType;
+        mimeType = normalizedMedia.contentType;
+        fileName = normalizedMedia.file.name || fallbackFileName;
       } else if (sourceUrl?.trim()) {
         if (shouldApplyGeneratedWatermark) {
           try {
@@ -1321,6 +1414,7 @@ export const SchedulerPage = () => {
           finalUpload = await scheduler.uploadPostMedia(prepared.file, {
             surfaceGlobalError: false,
             signal,
+            onUploadProgress,
           });
           finalWidth = prepared.width;
           finalHeight = prepared.height;
@@ -1344,6 +1438,7 @@ export const SchedulerPage = () => {
             finalUpload = await scheduler.uploadPostMedia(prepared.file, {
               surfaceGlobalError: false,
               signal,
+              onUploadProgress,
             });
           }
 
@@ -1370,6 +1465,7 @@ export const SchedulerPage = () => {
             {
               surfaceGlobalError: false,
               signal,
+              onUploadProgress,
             }
           );
         }
@@ -2044,6 +2140,60 @@ export const SchedulerPage = () => {
 
     return null;
   }, [connectedAccountById, connectedAccounts.length, liveNow, plannerAssets]);
+  const mediaUploadSummary = useMemo(() => {
+    const totalCount = mediaUploadItems.length;
+    const activeCount = mediaUploadItems.filter((item) =>
+      item.status === 'queued' ||
+      item.status === 'preparing' ||
+      item.status === 'uploading'
+    ).length;
+    const successCount = mediaUploadItems.filter((item) => item.status === 'success').length;
+    const errorCount = mediaUploadItems.filter((item) => item.status === 'error').length;
+    const cancelledCount = mediaUploadItems.filter(
+      (item) => item.status === 'cancelled'
+    ).length;
+    const totalBytes = mediaUploadItems.reduce(
+      (sum, item) => sum + (item.totalBytes || item.file.size),
+      0
+    );
+    const loadedBytes = mediaUploadItems.reduce(
+      (sum, item) =>
+        sum +
+        (item.status === 'success'
+          ? item.totalBytes || item.file.size
+          : Math.min(item.loadedBytes, item.totalBytes || item.file.size)),
+      0
+    );
+    const percent = calculateUploadPercent(loadedBytes, totalBytes);
+
+    return {
+      totalCount,
+      activeCount,
+      successCount,
+      errorCount,
+      cancelledCount,
+      totalBytes,
+      loadedBytes,
+      percent,
+    };
+  }, [mediaUploadItems]);
+
+  useEffect(() => {
+    if (mediaUploadSummary.activeCount === 0) {
+      return undefined;
+    }
+
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = '';
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+    };
+  }, [mediaUploadSummary.activeCount]);
 
   const openConnectModal = (step: ConnectModalStep = 'root') => {
     setOauthError(null);
@@ -2786,31 +2936,173 @@ export const SchedulerPage = () => {
     };
   };
 
-  const persistUploadedFiles = async (files: File[]) => {
+  const setMediaUploadQueue = useCallback(
+    (updater: (current: SchedulerMediaUploadItem[]) => SchedulerMediaUploadItem[]) => {
+      const nextItems = updater(mediaUploadItemsRef.current);
+      mediaUploadItemsRef.current = nextItems;
+      setMediaUploadItems(nextItems);
+      return nextItems;
+    },
+    []
+  );
+
+  const updateMediaUploadItem = useCallback(
+    (
+      itemId: string,
+      updater: (item: SchedulerMediaUploadItem) => SchedulerMediaUploadItem
+    ) => {
+      setMediaUploadQueue((current) =>
+        current.map((item) => (item.id === itemId ? updater(item) : item))
+      );
+    },
+    [setMediaUploadQueue]
+  );
+
+  const removeMediaUploadItem = useCallback(
+    (itemId: string) => {
+      const controller = mediaUploadControllersRef.current[itemId];
+
+      if (controller) {
+        mediaUploadAbortReasonRef.current[itemId] = 'cancel';
+        controller.abort();
+        delete mediaUploadControllersRef.current[itemId];
+      }
+
+      const successTimer = mediaUploadSuccessTimersRef.current[itemId];
+
+      if (successTimer) {
+        window.clearTimeout(successTimer);
+        delete mediaUploadSuccessTimersRef.current[itemId];
+      }
+
+      const removedItem = mediaUploadItemsRef.current.find((item) => item.id === itemId);
+      if (removedItem) {
+        activePlannerImportKeysRef.current.delete(removedItem.dedupeKey);
+      }
+      delete mediaUploadAbortReasonRef.current[itemId];
+      setMediaUploadQueue((current) => current.filter((item) => item.id !== itemId));
+    },
+    [setMediaUploadQueue]
+  );
+
+  const scheduleMediaUploadSuccessRemoval = useCallback(
+    (itemId: string) => {
+      const existingTimer = mediaUploadSuccessTimersRef.current[itemId];
+
+      if (existingTimer) {
+        window.clearTimeout(existingTimer);
+      }
+
+      mediaUploadSuccessTimersRef.current[itemId] = window.setTimeout(() => {
+        removeMediaUploadItem(itemId);
+      }, MEDIA_UPLOAD_SUCCESS_VISIBLE_MS);
+    },
+    [removeMediaUploadItem]
+  );
+
+  const cancelMediaUploadItem = useCallback(
+    (itemId: string) => {
+      const controller = mediaUploadControllersRef.current[itemId];
+
+      if (controller) {
+        mediaUploadAbortReasonRef.current[itemId] = 'cancel';
+        controller.abort();
+        return;
+      }
+
+      const queuedItem = mediaUploadItemsRef.current.find((item) => item.id === itemId);
+      if (queuedItem) {
+        activePlannerImportKeysRef.current.delete(queuedItem.dedupeKey);
+      }
+      updateMediaUploadItem(itemId, (item) => ({
+        ...item,
+        status: 'cancelled',
+        errorMessage: 'Upload cancelled.',
+      }));
+    },
+    [updateMediaUploadItem]
+  );
+
+  const processMediaUploadItem = useCallback(
+    async (item: SchedulerMediaUploadItem) => {
+      activePlannerImportKeysRef.current.add(item.dedupeKey);
+      updateMediaUploadItem(item.id, (current) => ({
+        ...current,
+        status: 'preparing',
+        loadedBytes: 0,
+        totalBytes: current.totalBytes || current.file.size,
+        percent: 0,
+        errorMessage: null,
+      }));
+
+      const controller = new AbortController();
+      mediaUploadControllersRef.current[item.id] = controller;
+      const timeoutId = window.setTimeout(() => {
+        mediaUploadAbortReasonRef.current[item.id] = 'timeout';
+        controller.abort();
+      }, MEDIA_OPERATION_TIMEOUT_MS);
+
+      try {
+        return await createPreparedPlannerMediaAsset({
+          sourceType: 'upload',
+          file: item.file,
+          fallbackFileName: item.file.name,
+          title: item.fileName,
+          signal: controller.signal,
+          metadata: {
+            uploadedFrom: 'scheduler-bulk',
+          },
+          onUploadProgress: (progress) => {
+            updateMediaUploadItem(item.id, (current) => ({
+              ...current,
+              status: 'uploading',
+              loadedBytes: progress.loadedBytes,
+              totalBytes: progress.totalBytes,
+              percent: progress.percent,
+            }));
+          },
+        });
+      } finally {
+        window.clearTimeout(timeoutId);
+        delete mediaUploadControllersRef.current[item.id];
+        activePlannerImportKeysRef.current.delete(item.dedupeKey);
+      }
+    },
+    [createPreparedPlannerMediaAsset, updateMediaUploadItem]
+  );
+
+  const persistUploadedFiles = async (selectedFiles: File[]) => {
+    const files = selectedFiles.slice(0, SCHEDULER_MEDIA_UPLOAD_MAX_FILES);
+
+    if (selectedFiles.length > files.length) {
+      setComposerError(
+        `Upload up to ${SCHEDULER_MEDIA_UPLOAD_MAX_FILES} media files at once.`
+      );
+    }
+
     if (!files.length) {
       return;
     }
 
-    setIsPreparingMedia(true);
-
-    try {
+    if (selectedFiles.length === files.length) {
       setComposerError(null);
-      setComposerNotice(null);
+    }
+    setComposerNotice(null);
 
-      const createdAssets: PlannerAsset[] = [];
-      let acceptedCarryoverAssetId: string | null = null;
-      let acceptedCarryoverCaption: string | null = null;
-      let acceptedCarryoverApplied = false;
-      const skippedDuplicateCount = { value: 0 };
+    const queuedItems: SchedulerMediaUploadItem[] = [];
+    let skippedDuplicateCount = 0;
 
-      for (const file of files) {
+    for (const selectedFile of files) {
+      try {
+        const normalizedMedia = normalizeSchedulerMediaFile(selectedFile);
+        const file = normalizedMedia.file;
         const dedupeKey = buildUploadFileDedupeKey(file);
+        const existingUpload = mediaUploadItemsRef.current.find(
+          (item) => item.dedupeKey === dedupeKey
+        );
 
-        if (
-          plannerAssetKeysRef.current.has(dedupeKey) ||
-          activePlannerImportKeysRef.current.has(dedupeKey)
-        ) {
-          skippedDuplicateCount.value += 1;
+        if (plannerAssetKeysRef.current.has(dedupeKey)) {
+          skippedDuplicateCount += 1;
           logSchedulerDebug('file upload skipped as duplicate', {
             dedupeKey,
             fileName: file.name,
@@ -2819,49 +3111,135 @@ export const SchedulerPage = () => {
           continue;
         }
 
-        activePlannerImportKeysRef.current.add(dedupeKey);
-        logSchedulerDebug('file upload started', {
+        if (
+          existingUpload &&
+          existingUpload.status !== 'error' &&
+          existingUpload.status !== 'cancelled'
+        ) {
+          skippedDuplicateCount += 1;
+          continue;
+        }
+
+        if (activePlannerImportKeysRef.current.has(dedupeKey) && !existingUpload) {
+          skippedDuplicateCount += 1;
+          continue;
+        }
+
+        if (existingUpload) {
+          updateMediaUploadItem(existingUpload.id, (item) => ({
+            ...item,
+            file,
+            fileName: file.name,
+            status: 'queued',
+            loadedBytes: 0,
+            totalBytes: file.size,
+            percent: 0,
+            errorMessage: null,
+          }));
+          const queuedItem =
+            mediaUploadItemsRef.current.find((item) => item.id === existingUpload.id) ??
+            existingUpload;
+          queuedItems.push({
+            ...queuedItem,
+            file,
+            fileName: file.name,
+            status: 'queued',
+            loadedBytes: 0,
+            totalBytes: file.size,
+            percent: 0,
+            errorMessage: null,
+          });
+          continue;
+        }
+
+        const queuedItem: SchedulerMediaUploadItem = {
+          id: createLocalPlannerId(),
+          dedupeKey,
+          file,
+          fileName: file.name,
+          status: 'queued',
+          loadedBytes: 0,
+          totalBytes: file.size,
+          percent: 0,
+          errorMessage: null,
+        };
+
+        setMediaUploadQueue((current) => [...current, queuedItem]);
+        queuedItems.push(queuedItem);
+        logSchedulerDebug('file upload queued', {
           dedupeKey,
           fileName: file.name,
           size: file.size,
           type: file.type,
         });
+      } catch (normalizationError) {
+        const itemId = createLocalPlannerId();
+        const message =
+          normalizationError instanceof Error
+            ? normalizationError.message
+            : 'Only JPG, PNG, WEBP, MP4, and MOV media are supported.';
 
-        const controller = new AbortController();
-        const timeoutId = window.setTimeout(
-          () => controller.abort(),
-          MEDIA_OPERATION_TIMEOUT_MS
-        );
-        let mediaAsset: MediaAsset;
+        setMediaUploadQueue((current) => [
+          ...current,
+          {
+            id: itemId,
+            dedupeKey: `invalid:${selectedFile.name}:${selectedFile.size}:${selectedFile.lastModified}:${itemId}`,
+            file: selectedFile,
+            fileName: selectedFile.name || 'Unsupported media',
+            status: 'error',
+            loadedBytes: 0,
+            totalBytes: selectedFile.size,
+            percent: 0,
+            errorMessage: message,
+          },
+        ]);
+      }
+    }
 
-        try {
-          mediaAsset = await createPreparedPlannerMediaAsset({
-            sourceType: 'upload',
-            file,
-            fallbackFileName: file.name,
-            title: file.name,
-            signal: controller.signal,
-            metadata: {
-              uploadedFrom: 'scheduler-bulk',
-            },
-          });
-        } finally {
-          window.clearTimeout(timeoutId);
-          activePlannerImportKeysRef.current.delete(dedupeKey);
-        }
+    if (!queuedItems.length) {
+      if (skippedDuplicateCount > 0) {
+        setComposerError('That media is already queued or in the batch.');
+      }
+      return;
+    }
 
+    setIsPreparingMedia(true);
+
+    const createdAssets: PlannerAsset[] = [];
+    let failedUploadCount = 0;
+    let acceptedCarryoverAssetId: string | null = null;
+    let acceptedCarryoverCaption: string | null = null;
+    let acceptedCarryoverApplied = false;
+
+    for (const queuedItem of queuedItems) {
+      const latestItem =
+        mediaUploadItemsRef.current.find((item) => item.id === queuedItem.id) ?? queuedItem;
+
+      if (latestItem.status === 'cancelled') {
+        continue;
+      }
+
+      try {
+        logSchedulerDebug('file upload started', {
+          dedupeKey: latestItem.dedupeKey,
+          fileName: latestItem.fileName,
+          size: latestItem.file.size,
+          type: latestItem.file.type,
+        });
+
+        const mediaAsset = await processMediaUploadItem(latestItem);
         logSchedulerDebug('file upload succeeded', {
-          dedupeKey,
+          dedupeKey: latestItem.dedupeKey,
           mediaAssetId: mediaAsset.id,
-          fileName: file.name,
+          fileName: latestItem.fileName,
         });
 
         const nextAsset = buildPlannerAssetFromMediaAsset({
           mediaAsset,
-          title: file.name,
+          title: latestItem.fileName,
           scheduledAt: defaultDateTime,
           defaultSocialAccountId: defaultPlannerAccountId,
-          dedupeKey,
+          dedupeKey: latestItem.dedupeKey,
         });
         const finalAsset =
           acceptedCarryoverApplied || !pendingAcceptedCaptionCarryover
@@ -2869,7 +3247,7 @@ export const SchedulerPage = () => {
             : applyAcceptedCarryoverToAsset(nextAsset);
         logSchedulerDebug('schedule row created', {
           mediaAssetId: mediaAsset.id,
-          dedupeKey,
+          dedupeKey: latestItem.dedupeKey,
           slotCount: finalAsset.slots.length,
           sourceType: 'upload',
         });
@@ -2886,51 +3264,90 @@ export const SchedulerPage = () => {
 
         createdAssets.push(finalAsset);
         setPlannerAssets((current) => [...current, finalAsset]);
-      }
-
-      clearSchedulerGeneratedMediaIntent();
-      setDismissedGeneratedMediaIntentId(null);
-      if (createdAssets.length) {
-        if (acceptedCarryoverApplied) {
-          setPendingAcceptedCaptionCarryover(null);
-          clearSchedulerAcceptedCaptionCarryover();
-          if (acceptedCarryoverAssetId && acceptedCarryoverCaption) {
-            setActiveRecommendationTyping({
-              assetId: acceptedCarryoverAssetId,
-              target: acceptedCarryoverCaption,
-            });
-          }
-          setComposerNotice(
-            createdAssets.length === 1
-              ? 'Accepted caption and media added to the planner.'
-              : 'Accepted caption and uploaded media added to the planner.'
-          );
-        } else {
-          setComposerNotice(
-            createdAssets.length === 1
-              ? `${createdAssets[0]?.filename || 'Media'} added to the batch.`
-              : `${createdAssets.length} media assets added to the batch.`
-          );
-        }
-        markPlannerDirty();
-      } else if (skippedDuplicateCount.value > 0) {
+        updateMediaUploadItem(latestItem.id, (item) => ({
+          ...item,
+          status: 'success',
+          loadedBytes: item.totalBytes || item.loadedBytes || item.file.size,
+          totalBytes: item.totalBytes || item.loadedBytes || item.file.size,
+          percent: 100,
+          errorMessage: null,
+        }));
+        scheduleMediaUploadSuccessRemoval(latestItem.id);
+      } catch (uploadError) {
+        failedUploadCount += 1;
         setComposerNotice(null);
-        setComposerError('That media is already in the batch.');
+        const uploadMessage = uploadError instanceof Error ? uploadError.message : '';
+        const abortReason = mediaUploadAbortReasonRef.current[latestItem.id];
+        const isCancelled = abortReason === 'cancel';
+        const isTimeout =
+          abortReason === 'timeout' ||
+          (uploadError instanceof DOMException && uploadError.name === 'AbortError') ||
+          /request cancelled|timed out/i.test(uploadMessage);
+
+        updateMediaUploadItem(latestItem.id, (item) => ({
+          ...item,
+          status: isCancelled ? 'cancelled' : 'error',
+          errorMessage: isCancelled
+            ? 'Upload cancelled.'
+            : isTimeout
+              ? 'Media upload timed out. Check the server connection and try again.'
+              : uploadError instanceof Error
+                ? uploadError.message
+                : 'Failed to upload this media file.',
+        }));
+        delete mediaUploadAbortReasonRef.current[latestItem.id];
       }
-    } catch (uploadError) {
-      setComposerNotice(null);
-      const uploadMessage = uploadError instanceof Error ? uploadError.message : '';
-      setComposerError(
-        (uploadError instanceof DOMException && uploadError.name === 'AbortError') ||
-          /request cancelled|timed out/i.test(uploadMessage)
-          ? 'Media upload timed out. Check the server connection and try again.'
-          : uploadError instanceof Error
-            ? uploadError.message
-          : 'Failed to upload one or more media files.'
-      );
-    } finally {
-      setIsPreparingMedia(false);
     }
+
+    clearSchedulerGeneratedMediaIntent();
+    setDismissedGeneratedMediaIntentId(null);
+    if (createdAssets.length) {
+      setComposerError(null);
+      if (acceptedCarryoverApplied) {
+        setPendingAcceptedCaptionCarryover(null);
+        clearSchedulerAcceptedCaptionCarryover();
+        if (acceptedCarryoverAssetId && acceptedCarryoverCaption) {
+          setActiveRecommendationTyping({
+            assetId: acceptedCarryoverAssetId,
+            target: acceptedCarryoverCaption,
+          });
+        }
+        setComposerNotice(
+          createdAssets.length === 1
+            ? 'Accepted caption and media added to the planner.'
+            : 'Accepted caption and uploaded media added to the planner.'
+        );
+      } else {
+        setComposerNotice(
+          createdAssets.length === 1
+            ? `${createdAssets[0]?.filename || 'Media'} added to the batch.`
+            : `${createdAssets.length} media assets added to the batch.`
+        );
+      }
+      markPlannerDirty();
+    } else if (failedUploadCount > 0) {
+      setComposerNotice(null);
+      setComposerError(
+        failedUploadCount === 1
+          ? 'One media file needs attention.'
+          : `${failedUploadCount} media files need attention.`
+      );
+    } else if (skippedDuplicateCount > 0) {
+      setComposerNotice(null);
+      setComposerError('That media is already queued or in the batch.');
+    }
+
+    setIsPreparingMedia(false);
+  };
+
+  const retryMediaUploadItem = async (itemId: string) => {
+    const item = mediaUploadItemsRef.current.find((entry) => entry.id === itemId);
+
+    if (!item || (item.status !== 'error' && item.status !== 'cancelled')) {
+      return;
+    }
+
+    await persistUploadedFiles([item.file]);
   };
 
   const handleMediaFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -3542,7 +3959,11 @@ export const SchedulerPage = () => {
               className={`field field--full generator-upload generator-upload--compact scheduler-upload ${
                 isMediaDragActive ? 'scheduler-upload--active' : ''
               }`}
-              aria-busy={scheduler.isUploadingMedia || isPreparingMedia}
+              aria-busy={
+                scheduler.isUploadingMedia ||
+                isPreparingMedia ||
+                mediaUploadSummary.activeCount > 0
+              }
               onDragOver={(event) => {
                 event.preventDefault();
                 setIsMediaDragActive(true);
@@ -3554,7 +3975,9 @@ export const SchedulerPage = () => {
             >
               <div className="scheduler-upload__label-row">
                 <span className="field__label">Upload media</span>
-                {scheduler.isUploadingMedia || isPreparingMedia ? (
+                {scheduler.isUploadingMedia ||
+                isPreparingMedia ||
+                mediaUploadSummary.activeCount > 0 ? (
                   <div
                     className="scheduler-upload__loader"
                     role="status"
@@ -3576,7 +3999,7 @@ export const SchedulerPage = () => {
                 <ImagePlus size={18} />
                 <div>
                   <strong>
-                    {scheduler.isUploadingMedia
+                    {mediaUploadSummary.activeCount > 0 || scheduler.isUploadingMedia
                       ? 'Uploading media...'
                       : isPreparingMedia
                         ? 'Preparing media...'
@@ -3588,13 +4011,127 @@ export const SchedulerPage = () => {
               <input
                 type="file"
                 multiple
-                accept="image/*,video/*"
+                accept="image/jpeg,image/png,image/webp,video/mp4,video/quicktime,.jpg,.jpeg,.png,.webp,.mp4,.mov"
                 disabled={scheduler.isBusy || isPreparingMedia}
                 onChange={(event) => {
                   void handleMediaFileChange(event);
                 }}
               />
             </label>
+
+            {mediaUploadItems.length ? (
+              <div className="scheduler-upload-progress" aria-live="polite">
+                <div className="scheduler-upload-progress__header">
+                  <div>
+                    <strong>
+                      {mediaUploadSummary.activeCount > 0
+                        ? 'Uploading media'
+                        : mediaUploadSummary.errorCount > 0 ||
+                            mediaUploadSummary.cancelledCount > 0
+                          ? 'Review uploads'
+                          : 'Media added'}
+                    </strong>
+                    <span>
+                      {mediaUploadSummary.totalCount} file
+                      {mediaUploadSummary.totalCount === 1 ? '' : 's'} ·{' '}
+                      {formatMediaUploadBytes(mediaUploadSummary.loadedBytes)} /{' '}
+                      {formatMediaUploadBytes(mediaUploadSummary.totalBytes)}
+                    </span>
+                  </div>
+                  <span className="scheduler-upload-progress__percent">
+                    {mediaUploadSummary.percent}%
+                  </span>
+                </div>
+                <div
+                  className="scheduler-upload-progress__bar"
+                  role="progressbar"
+                  aria-label="Media upload progress"
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-valuenow={mediaUploadSummary.percent}
+                >
+                  <span style={{ width: `${mediaUploadSummary.percent}%` }} />
+                </div>
+                <div className="scheduler-upload-progress__list">
+                  {mediaUploadItems.map((item) => {
+                    const itemTotalBytes = item.totalBytes || item.file.size;
+                    const itemLoadedBytes =
+                      item.status === 'success'
+                        ? itemTotalBytes
+                        : Math.min(item.loadedBytes, itemTotalBytes);
+                    const canCancel =
+                      item.status === 'queued' ||
+                      item.status === 'preparing' ||
+                      item.status === 'uploading';
+                    const canRetry =
+                      item.status === 'error' || item.status === 'cancelled';
+
+                    return (
+                      <div
+                        key={item.id}
+                        className={`scheduler-upload-progress__item scheduler-upload-progress__item--${item.status}`}
+                      >
+                        <div className="scheduler-upload-progress__item-main">
+                          <div className="scheduler-upload-progress__item-title">
+                            <strong>{item.fileName || 'Media file'}</strong>
+                            <span>{getMediaUploadStatusLabel(item.status)}</span>
+                          </div>
+                          <small>
+                            {formatMediaUploadBytes(itemLoadedBytes)} /{' '}
+                            {formatMediaUploadBytes(itemTotalBytes)}
+                            {item.errorMessage ? ` · ${item.errorMessage}` : ''}
+                          </small>
+                        </div>
+                        <div className="scheduler-upload-progress__item-actions">
+                          {item.status === 'success' ? (
+                            <CheckCircle2 size={16} aria-label="Upload added" />
+                          ) : null}
+                          {canCancel ? (
+                            <button
+                              type="button"
+                              className="generated-image-card__action scheduler-upload-progress__action"
+                              onClick={() => {
+                                cancelMediaUploadItem(item.id);
+                              }}
+                              aria-label={`Cancel upload for ${item.fileName}`}
+                              title="Cancel upload"
+                            >
+                              <X size={15} />
+                            </button>
+                          ) : null}
+                          {canRetry ? (
+                            <>
+                              <button
+                                type="button"
+                                className="generated-image-card__action scheduler-upload-progress__action"
+                                onClick={() => {
+                                  void retryMediaUploadItem(item.id);
+                                }}
+                                aria-label={`Retry upload for ${item.fileName}`}
+                                title="Retry upload"
+                              >
+                                <RefreshCw size={15} />
+                              </button>
+                              <button
+                                type="button"
+                                className="generated-image-card__action scheduler-upload-progress__action"
+                                onClick={() => {
+                                  removeMediaUploadItem(item.id);
+                                }}
+                                aria-label={`Remove upload for ${item.fileName}`}
+                                title="Remove upload"
+                              >
+                                <Trash2 size={15} />
+                              </button>
+                            </>
+                          ) : null}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : null}
 
             <div className="scheduler-url-import">
               <div className="scheduler-url-import__header">

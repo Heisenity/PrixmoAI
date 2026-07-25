@@ -159,8 +159,8 @@ const toScheduledItem = (row: ScheduledItemRow): ScheduledItem => ({
         isPrimaryForPlatform: Boolean(
           row.social_accounts.is_primary_for_platform
         ),
-        accessToken: row.social_accounts.access_token,
-        refreshToken: row.social_accounts.refresh_token,
+        accessToken: null,
+        refreshToken: null,
         tokenExpiresAt: row.social_accounts.token_expires_at,
         metadata: row.social_accounts.metadata ?? {},
         connectedAt: row.social_accounts.connected_at,
@@ -178,6 +178,25 @@ export const toScheduledItemLog = (row: ScheduledItemLogRow): ScheduledItemLog =
   payloadJson: row.payload_json,
   createdAt: row.created_at,
 });
+
+export const getMediaAssetByStorageUrl = async (
+  client: AppSupabaseClient,
+  userId: string,
+  storageUrl: string
+): Promise<MediaAsset | null> => {
+  const { data, error } = await client
+    .from('media_assets')
+    .select('*')
+    .eq('user_id', userId)
+    .eq('storage_url', storageUrl)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(error.message || 'Failed to load media asset');
+  }
+
+  return data ? toMediaAsset(data as MediaAssetRow) : null;
+};
 
 export const createMediaAsset = async (
   client: AppSupabaseClient,

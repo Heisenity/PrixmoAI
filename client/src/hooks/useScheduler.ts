@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { apiRequest } from '../lib/axios';
+import { ApiRequestError, apiRequest, toReadableApiMessage } from '../lib/axios';
 import {
   isBrowserCacheFresh,
   readBrowserCache,
   writeBrowserCache,
 } from '../lib/browserCache';
+import { API_BASE_URL } from '../lib/constants';
+import { normalizeSchedulerMediaFile } from '../lib/instagramMedia';
+import { getSuperAdminTestingRequestHeaders } from '../lib/superAdmin';
 import {
   emitUpgradePrompt,
   getUpgradePromptFromMessage,
@@ -16,6 +19,8 @@ import type {
   CreateScheduledItemInput,
   CreateScheduledPostInput,
   CreateSocialAccountInput,
+  ApiEnvelope,
+  ApiErrorDetail,
   MediaAsset,
   MetaOAuthPopupResult,
   PendingMetaFacebookPageSelection,
@@ -36,6 +41,13 @@ type SchedulerUiStatus = 'ready' | 'syncing' | 'error';
 type SchedulerMediaRequestOptions = {
   surfaceGlobalError?: boolean;
   signal?: AbortSignal;
+  onUploadProgress?: (progress: SchedulerUploadProgress) => void;
+};
+
+export type SchedulerUploadProgress = {
+  loadedBytes: number;
+  totalBytes: number;
+  percent: number;
 };
 
 const isUpcomingScheduledPost = (scheduledFor: string, status: ScheduledPostStatus) => {
@@ -84,6 +96,159 @@ const readFileAsDataUrl = (file: File, signal?: AbortSignal): Promise<string> =>
 
     signal?.addEventListener('abort', abortRead, { once: true });
     reader.readAsDataURL(file);
+  });
+
+const getJsonByteLength = (value: string) => new TextEncoder().encode(value).byteLength;
+
+const calculateUploadPercent = (loadedBytes: number, totalBytes: number) =>
+  totalBytes > 0
+    ? Math.max(0, Math.min(100, Math.round((loadedBytes / totalBytes) * 100)))
+    : 0;
+
+const uploadSourceImageWithProgress = ({
+  file,
+  token,
+  signal,
+  onUploadProgress,
+}: {
+  file: File;
+  token: string;
+  signal?: AbortSignal;
+  onUploadProgress?: (progress: SchedulerUploadProgress) => void;
+}) =>
+  new Promise<UploadedSourceImage>((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new Error('Request cancelled by user.'));
+      return;
+    }
+
+    void readFileAsDataUrl(file, signal)
+      .then((dataUrl) => {
+        if (signal?.aborted) {
+          reject(new Error('Request cancelled by user.'));
+          return;
+        }
+
+        const requestBody = JSON.stringify({
+          fileName: file.name,
+          contentType: file.type,
+          dataUrl,
+        });
+        const requestBodyBytes = getJsonByteLength(requestBody);
+        const xhr = new XMLHttpRequest();
+        const abortRequest = () => xhr.abort();
+        const cleanup = () => {
+          signal?.removeEventListener('abort', abortRequest);
+        };
+
+        onUploadProgress?.({
+          loadedBytes: 0,
+          totalBytes: requestBodyBytes,
+          percent: 0,
+        });
+
+        xhr.open('POST', `${API_BASE_URL}/api/images/upload-source`);
+        xhr.setRequestHeader('Content-Type', 'application/json');
+        xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+        Object.entries(getSuperAdminTestingRequestHeaders()).forEach(([key, value]) => {
+          xhr.setRequestHeader(key, value);
+        });
+
+        xhr.upload.onprogress = (event) => {
+          const totalBytes = event.lengthComputable ? event.total : requestBodyBytes;
+          const loadedBytes = Math.min(event.loaded, totalBytes);
+
+          onUploadProgress?.({
+            loadedBytes,
+            totalBytes,
+            percent: calculateUploadPercent(loadedBytes, totalBytes),
+          });
+        };
+
+        xhr.onload = () => {
+          cleanup();
+          const rawPayload = xhr.responseText || '';
+          let payload: ApiEnvelope<UploadedSourceImage> | null = null;
+
+          if (rawPayload.trim()) {
+            try {
+              payload = JSON.parse(rawPayload) as ApiEnvelope<UploadedSourceImage>;
+            } catch {
+              payload = null;
+            }
+          }
+
+          const responseMessage =
+            toReadableApiMessage(payload?.message) ||
+            toReadableApiMessage(
+              payload?.errors?.find((detail: ApiErrorDetail) => detail.message)?.message
+            ) ||
+            (rawPayload.trim() && !rawPayload.trim().startsWith('<')
+              ? toReadableApiMessage(rawPayload.trim())
+              : '');
+
+          if (xhr.status < 200 || xhr.status >= 300) {
+            reject(
+              new ApiRequestError(
+                responseMessage ||
+                  `Request failed with status ${xhr.status}. Please try again.`,
+                {
+                  status: xhr.status,
+                  data: payload?.data,
+                  details: payload?.errors,
+                }
+              )
+            );
+            return;
+          }
+
+          if (!payload) {
+            reject(new Error('The server returned an unreadable upload response.'));
+            return;
+          }
+
+          if (payload.status === 'fail' || payload.status === 'error') {
+            reject(
+              new ApiRequestError(responseMessage || 'Unable to complete the request.', {
+                status: xhr.status,
+                data: payload.data,
+                details: payload.errors,
+              })
+            );
+            return;
+          }
+
+          onUploadProgress?.({
+            loadedBytes: requestBodyBytes,
+            totalBytes: requestBodyBytes,
+            percent: 100,
+          });
+          if (!payload.data) {
+            reject(new Error('The server did not return uploaded media details.'));
+            return;
+          }
+
+          resolve(payload.data);
+        };
+
+        xhr.onerror = () => {
+          cleanup();
+          reject(
+            new Error(
+              `Unable to reach the PrixmoAI server at ${API_BASE_URL}. Make sure the API is running and try again.`
+            )
+          );
+        };
+
+        xhr.onabort = () => {
+          cleanup();
+          reject(new Error('Request cancelled by user.'));
+        };
+
+        signal?.addEventListener('abort', abortRequest, { once: true });
+        xhr.send(requestBody);
+      })
+      .catch(reject);
   });
 
 type SchedulerCache = {
@@ -849,23 +1014,15 @@ export const useScheduler = (options: UseSchedulerOptions = {}) => {
       throw new Error('Sign in again to upload post media.');
     }
 
-    if (
-      ![
-        'image/jpeg',
-        'image/png',
-        'image/webp',
-        'video/mp4',
-        'video/quicktime',
-      ].includes(file.type)
-    ) {
-      throw new Error('Only JPG, PNG, WEBP, MP4, and MOV media are supported.');
-    }
+    const normalizedMedia = normalizeSchedulerMediaFile(file);
+    const uploadFile = normalizedMedia.file;
 
-    const maxBytes = file.type.startsWith('video/') ? 50 * 1024 * 1024 : 6 * 1024 * 1024;
+    const maxBytes =
+      normalizedMedia.mediaType === 'video' ? 50 * 1024 * 1024 : 6 * 1024 * 1024;
 
-    if (file.size > maxBytes) {
+    if (uploadFile.size > maxBytes) {
       throw new Error(
-        file.type.startsWith('video/')
+        normalizedMedia.mediaType === 'video'
           ? 'Uploaded video must be 50MB or smaller.'
           : 'Uploaded image must be 6MB or smaller.'
       );
@@ -875,16 +1032,11 @@ export const useScheduler = (options: UseSchedulerOptions = {}) => {
     setIsUploadingMedia(true);
 
     try {
-      const dataUrl = await readFileAsDataUrl(file, options?.signal);
-      const uploaded = await apiRequest<UploadedSourceImage>('/api/images/upload-source', {
-        method: 'POST',
+      const uploaded = await uploadSourceImageWithProgress({
+        file: uploadFile,
         token,
         signal: options?.signal,
-        body: {
-          fileName: file.name,
-          contentType: file.type,
-          dataUrl,
-        },
+        onUploadProgress: options?.onUploadProgress,
       });
 
       return uploaded;

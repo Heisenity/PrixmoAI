@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.syncScheduledItemStatusByScheduledPostId = exports.appendScheduledItemLog = exports.updateScheduledItem = exports.getScheduledItemsByUser = exports.getScheduleBatchesByUser = exports.getScheduleBatchDetail = exports.getScheduledItemsByBatch = exports.getScheduledItemById = exports.createScheduledItem = exports.deleteScheduleBatch = exports.getScheduleBatchById = exports.updateScheduleBatch = exports.createScheduleBatch = exports.getMediaAssetById = exports.createMediaAsset = exports.toScheduledItemLog = void 0;
+exports.syncScheduledItemStatusByScheduledPostId = exports.appendScheduledItemLog = exports.updateScheduledItem = exports.getScheduledItemsByUser = exports.getScheduleBatchesByUser = exports.getScheduleBatchDetail = exports.getScheduledItemsByBatch = exports.getScheduledItemById = exports.createScheduledItem = exports.deleteScheduleBatch = exports.getScheduleBatchById = exports.updateScheduleBatch = exports.createScheduleBatch = exports.getMediaAssetById = exports.createMediaAsset = exports.getMediaAssetByStorageUrl = exports.toScheduledItemLog = void 0;
 const crypto_1 = require("crypto");
 const toMediaAsset = (row) => ({
     id: row.id,
@@ -62,8 +62,8 @@ const toScheduledItem = (row) => ({
             verificationStatus: row.social_accounts.verification_status,
             verifiedAt: row.social_accounts.verified_at,
             isPrimaryForPlatform: Boolean(row.social_accounts.is_primary_for_platform),
-            accessToken: row.social_accounts.access_token,
-            refreshToken: row.social_accounts.refresh_token,
+            accessToken: null,
+            refreshToken: null,
             tokenExpiresAt: row.social_accounts.token_expires_at,
             metadata: row.social_accounts.metadata ?? {},
             connectedAt: row.social_accounts.connected_at,
@@ -81,6 +81,19 @@ const toScheduledItemLog = (row) => ({
     createdAt: row.created_at,
 });
 exports.toScheduledItemLog = toScheduledItemLog;
+const getMediaAssetByStorageUrl = async (client, userId, storageUrl) => {
+    const { data, error } = await client
+        .from('media_assets')
+        .select('*')
+        .eq('user_id', userId)
+        .eq('storage_url', storageUrl)
+        .maybeSingle();
+    if (error) {
+        throw new Error(error.message || 'Failed to load media asset');
+    }
+    return data ? toMediaAsset(data) : null;
+};
+exports.getMediaAssetByStorageUrl = getMediaAssetByStorageUrl;
 const createMediaAsset = async (client, userId, input) => {
     const { data, error } = await client
         .from('media_assets')
