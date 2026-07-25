@@ -71,7 +71,9 @@ const getRequestPublicOrigin = (req) => {
 };
 const buildRequestCallbackUri = (req) => new URL('/api/scheduler/oauth/meta/callback', getRequestPublicOrigin(req) || constants_1.SERVER_PUBLIC_URL)
     .toString();
-const getRequestClientOrigin = (req) => readUrlOrigin(req.header('origin') ?? null) || new URL(constants_1.CLIENT_APP_URL).origin;
+const getRequestClientOrigin = (req) => readUrlOrigin(req.header('origin') ?? null) ||
+    getRequestPublicOrigin(req) ||
+    new URL(constants_1.CLIENT_APP_URL).origin;
 const coerceProfileValue = (value) => {
     const normalized = value?.trim();
     return normalized ? normalized : null;

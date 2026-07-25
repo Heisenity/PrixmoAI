@@ -766,6 +766,12 @@ const readPlannerAcceptedCaptionAttribution = (
   };
 };
 
+const isRecoverableMetaSelectionMessage = (message?: string | null) =>
+  /selection|expired|not found|no longer available|start again/i.test(message ?? '');
+
+const META_SELECTION_RETRY_MESSAGE =
+  'Start the Facebook connection again and pick the Pages to connect.';
+
 export const SchedulerPage = () => {
   const location = useLocation();
   const { user } = useAuth();
@@ -875,7 +881,14 @@ export const SchedulerPage = () => {
     }
 
     if (metaStatus === 'error') {
-      setOauthError(message || 'Meta verification did not finish.');
+      const nextMessage = message || 'Meta verification did not finish.';
+      if (isRecoverableMetaSelectionMessage(nextMessage)) {
+        setOauthError(null);
+        setOauthNotice(META_SELECTION_RETRY_MESSAGE);
+        return;
+      }
+
+      setOauthError(nextMessage);
       setOauthNotice(null);
     } else {
       setOauthError(null);
@@ -2051,11 +2064,11 @@ export const SchedulerPage = () => {
           ? selectionError.message
           : 'Facebook returned pages, but PrixmoAI could not load them.';
 
-      if (/selection|expired|not found|no longer available|start again/i.test(message)) {
+      if (isRecoverableMetaSelectionMessage(message)) {
         pushSchedulerToast({
           type: 'info',
           title: 'Facebook Pages expired',
-          message: 'Start the Facebook connection again and pick the Pages to connect.',
+          message: META_SELECTION_RETRY_MESSAGE,
         });
       } else {
         setOauthError(message);
@@ -2076,7 +2089,14 @@ export const SchedulerPage = () => {
     }
 
     if (result.status === 'error') {
-      setOauthError(result.message || 'Meta verification did not finish.');
+      const nextMessage = result.message || 'Meta verification did not finish.';
+      if (isRecoverableMetaSelectionMessage(nextMessage)) {
+        setOauthError(null);
+        setOauthNotice(META_SELECTION_RETRY_MESSAGE);
+        return;
+      }
+
+      setOauthError(nextMessage);
       setOauthNotice(null);
       return;
     }
@@ -3125,11 +3145,19 @@ export const SchedulerPage = () => {
       setPendingFacebookSelection(null);
       setSelectedPendingFacebookPageIds([]);
     } catch (error) {
-      setOauthError(
+      const message =
         error instanceof Error
           ? error.message
-          : 'Facebook Pages could not be connected. Please try again.'
-      );
+          : 'Facebook Pages could not be connected. Please try again.';
+
+      if (isRecoverableMetaSelectionMessage(message)) {
+        setPendingFacebookSelection(null);
+        setSelectedPendingFacebookPageIds([]);
+        setOauthError(null);
+        setOauthNotice(META_SELECTION_RETRY_MESSAGE);
+      } else {
+        setOauthError(message);
+      }
     } finally {
       setIsConnectingFacebookPages(false);
     }

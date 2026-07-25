@@ -61,6 +61,9 @@ const supabaseOrigin = (() => {
 })();
 // 1. Security Headers
 app.use((0, helmet_1.default)({
+    crossOriginOpenerPolicy: {
+        policy: 'same-origin-allow-popups',
+    },
     contentSecurityPolicy: {
         directives: {
             connectSrc: [

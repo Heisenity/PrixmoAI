@@ -226,8 +226,10 @@ const buildRequestCallbackUri = (req: Pick<Request, 'header' | 'protocol'>) =>
   new URL('/api/scheduler/oauth/meta/callback', getRequestPublicOrigin(req) || SERVER_PUBLIC_URL)
     .toString();
 
-const getRequestClientOrigin = (req: Pick<Request, 'header'>) =>
-  readUrlOrigin(req.header('origin') ?? null) || new URL(CLIENT_APP_URL).origin;
+const getRequestClientOrigin = (req: Pick<Request, 'header' | 'protocol'>) =>
+  readUrlOrigin(req.header('origin') ?? null) ||
+  getRequestPublicOrigin(req) ||
+  new URL(CLIENT_APP_URL).origin;
 
 const coerceProfileValue = (value?: string | null) => {
   const normalized = value?.trim();
