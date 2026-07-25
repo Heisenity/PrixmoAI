@@ -29,7 +29,7 @@ const getR2Config = (bucketName = constants_1.IMAGE_BUCKETS.generated) => {
 const isR2GeneratedStorageConfigured = () => Boolean(getR2Config());
 exports.isR2GeneratedStorageConfigured = isR2GeneratedStorageConfigured;
 const isManagedR2SourceMediaUrl = (userId, value) => {
-    const config = getR2Config(constants_1.IMAGE_BUCKETS.originals);
+    const config = getR2Config(constants_1.R2_SOURCE_MEDIA_BUCKET);
     if (!config) {
         return false;
     }
@@ -272,14 +272,14 @@ const storeGeneratedVideoInR2 = async (input) => {
 };
 exports.storeGeneratedVideoInR2 = storeGeneratedVideoInR2;
 const storeSourceMediaInR2 = async (input) => {
-    if (!getR2Config(constants_1.IMAGE_BUCKETS.originals)) {
+    if (!getR2Config(constants_1.R2_SOURCE_MEDIA_BUCKET)) {
         return null;
     }
     return uploadBufferToR2('source', input.userId, input.fileName, input.fileBuffer, input.contentType, {
         user_id: input.userId,
         file_name: input.fileName,
         asset_kind: 'source',
-    }, input.signal, constants_1.IMAGE_BUCKETS.originals);
+    }, input.signal, constants_1.R2_SOURCE_MEDIA_BUCKET);
 };
 exports.storeSourceMediaInR2 = storeSourceMediaInR2;
 const storeArchivePayloadInR2 = async (input) => {

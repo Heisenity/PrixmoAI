@@ -406,6 +406,7 @@ const uploadSourceImageBuffer = async (
 
   const fileExtension = extensionForMimeType(contentType);
   const normalizedName = sanitizeFileName(path.basename(input.fileName));
+  let r2UploadError: Error | null = null;
 
   try {
     const storedSourceMedia = await storeSourceMediaInR2({
@@ -424,7 +425,9 @@ const uploadSourceImageBuffer = async (
         contentType,
       };
     }
-  } catch {}
+  } catch (error) {
+    r2UploadError = error instanceof Error ? error : new Error('Failed to upload source media to R2');
+  }
 
   await ensureSourceImageBucket();
 
@@ -440,6 +443,10 @@ const uploadSourceImageBuffer = async (
     });
 
   if (uploadError) {
+    if (r2UploadError && /maximum allowed size/i.test(uploadError.message || '')) {
+      throw new Error(r2UploadError.message);
+    }
+
     throw new Error(uploadError.message || 'Failed to upload source media to storage');
   }
 

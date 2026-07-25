@@ -427,6 +427,11 @@ export const IMAGE_BUCKETS = {
   originals: process.env.R2_ORIGINALS_BUCKET || 'product-originals',
   generated: process.env.R2_GENERATED_BUCKET || 'generated-images',
 } as const;
+export const R2_SOURCE_MEDIA_BUCKET =
+  process.env.R2_SOURCE_MEDIA_BUCKET ||
+  process.env.R2_ORIGINALS_BUCKET ||
+  process.env.R2_GENERATED_BUCKET ||
+  'prixmoaibucketforgeneratedimages';
 
 export const R2_ACCOUNT_ID = process.env.R2_ACCOUNT_ID || '';
 export const R2_ACCESS_KEY_ID = process.env.R2_ACCESS_KEY_ID || '';
@@ -440,7 +445,7 @@ export const R2_S3_ENDPOINT = trimTrailingSlash(
 export const R2_PUBLIC_BASE_URL = trimTrailingSlash(
   process.env.R2_PUBLIC_BASE_URL ||
     process.env.R2_PUBLIC_DEV_URL ||
-    ''
+    'https://pub-38b29522dfc2495e9f9cb8f4a101d6a8.r2.dev'
 );
 
 export const SUPABASE_SOURCE_IMAGE_BUCKET =

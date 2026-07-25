@@ -300,6 +300,7 @@ const uploadSourceImageBuffer = async (userId, input) => {
     }
     const fileExtension = extensionForMimeType(contentType);
     const normalizedName = sanitizeFileName(path_1.default.basename(input.fileName));
+    let r2UploadError = null;
     try {
         const storedSourceMedia = await (0, r2Storage_service_1.storeSourceMediaInR2)({
             userId,
@@ -317,7 +318,9 @@ const uploadSourceImageBuffer = async (userId, input) => {
             };
         }
     }
-    catch { }
+    catch (error) {
+        r2UploadError = error instanceof Error ? error : new Error('Failed to upload source media to R2');
+    }
     await ensureSourceImageBucket();
     const supabaseAdmin = (0, supabase_1.requireSupabaseAdmin)();
     const storagePath = `${userId}/source-${Date.now()}-${normalizedName}.${fileExtension}`;
@@ -329,6 +332,9 @@ const uploadSourceImageBuffer = async (userId, input) => {
         cacheControl: '3600',
     });
     if (uploadError) {
+        if (r2UploadError && /maximum allowed size/i.test(uploadError.message || '')) {
+            throw new Error(r2UploadError.message);
+        }
         throw new Error(uploadError.message || 'Failed to upload source media to storage');
     }
     const { data: { publicUrl }, } = supabaseAdmin.storage

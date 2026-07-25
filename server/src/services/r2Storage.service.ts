@@ -7,6 +7,7 @@ import {
   R2_PUBLIC_BASE_URL,
   R2_S3_ENDPOINT,
   R2_SECRET_ACCESS_KEY,
+  R2_SOURCE_MEDIA_BUCKET,
 } from '../config/constants';
 import {
   isAbortError,
@@ -104,7 +105,7 @@ const getR2Config = (bucketName = IMAGE_BUCKETS.generated): R2Config | null => {
 export const isR2GeneratedStorageConfigured = () => Boolean(getR2Config());
 
 export const isManagedR2SourceMediaUrl = (userId: string, value: string) => {
-  const config = getR2Config(IMAGE_BUCKETS.originals);
+  const config = getR2Config(R2_SOURCE_MEDIA_BUCKET);
 
   if (!config) {
     return false;
@@ -465,7 +466,7 @@ export const storeGeneratedVideoInR2 = async (
 export const storeSourceMediaInR2 = async (
   input: StoreSourceMediaInput
 ): Promise<StoredGeneratedAsset | null> => {
-  if (!getR2Config(IMAGE_BUCKETS.originals)) {
+  if (!getR2Config(R2_SOURCE_MEDIA_BUCKET)) {
     return null;
   }
 
@@ -481,7 +482,7 @@ export const storeSourceMediaInR2 = async (
       asset_kind: 'source',
     },
     input.signal,
-    IMAGE_BUCKETS.originals
+    R2_SOURCE_MEDIA_BUCKET
   );
 };
 
