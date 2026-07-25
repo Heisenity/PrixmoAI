@@ -5,6 +5,7 @@ import { requireSupabaseAdmin } from '../db/supabase';
 
 const MAX_SOURCE_IMAGE_BYTES = 20 * 1024 * 1024;
 const MAX_SOURCE_VIDEO_BYTES = 500 * 1024 * 1024;
+const SOURCE_BUCKET_FILE_SIZE_LIMIT = '500MB';
 const ALLOWED_SOURCE_IMAGE_TYPES = new Set([
   'image/jpeg',
   'image/png',
@@ -473,7 +474,7 @@ const ensureSourceImageBucket = async () => {
       {
         public: true,
         allowedMimeTypes: Array.from(ALLOWED_SOURCE_MEDIA_TYPES),
-        fileSizeLimit: MAX_SOURCE_VIDEO_BYTES,
+        fileSizeLimit: SOURCE_BUCKET_FILE_SIZE_LIMIT,
       }
     );
 
@@ -489,7 +490,7 @@ const ensureSourceImageBucket = async () => {
     {
       public: true,
       allowedMimeTypes: Array.from(ALLOWED_SOURCE_MEDIA_TYPES),
-      fileSizeLimit: MAX_SOURCE_VIDEO_BYTES,
+      fileSizeLimit: SOURCE_BUCKET_FILE_SIZE_LIMIT,
     }
   );
 

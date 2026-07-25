@@ -9,6 +9,7 @@ const constants_1 = require("../config/constants");
 const supabase_1 = require("../db/supabase");
 const MAX_SOURCE_IMAGE_BYTES = 20 * 1024 * 1024;
 const MAX_SOURCE_VIDEO_BYTES = 500 * 1024 * 1024;
+const SOURCE_BUCKET_FILE_SIZE_LIMIT = '500MB';
 const ALLOWED_SOURCE_IMAGE_TYPES = new Set([
     'image/jpeg',
     'image/png',
@@ -349,7 +350,7 @@ const ensureSourceImageBucket = async () => {
         const { error: updateError } = await supabaseAdmin.storage.updateBucket(constants_1.SUPABASE_SOURCE_IMAGE_BUCKET, {
             public: true,
             allowedMimeTypes: Array.from(ALLOWED_SOURCE_MEDIA_TYPES),
-            fileSizeLimit: MAX_SOURCE_VIDEO_BYTES,
+            fileSizeLimit: SOURCE_BUCKET_FILE_SIZE_LIMIT,
         });
         if (updateError) {
             throw new Error(updateError.message || 'Failed to update source media storage bucket');
@@ -359,7 +360,7 @@ const ensureSourceImageBucket = async () => {
     const { error: createError } = await supabaseAdmin.storage.createBucket(constants_1.SUPABASE_SOURCE_IMAGE_BUCKET, {
         public: true,
         allowedMimeTypes: Array.from(ALLOWED_SOURCE_MEDIA_TYPES),
-        fileSizeLimit: MAX_SOURCE_VIDEO_BYTES,
+        fileSizeLimit: SOURCE_BUCKET_FILE_SIZE_LIMIT,
     });
     if (createError && !/already exists/i.test(createError.message || '')) {
         throw new Error(createError.message || 'Failed to create source media storage bucket');
