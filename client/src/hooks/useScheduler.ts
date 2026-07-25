@@ -1018,12 +1018,12 @@ export const useScheduler = (options: UseSchedulerOptions = {}) => {
     const uploadFile = normalizedMedia.file;
 
     const maxBytes =
-      normalizedMedia.mediaType === 'video' ? 500 * 1024 * 1024 : 20 * 1024 * 1024;
+      normalizedMedia.mediaType === 'video' ? 200 * 1024 * 1024 : 20 * 1024 * 1024;
 
     if (uploadFile.size > maxBytes) {
       throw new Error(
         normalizedMedia.mediaType === 'video'
-          ? 'Uploaded video must be 500MB or smaller.'
+          ? 'Uploaded video must be 200MB or smaller.'
           : 'Uploaded image must be 20MB or smaller.'
       );
     }

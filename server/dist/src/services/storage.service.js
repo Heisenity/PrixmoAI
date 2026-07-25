@@ -7,9 +7,10 @@ exports.importExternalSourceImage = exports.prepareSourceImageForGeneration = ex
 const path_1 = __importDefault(require("path"));
 const constants_1 = require("../config/constants");
 const supabase_1 = require("../db/supabase");
+const r2Storage_service_1 = require("./r2Storage.service");
 const MAX_SOURCE_IMAGE_BYTES = 20 * 1024 * 1024;
-const MAX_SOURCE_VIDEO_BYTES = 500 * 1024 * 1024;
-const SOURCE_BUCKET_FILE_SIZE_LIMIT = '500MB';
+const MAX_SOURCE_VIDEO_BYTES = 200 * 1024 * 1024;
+const SOURCE_BUCKET_FILE_SIZE_LIMIT = '200MB';
 const ALLOWED_SOURCE_IMAGE_TYPES = new Set([
     'image/jpeg',
     'image/png',
@@ -57,7 +58,7 @@ const getMaxBytesForContentType = (contentType) => inferMediaTypeFromContentType
     ? MAX_SOURCE_VIDEO_BYTES
     : MAX_SOURCE_IMAGE_BYTES;
 const getSizeValidationMessage = (contentType) => inferMediaTypeFromContentType(contentType) === 'video'
-    ? 'Uploaded video must be 500MB or smaller'
+    ? 'Uploaded video must be 200MB or smaller'
     : 'Uploaded image must be 20MB or smaller';
 const mediaRequestHeaders = {
     Accept: 'image/*,video/*,text/html;q=0.9,*/*;q=0.8',
@@ -297,10 +298,28 @@ const uploadSourceImageBuffer = async (userId, input) => {
     if (input.fileBuffer.byteLength > getMaxBytesForContentType(contentType)) {
         throw new Error(getSizeValidationMessage(contentType));
     }
-    await ensureSourceImageBucket();
-    const supabaseAdmin = (0, supabase_1.requireSupabaseAdmin)();
     const fileExtension = extensionForMimeType(contentType);
     const normalizedName = sanitizeFileName(path_1.default.basename(input.fileName));
+    try {
+        const storedSourceMedia = await (0, r2Storage_service_1.storeSourceMediaInR2)({
+            userId,
+            fileName: normalizedName,
+            fileBuffer: input.fileBuffer,
+            contentType,
+        });
+        if (storedSourceMedia) {
+            return {
+                bucket: storedSourceMedia.bucket,
+                path: storedSourceMedia.objectKey,
+                publicUrl: storedSourceMedia.publicUrl,
+                mediaType,
+                contentType,
+            };
+        }
+    }
+    catch { }
+    await ensureSourceImageBucket();
+    const supabaseAdmin = (0, supabase_1.requireSupabaseAdmin)();
     const storagePath = `${userId}/source-${Date.now()}-${normalizedName}.${fileExtension}`;
     const { error: uploadError } = await supabaseAdmin.storage
         .from(constants_1.SUPABASE_SOURCE_IMAGE_BUCKET)

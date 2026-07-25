@@ -2,10 +2,11 @@ import path from 'path';
 import { SUPABASE_SOURCE_IMAGE_BUCKET } from '../config/constants';
 import type { ResolvedExternalMedia, SchedulerMediaType } from '../types';
 import { requireSupabaseAdmin } from '../db/supabase';
+import { storeSourceMediaInR2 } from './r2Storage.service';
 
 const MAX_SOURCE_IMAGE_BYTES = 20 * 1024 * 1024;
-const MAX_SOURCE_VIDEO_BYTES = 500 * 1024 * 1024;
-const SOURCE_BUCKET_FILE_SIZE_LIMIT = '500MB';
+const MAX_SOURCE_VIDEO_BYTES = 200 * 1024 * 1024;
+const SOURCE_BUCKET_FILE_SIZE_LIMIT = '200MB';
 const ALLOWED_SOURCE_IMAGE_TYPES = new Set([
   'image/jpeg',
   'image/png',
@@ -84,7 +85,7 @@ const getMaxBytesForContentType = (contentType: string) =>
 
 const getSizeValidationMessage = (contentType: string) =>
   inferMediaTypeFromContentType(contentType) === 'video'
-    ? 'Uploaded video must be 500MB or smaller'
+    ? 'Uploaded video must be 200MB or smaller'
     : 'Uploaded image must be 20MB or smaller';
 
 const mediaRequestHeaders = {
@@ -403,11 +404,31 @@ const uploadSourceImageBuffer = async (
     throw new Error(getSizeValidationMessage(contentType));
   }
 
+  const fileExtension = extensionForMimeType(contentType);
+  const normalizedName = sanitizeFileName(path.basename(input.fileName));
+
+  try {
+    const storedSourceMedia = await storeSourceMediaInR2({
+      userId,
+      fileName: normalizedName,
+      fileBuffer: input.fileBuffer,
+      contentType,
+    });
+
+    if (storedSourceMedia) {
+      return {
+        bucket: storedSourceMedia.bucket,
+        path: storedSourceMedia.objectKey,
+        publicUrl: storedSourceMedia.publicUrl,
+        mediaType,
+        contentType,
+      };
+    }
+  } catch {}
+
   await ensureSourceImageBucket();
 
   const supabaseAdmin = requireSupabaseAdmin();
-  const fileExtension = extensionForMimeType(contentType);
-  const normalizedName = sanitizeFileName(path.basename(input.fileName));
   const storagePath = `${userId}/source-${Date.now()}-${normalizedName}.${fileExtension}`;
 
   const { error: uploadError } = await supabaseAdmin.storage

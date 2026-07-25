@@ -127,8 +127,8 @@ app.post(
   express.raw({ type: 'application/json' }),
   handleRazorpayWebhook
 );
-app.use(express.json({ limit: '750mb' }));
-app.use(express.urlencoded({ extended: true, limit: '750mb' }));
+app.use(express.json({ limit: '300mb' }));
+app.use(express.urlencoded({ extended: true, limit: '300mb' }));
 
 app.get('/', (req, res) => {
   if (clientIndexPath) {

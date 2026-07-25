@@ -103,6 +103,7 @@ import {
   isAllowedSourceMediaMimeType,
   isManagedSourceMediaPublicUrl,
 } from '../services/storage.service';
+import { isManagedR2SourceMediaUrl } from '../services/r2Storage.service';
 import { recordBrandMemoryFeedback } from '../services/brandMemory.service';
 
 type AuthenticatedRequest<
@@ -129,6 +130,9 @@ const redactSocialAccountTokens = (account: SocialAccount): SocialAccount => ({
   accessToken: null,
   refreshToken: null,
 });
+
+const isManagedSchedulerSourceMediaUrl = (userId: string, value: string) =>
+  isManagedSourceMediaPublicUrl(userId, value) || isManagedR2SourceMediaUrl(userId, value);
 
 const RESERVED_PROFILE_SEGMENTS = new Set([
   'p',
@@ -753,7 +757,7 @@ const resolveSchedulerMediaUrl = async (
     };
   }
 
-  if (isManagedSourceMediaPublicUrl(userId, normalized)) {
+  if (isManagedSchedulerSourceMediaUrl(userId, normalized)) {
     return {
       mediaUrl: normalized,
       mediaType: mediaType ?? inferManagedMediaTypeFromUrl(normalized),
@@ -775,7 +779,7 @@ const validateSchedulerMediaAssetInput = (
     if (
       !input.contentId &&
       !input.generatedImageId &&
-      !isManagedSourceMediaPublicUrl(userId, input.storageUrl)
+      !isManagedSchedulerSourceMediaUrl(userId, input.storageUrl)
     ) {
       return 'Invalid media asset input';
     }
@@ -783,7 +787,7 @@ const validateSchedulerMediaAssetInput = (
     return null;
   }
 
-  if (!isManagedSourceMediaPublicUrl(userId, input.storageUrl)) {
+  if (!isManagedSchedulerSourceMediaUrl(userId, input.storageUrl)) {
     return 'Invalid media asset input';
   }
 

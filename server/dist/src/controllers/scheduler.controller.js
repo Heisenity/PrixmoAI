@@ -15,6 +15,7 @@ const socialAccountIntelligence_service_1 = require("../services/socialAccountIn
 const meta_service_1 = require("../services/meta.service");
 const schedulerPublisher_service_1 = require("../services/schedulerPublisher.service");
 const storage_service_1 = require("../services/storage.service");
+const r2Storage_service_1 = require("../services/r2Storage.service");
 const brandMemory_service_1 = require("../services/brandMemory.service");
 const parsePositiveInt = (value, fallback) => {
     if (typeof value !== 'string') {
@@ -28,6 +29,7 @@ const redactSocialAccountTokens = (account) => ({
     accessToken: null,
     refreshToken: null,
 });
+const isManagedSchedulerSourceMediaUrl = (userId, value) => (0, storage_service_1.isManagedSourceMediaPublicUrl)(userId, value) || (0, r2Storage_service_1.isManagedR2SourceMediaUrl)(userId, value);
 const RESERVED_PROFILE_SEGMENTS = new Set([
     'p',
     'reel',
@@ -433,7 +435,7 @@ const resolveSchedulerMediaUrl = async (userId, mediaUrl, mediaType) => {
             mediaType: null,
         };
     }
-    if ((0, storage_service_1.isManagedSourceMediaPublicUrl)(userId, normalized)) {
+    if (isManagedSchedulerSourceMediaUrl(userId, normalized)) {
         return {
             mediaUrl: normalized,
             mediaType: mediaType ?? inferManagedMediaTypeFromUrl(normalized),
@@ -449,12 +451,12 @@ const validateSchedulerMediaAssetInput = (userId, input) => {
     if (input.sourceType === 'generated') {
         if (!input.contentId &&
             !input.generatedImageId &&
-            !(0, storage_service_1.isManagedSourceMediaPublicUrl)(userId, input.storageUrl)) {
+            !isManagedSchedulerSourceMediaUrl(userId, input.storageUrl)) {
             return 'Invalid media asset input';
         }
         return null;
     }
-    if (!(0, storage_service_1.isManagedSourceMediaPublicUrl)(userId, input.storageUrl)) {
+    if (!isManagedSchedulerSourceMediaUrl(userId, input.storageUrl)) {
         return 'Invalid media asset input';
     }
     if (input.mimeType &&

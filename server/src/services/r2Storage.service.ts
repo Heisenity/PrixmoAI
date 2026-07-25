@@ -14,7 +14,7 @@ import {
   throwIfRequestCancelled,
 } from '../lib/requestCancellation';
 
-type GeneratedAssetKind = 'content' | 'image' | 'video' | 'archive';
+type GeneratedAssetKind = 'content' | 'image' | 'video' | 'source' | 'archive';
 
 export type StoredGeneratedAsset = {
   provider: 'r2';
@@ -47,6 +47,14 @@ type StoreGeneratedVideoInput = {
   signal?: AbortSignal;
 };
 
+type StoreSourceMediaInput = {
+  userId: string;
+  fileName: string;
+  fileBuffer: Buffer;
+  contentType: string;
+  signal?: AbortSignal;
+};
+
 type StoreArchivePayloadInput = {
   scope: string;
   payload: unknown;
@@ -73,11 +81,11 @@ let r2Client: S3Client | null = null;
 
 const getOptionalConfig = (value: string) => value.trim();
 
-const getR2Config = (): R2Config | null => {
+const getR2Config = (bucketName = IMAGE_BUCKETS.generated): R2Config | null => {
   const endpoint = getOptionalConfig(R2_S3_ENDPOINT);
   const accessKeyId = getOptionalConfig(R2_ACCESS_KEY_ID);
   const secretAccessKey = getOptionalConfig(R2_SECRET_ACCESS_KEY);
-  const bucket = getOptionalConfig(IMAGE_BUCKETS.generated);
+  const bucket = getOptionalConfig(bucketName);
   const publicBaseUrl = getOptionalConfig(R2_PUBLIC_BASE_URL);
 
   if (!endpoint || !accessKeyId || !secretAccessKey || !bucket || !publicBaseUrl) {
@@ -95,8 +103,29 @@ const getR2Config = (): R2Config | null => {
 
 export const isR2GeneratedStorageConfigured = () => Boolean(getR2Config());
 
-const requireR2Config = (): R2Config => {
-  const config = getR2Config();
+export const isManagedR2SourceMediaUrl = (userId: string, value: string) => {
+  const config = getR2Config(IMAGE_BUCKETS.originals);
+
+  if (!config) {
+    return false;
+  }
+
+  try {
+    const url = new URL(value);
+    const baseUrl = new URL(config.publicBaseUrl);
+    const basePath = baseUrl.pathname.replace(/\/+$/, '');
+    const objectKey = decodeURIComponent(
+      url.pathname.slice(basePath.length).replace(/^\/+/, '')
+    );
+
+    return url.origin === baseUrl.origin && objectKey.startsWith(`source/${userId}/`);
+  } catch {
+    return false;
+  }
+};
+
+const requireR2Config = (bucketName = IMAGE_BUCKETS.generated): R2Config => {
+  const config = getR2Config(bucketName);
 
   if (!config) {
     throw new Error(
@@ -107,9 +136,9 @@ const requireR2Config = (): R2Config => {
   return config;
 };
 
-const getR2Client = () => {
+const getR2Client = (bucketName = IMAGE_BUCKETS.generated) => {
   if (!r2Client) {
-    const config = requireR2Config();
+    const config = requireR2Config(bucketName);
 
     r2Client = new S3Client({
       region: 'auto',
@@ -264,15 +293,16 @@ const uploadBufferToR2 = async (
   buffer: Buffer,
   contentType: string,
   metadata: Record<string, string | null | undefined>,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  bucketName = IMAGE_BUCKETS.generated
 ): Promise<StoredGeneratedAsset> => {
-  const config = requireR2Config();
+  const config = requireR2Config(bucketName);
   const objectKey = buildObjectKey(kind, userId, productName, contentType);
 
   throwIfRequestCancelled(signal, 'Generation cancelled by user.');
 
   try {
-    await getR2Client().send(
+    await getR2Client(bucketName).send(
       new PutObjectCommand({
         Bucket: config.bucket,
         Key: objectKey,
@@ -429,6 +459,29 @@ export const storeGeneratedVideoInR2 = async (
       asset_kind: 'video',
     },
     input.signal
+  );
+};
+
+export const storeSourceMediaInR2 = async (
+  input: StoreSourceMediaInput
+): Promise<StoredGeneratedAsset | null> => {
+  if (!getR2Config(IMAGE_BUCKETS.originals)) {
+    return null;
+  }
+
+  return uploadBufferToR2(
+    'source',
+    input.userId,
+    input.fileName,
+    input.fileBuffer,
+    input.contentType,
+    {
+      user_id: input.userId,
+      file_name: input.fileName,
+      asset_kind: 'source',
+    },
+    input.signal,
+    IMAGE_BUCKETS.originals
   );
 };
 
