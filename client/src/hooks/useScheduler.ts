@@ -87,13 +87,14 @@ const writeSchedulerCache = (userId: string, value: SchedulerCache) => {
 };
 
 const isStaleSchedulerError = (error: unknown) => {
-  if (error instanceof ApiRequestError && error.status === 404) {
-    return true;
+  const message = error instanceof Error ? error.message : String(error);
+  const normalized = message.toLowerCase();
+
+  if (/route not found|failed to fetch scheduled|failed to fetch social/i.test(normalized)) {
+    return false;
   }
 
-  const message = error instanceof Error ? error.message : String(error);
-
-  return /not found|no longer available|expired|removed|deleted/i.test(message);
+  return /not found|no longer available|expired|removed|deleted/i.test(normalized);
 };
 
 const META_OAUTH_POPUP_MESSAGE_TYPE = 'prixmoai:meta-oauth';
@@ -354,14 +355,43 @@ export const useScheduler = (options: UseSchedulerOptions = {}) => {
       }
 
       try {
-        const [nextAccounts, nextPosts, nextItems] = await Promise.all([
+        const [accountsResult, postsResult, itemsResult] = await Promise.allSettled([
           apiRequest<PaginatedResult<SocialAccount>>('/api/scheduler/accounts', { token }),
           apiRequest<PaginatedResult<ScheduledPost>>('/api/scheduler/posts', { token }),
           apiRequest<PaginatedResult<ScheduledItem>>('/api/scheduler/items', { token }),
         ]);
-        setAccounts(nextAccounts);
-        setPosts(nextPosts);
-        setItems(nextItems);
+
+        const failures = [accountsResult, postsResult, itemsResult]
+          .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
+          .map((result) => result.reason);
+
+        const nextAccounts =
+          accountsResult.status === 'fulfilled' ? accountsResult.value : null;
+        const nextPosts = postsResult.status === 'fulfilled' ? postsResult.value : null;
+        const nextItems = itemsResult.status === 'fulfilled' ? itemsResult.value : null;
+
+        if (nextAccounts) {
+          setAccounts(nextAccounts);
+        }
+
+        if (nextPosts) {
+          setPosts(nextPosts);
+        }
+
+        if (nextItems) {
+          setItems(nextItems);
+        }
+
+        if (failures.length) {
+          if (failures.every(isStaleSchedulerError)) {
+            setError(null);
+            setSchedulerStatus('ready');
+            return;
+          }
+
+          throw failures[0];
+        }
+
         writeSchedulerCache(user.id, {
           accounts: nextAccounts,
           posts: nextPosts,
@@ -387,20 +417,8 @@ export const useScheduler = (options: UseSchedulerOptions = {}) => {
   );
 
   const recoverFromStaleSchedulerState = useCallback(async () => {
-    if (!user?.id) {
-      return;
-    }
-
-    writeSchedulerCache(user.id, {
-      accounts: null,
-      posts: null,
-      items: null,
-    });
-    setAccounts(null);
-    setPosts(null);
-    setItems(null);
     await refresh({ silent: true, force: true });
-  }, [refresh, user?.id]);
+  }, [refresh]);
 
   const handleSchedulerMutationError = useCallback(
     async (mutationError: unknown, fallbackMessage: string) => {
@@ -409,6 +427,7 @@ export const useScheduler = (options: UseSchedulerOptions = {}) => {
 
       if (isStaleSchedulerError(mutationError)) {
         await recoverFromStaleSchedulerState();
+        return message;
       }
 
       setError(message);

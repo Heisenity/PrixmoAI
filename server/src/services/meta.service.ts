@@ -34,6 +34,8 @@ type MetaOAuthStatePayload = {
   platform: MetaPlatform;
   accountId: string;
   profileUrl: string | null;
+  redirectUri?: string;
+  clientOrigin?: string;
   responseMode?: MetaOAuthResponseMode;
   nonce: string;
   issuedAt: string;
@@ -507,10 +509,11 @@ const getInstagramLoginClientId = () => META_INSTAGRAM_APP_ID;
 
 const getInstagramLoginClientSecret = () => META_INSTAGRAM_APP_SECRET;
 
-const getMetaOAuthRedirectUri = (platform: MetaPlatform) =>
-  platform === 'instagram'
+const getMetaOAuthRedirectUri = (platform: MetaPlatform, override?: string) =>
+  override?.trim() ||
+  (platform === 'instagram'
     ? META_INSTAGRAM_REDIRECT_URI
-    : META_FACEBOOK_REDIRECT_URI;
+    : META_FACEBOOK_REDIRECT_URI);
 
 const toProfileUrl = (platform: MetaPlatform, accountId: string, fallback?: string | null) => {
   if (fallback?.trim()) {
@@ -553,9 +556,10 @@ const fromBase64UrlJson = <T>(value: string): T =>
 const buildMetaOAuthRedirectUrl = (
   status: string,
   message?: string,
-  extraParams: Record<string, string> = {}
+  extraParams: Record<string, string> = {},
+  clientOrigin = CLIENT_APP_URL
 ) => {
-  const redirectUrl = new URL('/app/scheduler', CLIENT_APP_URL);
+  const redirectUrl = new URL('/app/scheduler', clientOrigin);
   redirectUrl.searchParams.set('meta_oauth', status);
 
   if (message) {
@@ -779,23 +783,25 @@ const instagramGraphFetch = async <T>(
 };
 
 const exchangeCodeForShortLivedUserToken = async (
-  code: string
+  code: string,
+  redirectUri?: string
 ): Promise<MetaTokenResponse> =>
   metaGraphFetch<MetaTokenResponse>('/oauth/access_token', {
     client_id: META_FACEBOOK_APP_ID,
     client_secret: META_FACEBOOK_APP_SECRET,
-    redirect_uri: getMetaOAuthRedirectUri('facebook'),
+    redirect_uri: getMetaOAuthRedirectUri('facebook', redirectUri),
     code,
   });
 
 const exchangeInstagramCodeForShortLivedUserToken = async (
-  code: string
+  code: string,
+  redirectUri?: string
 ): Promise<MetaTokenResponse> => {
   const body = new URLSearchParams({
     client_id: getInstagramLoginClientId(),
     client_secret: getInstagramLoginClientSecret(),
     grant_type: 'authorization_code',
-    redirect_uri: getMetaOAuthRedirectUri('instagram'),
+    redirect_uri: getMetaOAuthRedirectUri('instagram', redirectUri),
     code,
   });
 
@@ -1216,9 +1222,11 @@ export const createSignedMetaOAuthState = (input: {
   platform: MetaPlatform;
   accountId: string;
   profileUrl?: string | null;
+  redirectUri?: string;
+  clientOrigin?: string;
   responseMode?: MetaOAuthResponseMode;
 }) => {
-  ensureMetaOAuthConfigured();
+  ensureMetaOAuthConfigured(input.platform);
 
   const now = Date.now();
   const payload: MetaOAuthStatePayload = {
@@ -1226,6 +1234,8 @@ export const createSignedMetaOAuthState = (input: {
     platform: input.platform,
     accountId: input.accountId,
     profileUrl: input.profileUrl?.trim() || null,
+    redirectUri: input.redirectUri?.trim(),
+    clientOrigin: input.clientOrigin?.trim(),
     responseMode: input.responseMode ?? 'popup',
     nonce: randomUUID(),
     issuedAt: new Date(now).toISOString(),
@@ -1277,6 +1287,7 @@ export const readSignedMetaOAuthState = (state: string): MetaOAuthStatePayload =
 export const buildMetaOAuthUrl = (state: string) => {
   const claim = readSignedMetaOAuthState(state);
   ensureMetaOAuthConfigured(claim.platform);
+  const redirectUri = getMetaOAuthRedirectUri(claim.platform, claim.redirectUri);
   if (claim.platform === 'instagram') {
     const instagramClientId = getInstagramLoginClientId();
     const authUrl = new URL(INSTAGRAM_CONSENT_URL);
@@ -1285,7 +1296,7 @@ export const buildMetaOAuthUrl = (state: string) => {
       'params_json',
       JSON.stringify({
         client_id: instagramClientId,
-        redirect_uri: getMetaOAuthRedirectUri('instagram'),
+        redirect_uri: redirectUri,
         response_type: 'code',
         state,
         scope: getInstagramConsentScopes().join('-'),
@@ -1300,7 +1311,7 @@ export const buildMetaOAuthUrl = (state: string) => {
 
   const authUrl = new URL(META_AUTH_URL);
   authUrl.searchParams.set('client_id', META_FACEBOOK_APP_ID);
-  authUrl.searchParams.set('redirect_uri', getMetaOAuthRedirectUri('facebook'));
+  authUrl.searchParams.set('redirect_uri', redirectUri);
   authUrl.searchParams.set('state', state);
   authUrl.searchParams.set('response_type', 'code');
   authUrl.searchParams.set('scope', getFacebookOAuthScopes().join(','));
@@ -1312,7 +1323,8 @@ export const buildMetaOAuthUrl = (state: string) => {
 
 export const exchangeMetaAuthorizationCode = async (
   code: string,
-  platform: MetaPlatform
+  platform: MetaPlatform,
+  redirectUri?: string
 ): Promise<MetaOAuthExchangeResult> => {
   ensureMetaOAuthConfigured(platform);
 
@@ -1320,7 +1332,9 @@ export const exchangeMetaAuthorizationCode = async (
     let shortLivedToken: MetaTokenResponse | null = null;
     let lastExchangeError: Error | null = null;
 
-    const tokenExchangers = [() => exchangeInstagramCodeForShortLivedUserToken(code)];
+    const tokenExchangers = [
+      () => exchangeInstagramCodeForShortLivedUserToken(code, redirectUri),
+    ];
 
     for (const exchangeToken of tokenExchangers) {
       try {
@@ -1379,7 +1393,10 @@ export const exchangeMetaAuthorizationCode = async (
     };
   }
 
-  const shortLivedToken = await exchangeCodeForShortLivedUserToken(code);
+  const shortLivedToken = await exchangeCodeForShortLivedUserToken(
+    code,
+    redirectUri
+  );
   const longLivedToken = await exchangeForLongLivedUserToken(
     shortLivedToken.access_token
   );
@@ -1759,16 +1776,26 @@ export const publishScheduledMetaPost = async (
   }
 };
 
-export const getMetaOAuthSuccessRedirectUrl = (message?: string) =>
-  buildMetaOAuthRedirectUrl('success', message);
+export const getMetaOAuthSuccessRedirectUrl = (
+  message?: string,
+  clientOrigin?: string
+) => buildMetaOAuthRedirectUrl('success', message, {}, clientOrigin);
 
-export const getMetaOAuthErrorRedirectUrl = (message: string) =>
-  buildMetaOAuthRedirectUrl('error', message);
+export const getMetaOAuthErrorRedirectUrl = (
+  message: string,
+  clientOrigin?: string
+) => buildMetaOAuthRedirectUrl('error', message, {}, clientOrigin);
 
 export const getMetaOAuthFacebookPageSelectionRedirectUrl = (
   selectionId: string,
-  message?: string
+  message?: string,
+  clientOrigin?: string
 ) =>
-  buildMetaOAuthRedirectUrl('select_facebook_pages', message, {
-    selection_id: selectionId,
-  });
+  buildMetaOAuthRedirectUrl(
+    'select_facebook_pages',
+    message,
+    {
+      selection_id: selectionId,
+    },
+    clientOrigin
+  );
