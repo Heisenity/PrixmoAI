@@ -182,6 +182,10 @@ export const getPlayfulErrorMessage = (message?: string | null) => {
     return 'This prompt is too long. Shorten it and try again.';
   }
 
+  if (/public render url is no longer available/i.test(lower)) {
+    return 'The app is pointing to an old Render API URL. Update the API URL and redeploy.';
+  }
+
   if (/not found|no longer available|expired|start again|selection has expired/i.test(lower)) {
     return 'This item is no longer available. Refresh and try again.';
   }

@@ -1,10 +1,32 @@
 import type { HomeMetric, PlanType } from '../types';
 
-export const API_BASE_URL =
-  import.meta.env.VITE_API_BASE_URL ||
-  __PRIXMOAI_API_BASE_URL__ ||
-  (typeof window !== 'undefined' ? window.location.origin : '') ||
-  'http://localhost:5000';
+const BLOCKED_API_HOSTS = new Set([
+  'prixmoai-web.onrender.com',
+  'prixmoai-app.onrender.com',
+]);
+
+const readOrigin = (value: string) => {
+  try {
+    return new URL(value).origin;
+  } catch {
+    return '';
+  }
+};
+
+const resolveApiBaseUrl = () => {
+  const browserOrigin = typeof window !== 'undefined' ? window.location.origin : '';
+  const configured =
+    import.meta.env.VITE_API_BASE_URL || __PRIXMOAI_API_BASE_URL__ || '';
+  const configuredOrigin = configured ? readOrigin(configured) : '';
+
+  if (configuredOrigin && !BLOCKED_API_HOSTS.has(new URL(configuredOrigin).host)) {
+    return configuredOrigin;
+  }
+
+  return browserOrigin || 'http://localhost:5000';
+};
+
+export const API_BASE_URL = resolveApiBaseUrl();
 
 export const SUPABASE_URL =
   import.meta.env.VITE_SUPABASE_URL || __PRIXMOAI_SUPABASE_URL__;

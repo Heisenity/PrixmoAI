@@ -401,6 +401,16 @@ export const useGenerateWorkspace = () => {
         threadError instanceof Error
           ? threadError.message
           : 'Failed to load conversation thread';
+
+      if (isStaleConversationError(new Error(message))) {
+        setConversations((current) =>
+          current.filter((conversation) => conversation.id !== conversationId)
+        );
+        pruneConversationFromCache(conversationId);
+        clearActiveConversation();
+        return null;
+      }
+
       setError(message);
       throw new Error(message);
     } finally {
