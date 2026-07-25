@@ -128,7 +128,9 @@ const revokeBlobUrl = (blobUrl: string) => {
 const loadImage = (src: string) =>
   new Promise<HTMLImageElement>((resolve, reject) => {
     const image = new Image();
-    image.crossOrigin = 'anonymous';
+    if (/^https?:/i.test(src)) {
+      image.crossOrigin = 'anonymous';
+    }
     image.onload = () => resolve(image);
     image.onerror = () => reject(new Error('Failed to read image dimensions.'));
     image.src = src;
@@ -233,6 +235,24 @@ export const isInstagramVideoRatioSupported = (width: number, height: number) =>
 };
 
 export const readImageDimensionsFromBlob = async (blob: Blob): Promise<MediaDimensions> => {
+  if (typeof createImageBitmap === 'function') {
+    const bitmap = await withTimeout(
+      createImageBitmap(blob),
+      'Media preview timed out while reading image dimensions.'
+    );
+
+    try {
+      return {
+        width: bitmap.width,
+        height: bitmap.height,
+        aspectRatio: bitmap.width / bitmap.height,
+        durationSeconds: null,
+      };
+    } finally {
+      bitmap.close();
+    }
+  }
+
   const blobUrl = createBlobUrl(blob);
 
   try {
