@@ -104,8 +104,8 @@ app.use((req, res, next) => {
     });
 });
 app.post('/api/billing/webhook', express_1.default.raw({ type: 'application/json' }), billing_controller_1.handleRazorpayWebhook);
-app.use(express_1.default.json({ limit: '80mb' }));
-app.use(express_1.default.urlencoded({ extended: true, limit: '80mb' }));
+app.use(express_1.default.json({ limit: '750mb' }));
+app.use(express_1.default.urlencoded({ extended: true, limit: '750mb' }));
 app.get('/', (req, res) => {
     if (clientIndexPath) {
         res.sendFile(clientIndexPath);

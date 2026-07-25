@@ -509,7 +509,7 @@ const createLocalPlannerId = () => {
 };
 
 const RECENT_TOAST_DEDUPE_WINDOW_MS = 1_500;
-const MEDIA_OPERATION_TIMEOUT_MS = 120_000;
+const MEDIA_OPERATION_TIMEOUT_MS = 15 * 60_000;
 const MEDIA_UPLOAD_SUCCESS_VISIBLE_MS = 1_400;
 const SCHEDULER_MEDIA_UPLOAD_MAX_FILES = 10;
 
@@ -1382,24 +1382,30 @@ export const SchedulerPage = () => {
         uploaded = null;
       }
 
-      const dimensions = await getMediaDimensions(mediaBlob, mediaType);
+      const dimensions = await getMediaDimensions(mediaBlob, mediaType).catch((error) => {
+        if (signal?.aborted) {
+          throw error;
+        }
+
+        return null;
+      });
       let finalUpload = uploaded;
-      let finalWidth = dimensions.width;
-      let finalHeight = dimensions.height;
-      let finalAspectRatio = dimensions.aspectRatio;
+      let finalWidth = dimensions?.width ?? null;
+      let finalHeight = dimensions?.height ?? null;
+      let finalAspectRatio = dimensions?.aspectRatio ?? null;
       let finalMimeType = mimeType;
       let instagramPreparation:
         | {
-            status: 'compatible' | 'adjusted' | 'unsupported_video';
+            status: 'compatible' | 'adjusted' | 'unsupported_video' | 'unknown';
             warning: string | null;
             adjusted: boolean;
             mode: 'fit' | null;
-            originalWidth: number;
-            originalHeight: number;
-            originalAspectRatio: number;
-            processedWidth: number;
-            processedHeight: number;
-            processedAspectRatio: number;
+            originalWidth: number | null;
+            originalHeight: number | null;
+            originalAspectRatio: number | null;
+            processedWidth: number | null;
+            processedHeight: number | null;
+            processedAspectRatio: number | null;
           }
         | undefined;
 
@@ -1408,9 +1414,41 @@ export const SchedulerPage = () => {
           mediaBlob,
           fileName,
           mimeType || 'image/jpeg'
-        );
+        ).catch((error) => {
+          if (signal?.aborted) {
+            throw error;
+          }
 
-        if (prepared.adjusted) {
+          return null;
+        });
+
+        if (!prepared) {
+          if (!finalUpload) {
+            finalUpload = await scheduler.uploadPostMedia(
+              new File([mediaBlob], fileName, { type: mimeType || 'image/jpeg' }),
+              {
+                surfaceGlobalError: false,
+                signal,
+                onUploadProgress,
+              }
+            );
+          }
+
+          finalMimeType = finalUpload.contentType;
+          instagramPreparation = {
+            status: 'unknown',
+            warning:
+              'PrixmoAI could not read this image size, so it was uploaded without automatic Instagram fitting.',
+            adjusted: false,
+            mode: null,
+            originalWidth: finalWidth,
+            originalHeight: finalHeight,
+            originalAspectRatio: finalAspectRatio,
+            processedWidth: finalWidth,
+            processedHeight: finalHeight,
+            processedAspectRatio: finalAspectRatio,
+          };
+        } else if (prepared.adjusted) {
           finalUpload = await scheduler.uploadPostMedia(prepared.file, {
             surfaceGlobalError: false,
             signal,
@@ -1472,23 +1510,28 @@ export const SchedulerPage = () => {
 
         finalMimeType = finalUpload.contentType;
 
-        const videoSupport = isInstagramVideoRatioSupported(
-          dimensions.width,
-          dimensions.height
-        );
+        const videoSupport =
+          dimensions &&
+          isInstagramVideoRatioSupported(dimensions.width, dimensions.height);
         instagramPreparation = {
-          status: videoSupport.valid ? 'compatible' : 'unsupported_video',
+          status: !videoSupport
+            ? 'unknown'
+            : videoSupport.valid
+              ? 'compatible'
+              : 'unsupported_video',
           warning:
-            videoSupport.message ??
-            'Instagram can publish this video without aspect-ratio adjustment.',
+            videoSupport?.message ??
+            (dimensions
+              ? 'Instagram can publish this video without aspect-ratio adjustment.'
+              : 'PrixmoAI could not read this video size, so it was uploaded without aspect-ratio validation.'),
           adjusted: false,
           mode: null,
-          originalWidth: dimensions.width,
-          originalHeight: dimensions.height,
-          originalAspectRatio: dimensions.aspectRatio,
-          processedWidth: dimensions.width,
-          processedHeight: dimensions.height,
-          processedAspectRatio: dimensions.aspectRatio,
+          originalWidth: dimensions?.width ?? null,
+          originalHeight: dimensions?.height ?? null,
+          originalAspectRatio: dimensions?.aspectRatio ?? null,
+          processedWidth: dimensions?.width ?? null,
+          processedHeight: dimensions?.height ?? null,
+          processedAspectRatio: dimensions?.aspectRatio ?? null,
         };
       }
 
@@ -1503,7 +1546,7 @@ export const SchedulerPage = () => {
         sizeBytes: file ? file.size : mediaBlob.size,
         width: finalWidth,
         height: finalHeight,
-        durationSeconds: dimensions.durationSeconds,
+        durationSeconds: dimensions?.durationSeconds ?? null,
         contentId: contentId ?? null,
         generatedImageId: generatedImageId ?? null,
         metadata: {

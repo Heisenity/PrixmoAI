@@ -1842,8 +1842,7 @@ const createPostSchedule = async (req, res) => {
             message === 'No preview available for this link' ||
             message === 'Add image or video media before scheduling this post.' ||
             message.includes('supported') ||
-            message.includes('must be 50MB') ||
-            message.includes('must be 6MB');
+            message.includes('must be') && message.includes('MB');
         return res.status(isValidationFailure
             ? 400
             : message.includes('download media')
@@ -1961,8 +1960,7 @@ const updatePostSchedule = async (req, res) => {
             message === 'Invalid media URL' ||
             message === 'No preview available for this link' ||
             message.includes('supported') ||
-            message.includes('must be 50MB') ||
-            message.includes('must be 6MB');
+            message.includes('must be') && message.includes('MB');
         const isBufferFailure = message === scheduledPosts_1.SCHEDULED_POST_ACTION_BLOCKED_REASON;
         return res.status(isValidationFailure
             ? 400

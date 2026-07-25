@@ -7,8 +7,8 @@ exports.importExternalSourceImage = exports.prepareSourceImageForGeneration = ex
 const path_1 = __importDefault(require("path"));
 const constants_1 = require("../config/constants");
 const supabase_1 = require("../db/supabase");
-const MAX_SOURCE_IMAGE_BYTES = 6 * 1024 * 1024;
-const MAX_SOURCE_VIDEO_BYTES = 50 * 1024 * 1024;
+const MAX_SOURCE_IMAGE_BYTES = 20 * 1024 * 1024;
+const MAX_SOURCE_VIDEO_BYTES = 500 * 1024 * 1024;
 const ALLOWED_SOURCE_IMAGE_TYPES = new Set([
     'image/jpeg',
     'image/png',
@@ -56,8 +56,8 @@ const getMaxBytesForContentType = (contentType) => inferMediaTypeFromContentType
     ? MAX_SOURCE_VIDEO_BYTES
     : MAX_SOURCE_IMAGE_BYTES;
 const getSizeValidationMessage = (contentType) => inferMediaTypeFromContentType(contentType) === 'video'
-    ? 'Uploaded video must be 50MB or smaller'
-    : 'Uploaded image must be 6MB or smaller';
+    ? 'Uploaded video must be 500MB or smaller'
+    : 'Uploaded image must be 20MB or smaller';
 const mediaRequestHeaders = {
     Accept: 'image/*,video/*,text/html;q=0.9,*/*;q=0.8',
     'Accept-Language': 'en-US,en;q=0.9',
