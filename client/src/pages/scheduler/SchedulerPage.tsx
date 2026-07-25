@@ -837,11 +837,16 @@ export const SchedulerPage = () => {
   const generatedIntentEffectRunsRef = useRef(0);
   const hasHydratedPersistedPlannerRef = useRef(false);
   const hydratedPlannerUserIdRef = useRef<string | null>(null);
+  const processedOAuthSearchRef = useRef<string | null>(null);
   const schedulerToastTimersRef = useRef<
     Record<string, { exitTimer: number; removeTimer: number }>
   >({});
 
   useEffect(() => {
+    if (processedOAuthSearchRef.current === window.location.search) {
+      return;
+    }
+
     const params = new URLSearchParams(window.location.search);
     const metaStatus = params.get('meta_oauth');
     const message = params.get('message');
@@ -851,15 +856,21 @@ export const SchedulerPage = () => {
       return;
     }
 
+    if (!user?.id) {
+      return;
+    }
+
     const clearOAuthParams = () => {
       window.history.replaceState({}, document.title, window.location.pathname);
     };
 
-    if (metaStatus === 'select_facebook_pages' && selectionId) {
-      void openPendingFacebookSelection(selectionId).finally(() => {
-        clearOAuthParams();
-      });
+    processedOAuthSearchRef.current = window.location.search;
+    clearOAuthParams();
+    setConnectModalOpen(false);
+    setConnectModalStep('root');
 
+    if (metaStatus === 'select_facebook_pages' && selectionId) {
+      void openPendingFacebookSelection(selectionId);
       return;
     }
 
@@ -871,11 +882,7 @@ export const SchedulerPage = () => {
       setOauthNotice(message || 'Channel connected successfully.');
       void scheduler.refresh();
     }
-
-    setConnectModalOpen(false);
-    setConnectModalStep('root');
-    clearOAuthParams();
-  }, [scheduler]);
+  }, [scheduler, user?.id]);
 
   useEffect(() => {
     const interval = window.setInterval(() => {
@@ -2039,11 +2046,20 @@ export const SchedulerPage = () => {
     } catch (selectionError) {
       setPendingFacebookSelection(null);
       setSelectedPendingFacebookPageIds([]);
-      setOauthError(
+      const message =
         selectionError instanceof Error
           ? selectionError.message
-          : 'Facebook returned pages, but PrixmoAI could not load them.'
-      );
+          : 'Facebook returned pages, but PrixmoAI could not load them.';
+
+      if (/selection|expired|not found|no longer available|start again/i.test(message)) {
+        pushSchedulerToast({
+          type: 'info',
+          title: 'Facebook Pages expired',
+          message: 'Start the Facebook connection again and pick the Pages to connect.',
+        });
+      } else {
+        setOauthError(message);
+      }
     } finally {
       setIsLoadingPendingFacebookPages(false);
     }

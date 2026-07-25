@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ApiRequestError, apiRequest } from '../lib/axios';
+import { apiRequest } from '../lib/axios';
 import {
   isBrowserCacheFresh,
   readBrowserCache,
@@ -569,10 +569,8 @@ export const useScheduler = (options: UseSchedulerOptions = {}) => {
         }
       );
     } catch (pendingError) {
-      const message = await handleSchedulerMutationError(
-        pendingError,
-        'Failed to load Facebook Pages'
-      );
+      const message =
+        pendingError instanceof Error ? pendingError.message : 'Failed to load Facebook Pages';
       throw new Error(message);
     }
   };
@@ -603,10 +601,10 @@ export const useScheduler = (options: UseSchedulerOptions = {}) => {
       await refresh({ silent: true, force: true });
       return result;
     } catch (finalizeError) {
-      const message = await handleSchedulerMutationError(
-        finalizeError,
-        'Failed to connect the selected Facebook Pages'
-      );
+      const message =
+        finalizeError instanceof Error
+          ? finalizeError.message
+          : 'Failed to connect the selected Facebook Pages';
       throw new Error(message);
     } finally {
       setIsMutating(false);

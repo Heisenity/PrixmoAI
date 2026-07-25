@@ -1521,7 +1521,7 @@ export const listPendingMetaFacebookPages = async (
   }
 
   try {
-    const client = requireUserClient(req.accessToken);
+    const client = requireSupabaseAdmin();
     const session = await getOAuthConnectionSessionById(
       client,
       req.user.id,
@@ -1583,7 +1583,7 @@ export const finalizePendingMetaFacebookPages = async (
 
   try {
     const userId = req.user.id;
-    const client = requireUserClient(req.accessToken);
+    const client = requireSupabaseAdmin();
     const session = await getOAuthConnectionSessionById(
       client,
       userId,
