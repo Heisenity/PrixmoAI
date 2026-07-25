@@ -754,7 +754,7 @@ const startMetaOAuth = async (req, res) => {
             profileUrl: resolved.profileUrl ?? null,
             redirectUri,
             clientOrigin,
-            responseMode: 'popup',
+            responseMode: 'redirect',
         }));
         return res.status(200).json({
             status: 'success',

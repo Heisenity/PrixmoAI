@@ -4509,7 +4509,7 @@ export const SchedulerPage = () => {
               setSelectedPendingFacebookPageIds([]);
             }}
           />
-          <div className="generated-image-lightbox__panel scheduler-channel-modal__panel">
+          <div className="generated-image-lightbox__panel scheduler-channel-modal__panel scheduler-facebook-selection-modal">
             <div className="scheduler-channel-modal__header">
               <div>
                 <p className="section-eyebrow">Facebook Pages</p>
@@ -4539,6 +4539,7 @@ export const SchedulerPage = () => {
               </div>
             ) : pendingFacebookSelection ? (
               <>
+                <div className="scheduler-facebook-selection-modal__body">
                 <div className="scheduler-facebook-selection__toolbar">
                   <div>
                     <strong>
@@ -4633,6 +4634,7 @@ export const SchedulerPage = () => {
                     You can connect multiple Pages here. PrixmoAI will only save the
                     ones you select.
                   </span>
+                </div>
                 </div>
 
                 <div className="scheduler-channel-disconnect__actions scheduler-facebook-selection__actions">

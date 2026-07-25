@@ -1232,7 +1232,7 @@ export const startMetaOAuth = async (
         profileUrl: resolved.profileUrl ?? null,
         redirectUri,
         clientOrigin,
-        responseMode: 'popup',
+        responseMode: 'redirect',
       })
     );
 

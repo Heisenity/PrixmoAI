@@ -740,7 +740,6 @@ const buildMetaOAuthUrl = (state) => {
     authUrl.searchParams.set('response_type', 'code');
     authUrl.searchParams.set('scope', getFacebookOAuthScopes().join(','));
     authUrl.searchParams.set('auth_type', 'rerequest');
-    authUrl.searchParams.set('display', 'popup');
     return authUrl.toString();
 };
 exports.buildMetaOAuthUrl = buildMetaOAuthUrl;
