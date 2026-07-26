@@ -39,6 +39,7 @@ const createMockResponse = () => {
 });
 (0, node_test_1.default)('cron authorization accepts the correct bearer secret', () => {
     strict_1.default.equal((0, cronAuth_1.isAuthorizedCronHeader)('Bearer expected-secret', 'expected-secret'), true);
+    strict_1.default.equal((0, cronAuth_1.isAuthorizedCronHeader)('Bearer expected-secret', ' expected-secret\n'), true);
 });
 (0, node_test_1.default)('internal scheduler endpoint rejects missing credentials', async () => {
     let processed = false;

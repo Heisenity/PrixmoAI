@@ -40,6 +40,7 @@ test('cron authorization rejects missing and incorrect secrets', () => {
 
 test('cron authorization accepts the correct bearer secret', () => {
   assert.equal(isAuthorizedCronHeader('Bearer expected-secret', 'expected-secret'), true);
+  assert.equal(isAuthorizedCronHeader('Bearer expected-secret', ' expected-secret\n'), true);
 });
 
 test('internal scheduler endpoint rejects missing credentials', async () => {

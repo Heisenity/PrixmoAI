@@ -8,10 +8,15 @@ export const isAuthorizedCronHeader = (
   expectedSecret = CRON_SECRET
 ) => {
   const [scheme, token] = (authorizationHeader || '').split(/\s+/, 2);
+  const normalizedToken = token?.trim();
+  const normalizedExpectedSecret = expectedSecret.trim();
 
-  if (scheme !== 'Bearer' || !token || !expectedSecret) {
+  if (scheme !== 'Bearer' || !normalizedToken || !normalizedExpectedSecret) {
     return false;
   }
 
-  return timingSafeEqual(hashSecret(token), hashSecret(expectedSecret));
+  return timingSafeEqual(
+    hashSecret(normalizedToken),
+    hashSecret(normalizedExpectedSecret)
+  );
 };

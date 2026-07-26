@@ -6,9 +6,11 @@ const constants_1 = require("../config/constants");
 const hashSecret = (value) => (0, crypto_1.createHash)('sha256').update(value).digest();
 const isAuthorizedCronHeader = (authorizationHeader, expectedSecret = constants_1.CRON_SECRET) => {
     const [scheme, token] = (authorizationHeader || '').split(/\s+/, 2);
-    if (scheme !== 'Bearer' || !token || !expectedSecret) {
+    const normalizedToken = token?.trim();
+    const normalizedExpectedSecret = expectedSecret.trim();
+    if (scheme !== 'Bearer' || !normalizedToken || !normalizedExpectedSecret) {
         return false;
     }
-    return (0, crypto_1.timingSafeEqual)(hashSecret(token), hashSecret(expectedSecret));
+    return (0, crypto_1.timingSafeEqual)(hashSecret(normalizedToken), hashSecret(normalizedExpectedSecret));
 };
 exports.isAuthorizedCronHeader = isAuthorizedCronHeader;

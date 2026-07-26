@@ -281,6 +281,13 @@ const isStaleSchedulerError = (error: unknown) => {
   return /not found|no longer available|expired|removed|deleted/i.test(normalized);
 };
 
+const hasSchedulerSnapshotData = (snapshot: SchedulerCache | null | undefined) =>
+  Boolean(
+    snapshot?.accounts?.items?.length ||
+      snapshot?.posts?.items?.length ||
+      snapshot?.items?.items?.length
+  );
+
 type UseSchedulerOptions = {
   pollIntervalMs?: number;
 };
@@ -373,6 +380,17 @@ export const useScheduler = (options: UseSchedulerOptions = {}) => {
             return;
           }
 
+          if (
+            nextAccounts ||
+            nextPosts ||
+            nextItems ||
+            hasSchedulerSnapshotData(cached?.value)
+          ) {
+            setError(null);
+            setSchedulerStatus('ready');
+            return;
+          }
+
           throw failures[0];
         }
 
@@ -388,6 +406,12 @@ export const useScheduler = (options: UseSchedulerOptions = {}) => {
       } catch (schedulerError) {
         const message =
           schedulerError instanceof Error ? schedulerError.message : 'Failed to load scheduler';
+
+        if (hasSchedulerSnapshotData(cached?.value)) {
+          setError(null);
+          setSchedulerStatus('ready');
+          return;
+        }
 
         setError(message);
         setSchedulerStatus((current) => (current === 'error' ? current : 'error'));
