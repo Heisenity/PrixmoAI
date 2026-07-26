@@ -1,0 +1,15 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "prixmoai-render-scheduler-worker",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-07-26",
+  "observability": {
+    "enabled": true
+  },
+  "triggers": {
+    "crons": ["* * * * *"]
+  },
+  "vars": {
+    "RENDER_BACKEND_URL": "https://prixmoai-prototype.onrender.com"
+  }
+}
