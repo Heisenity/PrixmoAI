@@ -23,6 +23,7 @@ export type GeneratedAssetType =
 export type ScheduledPostStatus =
   | 'pending'
   | 'scheduled'
+  | 'processing'
   | 'published'
   | 'failed'
   | 'cancelled';
@@ -733,6 +734,12 @@ export interface ScheduledPost {
   publishAttemptedAt: string | null;
   lastError: string | null;
   publishedAt: string | null;
+  processingStartedAt: string | null;
+  failedAt: string | null;
+  lastAttemptAt: string | null;
+  nextRetryAt: string | null;
+  retryCount: number;
+  platformResponse: Record<string, unknown> | null;
   canEdit: boolean;
   canCancel: boolean;
   actionBlockedReason: string | null;
@@ -881,6 +888,12 @@ export interface CreateScheduledPostInput {
   externalPostId?: string | null;
   publishAttemptedAt?: string | null;
   lastError?: string | null;
+  processingStartedAt?: string | null;
+  failedAt?: string | null;
+  lastAttemptAt?: string | null;
+  nextRetryAt?: string | null;
+  retryCount?: number;
+  platformResponse?: Record<string, unknown> | null;
 }
 
 export interface UpdateScheduledPostRequestInput {
@@ -896,6 +909,12 @@ export interface UpdateScheduledPostRequestInput {
   externalPostId?: string | null;
   publishAttemptedAt?: string | null;
   lastError?: string | null;
+  processingStartedAt?: string | null;
+  failedAt?: string | null;
+  lastAttemptAt?: string | null;
+  nextRetryAt?: string | null;
+  retryCount?: number;
+  platformResponse?: Record<string, unknown> | null;
 }
 
 export interface AnalyticsData {

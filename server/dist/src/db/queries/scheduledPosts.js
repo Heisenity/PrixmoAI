@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.deleteScheduledPost = exports.updateScheduledPostStatus = exports.updateScheduledPost = exports.getDueScheduledPosts = exports.getScheduledPostById = exports.getScheduledPostsByUser = exports.createScheduledPost = exports.SCHEDULED_POST_ACTION_BUFFER_MS = exports.SCHEDULED_POST_ACTION_BLOCKED_REASON = void 0;
+exports.deleteScheduledPost = exports.updateScheduledPostStatus = exports.recoverStuckProcessingPosts = exports.claimScheduledPostForProcessing = exports.updateScheduledPost = exports.getDueScheduledPosts = exports.getScheduledPostById = exports.getScheduledPostsByUser = exports.createScheduledPost = exports.SCHEDULED_POST_ACTION_BUFFER_MS = exports.SCHEDULED_POST_ACTION_BLOCKED_REASON = void 0;
 const SCHEDULED_POST_ACTION_BUFFER_MS = 4000;
 exports.SCHEDULED_POST_ACTION_BUFFER_MS = SCHEDULED_POST_ACTION_BUFFER_MS;
 const SCHEDULED_POST_ACTION_BLOCKED_REASON = 'Post is being prepared for publishing';
@@ -64,6 +64,12 @@ const toScheduledPost = (row) => ({
     publishAttemptedAt: row.publish_attempted_at,
     lastError: row.last_error,
     publishedAt: resolveScheduledPostPublishedAt(row),
+    processingStartedAt: row.processing_started_at ?? null,
+    failedAt: row.failed_at ?? null,
+    lastAttemptAt: row.last_attempt_at ?? null,
+    nextRetryAt: row.next_retry_at ?? null,
+    retryCount: row.retry_count ?? 0,
+    platformResponse: row.platform_response ?? null,
     ...getScheduledPostActionState(row),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -139,18 +145,36 @@ const getScheduledPostById = async (client, userId, scheduledPostId) => {
     return data ? toScheduledPost(data) : null;
 };
 exports.getScheduledPostById = getScheduledPostById;
-const getDueScheduledPosts = async (client, limit = 10) => {
-    const { data, error } = await client
+const getDueScheduledPosts = async (client, limit = 10, nowIso = new Date().toISOString(), maxRetries = 3) => {
+    const scheduledResult = await client
         .from('scheduled_posts')
         .select('*')
-        .in('status', ['pending', 'scheduled'])
-        .lte('scheduled_for', new Date().toISOString())
+        .eq('status', 'scheduled')
+        .lte('scheduled_for', nowIso)
         .order('scheduled_for', { ascending: true })
         .limit(limit);
-    if (error) {
-        throw new Error(error.message || 'Failed to fetch due scheduled posts');
+    if (scheduledResult.error) {
+        throw new Error(scheduledResult.error.message || 'Failed to fetch due scheduled posts');
     }
-    return (data ?? []).map((row) => toScheduledPost(row));
+    const retryResult = await client
+        .from('scheduled_posts')
+        .select('*')
+        .eq('status', 'failed')
+        .lt('retry_count', maxRetries)
+        .lte('next_retry_at', nowIso)
+        .order('next_retry_at', { ascending: true })
+        .limit(limit);
+    if (retryResult.error) {
+        throw new Error(retryResult.error.message || 'Failed to fetch retryable scheduled posts');
+    }
+    return [...(scheduledResult.data ?? []), ...(retryResult.data ?? [])]
+        .map((row) => toScheduledPost(row))
+        .sort((left, right) => {
+        const leftTime = new Date(left.nextRetryAt ?? left.scheduledFor).getTime();
+        const rightTime = new Date(right.nextRetryAt ?? right.scheduledFor).getTime();
+        return leftTime - rightTime;
+    })
+        .slice(0, limit);
 };
 exports.getDueScheduledPosts = getDueScheduledPosts;
 const updateScheduledPost = async (client, userId, scheduledPostId, input) => {
@@ -174,6 +198,12 @@ const updateScheduledPost = async (client, userId, scheduledPostId, input) => {
         publish_attempted_at: autoPublishAttemptedAt,
         last_error: input.lastError,
         published_at: autoPublishedAt,
+        processing_started_at: input.processingStartedAt,
+        failed_at: input.failedAt,
+        last_attempt_at: input.lastAttemptAt,
+        next_retry_at: input.nextRetryAt,
+        retry_count: input.retryCount,
+        platform_response: input.platformResponse,
     });
     const updateScheduledPostRow = async (nextPayload) => await client
         .from('scheduled_posts')
@@ -193,6 +223,55 @@ const updateScheduledPost = async (client, userId, scheduledPostId, input) => {
     return toScheduledPost(data);
 };
 exports.updateScheduledPost = updateScheduledPost;
+const claimScheduledPostForProcessing = async (client, post, nowIso = new Date().toISOString(), maxRetries = 3) => {
+    let query = client
+        .from('scheduled_posts')
+        .update({
+        status: 'processing',
+        processing_started_at: nowIso,
+        last_attempt_at: nowIso,
+        publish_attempted_at: nowIso,
+        retry_count: post.retryCount + 1,
+        last_error: null,
+    })
+        .eq('id', post.id)
+        .eq('user_id', post.userId)
+        .eq('status', post.status)
+        .select('*');
+    if (post.status === 'scheduled') {
+        query = query.lte('scheduled_for', nowIso);
+    }
+    else if (post.status === 'failed') {
+        query = query.lt('retry_count', maxRetries).lte('next_retry_at', nowIso);
+    }
+    else {
+        return null;
+    }
+    const { data, error } = await query.maybeSingle();
+    if (error) {
+        throw new Error(error.message || 'Failed to claim scheduled post');
+    }
+    return data ? toScheduledPost(data) : null;
+};
+exports.claimScheduledPostForProcessing = claimScheduledPostForProcessing;
+const recoverStuckProcessingPosts = async (client, cutoffIso, nowIso = new Date().toISOString()) => {
+    const { data, error } = await client
+        .from('scheduled_posts')
+        .update({
+        status: 'failed',
+        failed_at: nowIso,
+        next_retry_at: null,
+        last_error: 'Publishing was interrupted before PrixmoAI could confirm the platform result. Review this post before retrying.',
+    })
+        .eq('status', 'processing')
+        .lt('processing_started_at', cutoffIso)
+        .select('id');
+    if (error) {
+        throw new Error(error.message || 'Failed to recover stuck scheduled posts');
+    }
+    return data?.length ?? 0;
+};
+exports.recoverStuckProcessingPosts = recoverStuckProcessingPosts;
 const updateScheduledPostStatus = async (client, userId, scheduledPostId, status, publishedAt) => (0, exports.updateScheduledPost)(client, userId, scheduledPostId, {
     status,
     publishedAt,

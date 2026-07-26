@@ -23,6 +23,12 @@ type ScheduledPostRow = {
   publish_attempted_at: string | null;
   last_error: string | null;
   published_at: string | null;
+  processing_started_at: string | null;
+  failed_at: string | null;
+  last_attempt_at: string | null;
+  next_retry_at: string | null;
+  retry_count: number | null;
+  platform_response: Record<string, unknown> | null;
   created_at: string;
   updated_at: string;
 };
@@ -127,6 +133,12 @@ const toScheduledPost = (row: ScheduledPostRow): ScheduledPost => ({
   publishAttemptedAt: row.publish_attempted_at,
   lastError: row.last_error,
   publishedAt: resolveScheduledPostPublishedAt(row),
+  processingStartedAt: row.processing_started_at ?? null,
+  failedAt: row.failed_at ?? null,
+  lastAttemptAt: row.last_attempt_at ?? null,
+  nextRetryAt: row.next_retry_at ?? null,
+  retryCount: row.retry_count ?? 0,
+  platformResponse: row.platform_response ?? null,
   ...getScheduledPostActionState(row),
   createdAt: row.created_at,
   updatedAt: row.updated_at,
@@ -235,21 +247,43 @@ export const getScheduledPostById = async (
 
 export const getDueScheduledPosts = async (
   client: AppSupabaseClient,
-  limit = 10
+  limit = 10,
+  nowIso = new Date().toISOString(),
+  maxRetries = 3
 ): Promise<ScheduledPost[]> => {
-  const { data, error } = await client
+  const scheduledResult = await client
     .from('scheduled_posts')
     .select('*')
-    .in('status', ['pending', 'scheduled'])
-    .lte('scheduled_for', new Date().toISOString())
+    .eq('status', 'scheduled')
+    .lte('scheduled_for', nowIso)
     .order('scheduled_for', { ascending: true })
     .limit(limit);
 
-  if (error) {
-    throw new Error(error.message || 'Failed to fetch due scheduled posts');
+  if (scheduledResult.error) {
+    throw new Error(scheduledResult.error.message || 'Failed to fetch due scheduled posts');
   }
 
-  return (data ?? []).map((row) => toScheduledPost(row as ScheduledPostRow));
+  const retryResult = await client
+    .from('scheduled_posts')
+    .select('*')
+    .eq('status', 'failed')
+    .lt('retry_count', maxRetries)
+    .lte('next_retry_at', nowIso)
+    .order('next_retry_at', { ascending: true })
+    .limit(limit);
+
+  if (retryResult.error) {
+    throw new Error(retryResult.error.message || 'Failed to fetch retryable scheduled posts');
+  }
+
+  return [...(scheduledResult.data ?? []), ...(retryResult.data ?? [])]
+    .map((row) => toScheduledPost(row as ScheduledPostRow))
+    .sort((left, right) => {
+      const leftTime = new Date(left.nextRetryAt ?? left.scheduledFor).getTime();
+      const rightTime = new Date(right.nextRetryAt ?? right.scheduledFor).getTime();
+      return leftTime - rightTime;
+    })
+    .slice(0, limit);
 };
 
 export const updateScheduledPost = async (
@@ -280,6 +314,12 @@ export const updateScheduledPost = async (
     publish_attempted_at: autoPublishAttemptedAt,
     last_error: input.lastError,
     published_at: autoPublishedAt,
+    processing_started_at: input.processingStartedAt,
+    failed_at: input.failedAt,
+    last_attempt_at: input.lastAttemptAt,
+    next_retry_at: input.nextRetryAt,
+    retry_count: input.retryCount,
+    platform_response: input.platformResponse,
   });
 
   const updateScheduledPostRow = async (nextPayload: Partial<typeof payload>) =>
@@ -303,6 +343,69 @@ export const updateScheduledPost = async (
   }
 
   return toScheduledPost(data as ScheduledPostRow);
+};
+
+export const claimScheduledPostForProcessing = async (
+  client: AppSupabaseClient,
+  post: ScheduledPost,
+  nowIso = new Date().toISOString(),
+  maxRetries = 3
+): Promise<ScheduledPost | null> => {
+  let query = client
+    .from('scheduled_posts')
+    .update({
+      status: 'processing',
+      processing_started_at: nowIso,
+      last_attempt_at: nowIso,
+      publish_attempted_at: nowIso,
+      retry_count: post.retryCount + 1,
+      last_error: null,
+    })
+    .eq('id', post.id)
+    .eq('user_id', post.userId)
+    .eq('status', post.status)
+    .select('*');
+
+  if (post.status === 'scheduled') {
+    query = query.lte('scheduled_for', nowIso);
+  } else if (post.status === 'failed') {
+    query = query.lt('retry_count', maxRetries).lte('next_retry_at', nowIso);
+  } else {
+    return null;
+  }
+
+  const { data, error } = await query.maybeSingle();
+
+  if (error) {
+    throw new Error(error.message || 'Failed to claim scheduled post');
+  }
+
+  return data ? toScheduledPost(data as ScheduledPostRow) : null;
+};
+
+export const recoverStuckProcessingPosts = async (
+  client: AppSupabaseClient,
+  cutoffIso: string,
+  nowIso = new Date().toISOString()
+): Promise<number> => {
+  const { data, error } = await client
+    .from('scheduled_posts')
+    .update({
+      status: 'failed',
+      failed_at: nowIso,
+      next_retry_at: null,
+      last_error:
+        'Publishing was interrupted before PrixmoAI could confirm the platform result. Review this post before retrying.',
+    })
+    .eq('status', 'processing')
+    .lt('processing_started_at', cutoffIso)
+    .select('id');
+
+  if (error) {
+    throw new Error(error.message || 'Failed to recover stuck scheduled posts');
+  }
+
+  return data?.length ?? 0;
 };
 
 export const updateScheduledPostStatus = async (

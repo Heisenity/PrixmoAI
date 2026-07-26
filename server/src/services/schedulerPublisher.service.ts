@@ -1,10 +1,16 @@
 import { Queue, Worker } from 'bullmq';
 import {
+  SCHEDULER_MAX_RETRY_ATTEMPTS,
+  SCHEDULER_PROCESS_BATCH_SIZE,
+  SCHEDULER_PROCESSING_TIMEOUT_MS,
   SCHEDULER_PUBLISH_JOB_CONCURRENCY,
   isMetaOAuthConfigured,
 } from '../config/constants';
 import {
+  claimScheduledPostForProcessing,
+  getDueScheduledPosts,
   getScheduledPostById,
+  recoverStuckProcessingPosts,
   updateScheduledPost,
 } from '../db/queries/scheduledPosts';
 import {
@@ -53,6 +59,7 @@ type HydrationScheduledPostRow = {
 
 const FAILED_JOB_RETENTION_SECONDS = 60 * 60;
 const JOB_TIME_TOLERANCE_MS = 1_000;
+const RETRY_DELAYS_MS = [60_000, 5 * 60_000, 15 * 60_000];
 
 let schedulerPublishQueue: Queue<SchedulerPublishJobData> | null = null;
 let schedulerPublishWorker: Worker<SchedulerPublishJobData> | null = null;
@@ -161,13 +168,33 @@ const markPostFailure = async (
   postId: string,
   userId: string,
   message: string,
-  payloadJson?: Record<string, unknown>
+  payloadJson?: Record<string, unknown>,
+  options: {
+    retryCount?: number;
+    retryable?: boolean;
+  } = {}
 ) => {
   const client = requireSupabaseAdmin();
+  const now = new Date().toISOString();
+  const retryCount = options.retryCount ?? 0;
+  const shouldRetry = Boolean(
+    options.retryable && retryCount < SCHEDULER_MAX_RETRY_ATTEMPTS
+  );
+  const nextRetryAt = shouldRetry
+    ? new Date(
+        Date.now() +
+          (RETRY_DELAYS_MS[Math.max(0, retryCount - 1)] ??
+            RETRY_DELAYS_MS[RETRY_DELAYS_MS.length - 1])
+      ).toISOString()
+    : null;
 
   await updateScheduledPost(client, userId, postId, {
     status: 'failed',
-    publishAttemptedAt: new Date().toISOString(),
+    publishAttemptedAt: now,
+    failedAt: now,
+    lastAttemptAt: now,
+    nextRetryAt,
+    retryCount,
     lastError: message,
     publishedAt: null,
   });
@@ -176,6 +203,13 @@ const markPostFailure = async (
     status: 'failed',
     lastError: message,
   }).catch(() => []);
+
+  logOperationalEvent('post_failed', {
+    userId,
+    scheduledPostId: postId,
+    attemptNumber: retryCount,
+    retryable: shouldRetry,
+  }, shouldRetry ? 'warn' : 'error');
 
   await Promise.all(
     syncedItems.map((item) =>
@@ -187,6 +221,15 @@ const markPostFailure = async (
       }).catch(() => null)
     )
   );
+
+  if (shouldRetry) {
+    logOperationalEvent('post_retry_scheduled', {
+      userId,
+      scheduledPostId: postId,
+      attemptNumber: retryCount,
+      nextRetryAt,
+    }, 'warn');
+  }
 };
 
 const revalidateScheduledPublishInput = async (
@@ -264,11 +307,29 @@ const revalidateScheduledPublishInput = async (
 
 const processScheduledPost = async (postId: string, userId: string) => {
   const client = requireSupabaseAdmin();
-  const post = await getScheduledPostById(client, userId, postId);
+  const currentPost = await getScheduledPostById(client, userId, postId);
 
-  if (!post || !['pending', 'scheduled'].includes(post.status)) {
-    return;
+  if (!currentPost || !['scheduled', 'failed'].includes(currentPost.status)) {
+    return false;
   }
+
+  const post = await claimScheduledPostForProcessing(
+    client,
+    currentPost,
+    new Date().toISOString(),
+    SCHEDULER_MAX_RETRY_ATTEMPTS
+  );
+
+  if (!post) {
+    return false;
+  }
+
+  logOperationalEvent('post_claimed', {
+    userId: post.userId,
+    scheduledPostId: post.id,
+    platform: post.platform,
+    attemptNumber: post.retryCount,
+  });
 
   let socialAccount: SocialAccount | null = null;
 
@@ -279,11 +340,12 @@ const processScheduledPost = async (postId: string, userId: string) => {
       queue: QUEUE_NAMES.schedulerPublish,
       scheduledPostId: postId,
       provider: 'meta',
+      attemptNumber: post.retryCount,
     });
 
     await syncScheduledItemStatusByScheduledPostId(client, post.id, {
       status: 'publishing',
-      attemptCount: post.publishAttemptedAt ? 1 : 1,
+      attemptCount: post.retryCount,
       lastError: null,
     }).catch(() => []);
 
@@ -294,17 +356,25 @@ const processScheduledPost = async (postId: string, userId: string) => {
     );
 
     if (!socialAccount) {
-      await markPostFailure(post.id, post.userId, 'The connected account could not be found.');
-      return;
+      await markPostFailure(
+        post.id,
+        post.userId,
+        'The connected account could not be found.',
+        undefined,
+        { retryCount: post.retryCount, retryable: false }
+      );
+      return true;
     }
 
     if (socialAccount.oauthProvider !== 'meta') {
       await markPostFailure(
         post.id,
         post.userId,
-        'PrixmoAI can auto-publish only verified Meta accounts right now. Reconnect this account through Meta first.'
+        'PrixmoAI can auto-publish only verified Meta accounts right now. Reconnect this account through Meta first.',
+        undefined,
+        { retryCount: post.retryCount, retryable: false }
       );
-      return;
+      return true;
     }
 
     const published = await publishScheduledMetaPost(socialAccount, post);
@@ -315,11 +385,19 @@ const processScheduledPost = async (postId: string, userId: string) => {
       publishAttemptedAt: published.publishedAt,
       publishedAt: published.publishedAt,
       lastError: null,
+      failedAt: null,
+      nextRetryAt: null,
+      platformResponse: {
+        provider: 'meta',
+        platform: socialAccount.platform,
+        externalPostId: published.externalPostId,
+        publishedAt: published.publishedAt,
+      },
     });
 
     const syncedItems = await syncScheduledItemStatusByScheduledPostId(client, post.id, {
       status: 'published',
-      attemptCount: 1,
+      attemptCount: post.retryCount,
       lastError: null,
     }).catch(() => []);
 
@@ -332,6 +410,7 @@ const processScheduledPost = async (postId: string, userId: string) => {
           payloadJson: {
             externalPostId: published.externalPostId,
             publishedAt: published.publishedAt,
+            attemptNumber: post.retryCount,
           },
         }).catch(() => null)
       )
@@ -345,6 +424,13 @@ const processScheduledPost = async (postId: string, userId: string) => {
       platform: socialAccount.platform,
       scheduledPostId: post.id,
       socialAccountId: socialAccount.id,
+      externalPostId: published.externalPostId,
+    });
+    logOperationalEvent('post_published', {
+      userId: post.userId,
+      scheduledPostId: post.id,
+      platform: socialAccount.platform,
+      attemptNumber: post.retryCount,
       externalPostId: published.externalPostId,
     });
 
@@ -403,6 +489,7 @@ const processScheduledPost = async (postId: string, userId: string) => {
       socialAccountId: socialAccount?.id ?? post.socialAccountId,
       failureKind: normalized?.kind ?? 'unknown',
       retryable: normalized?.retryable ?? false,
+      attemptNumber: post.retryCount,
     });
     recordFailureSpikeSignal('scheduler_publish_failed', {
       userId,
@@ -425,8 +512,81 @@ const processScheduledPost = async (postId: string, userId: string) => {
       retryable: normalized?.retryable ?? false,
       provider: socialAccount?.oauthProvider ?? null,
       platform: socialAccount?.platform ?? post.platform,
+      attemptNumber: post.retryCount,
+    }, {
+      retryCount: post.retryCount,
+      retryable: normalized?.retryable ?? false,
     });
   }
+
+  return true;
+};
+
+export const processDueScheduledPosts = async (
+  options: {
+    batchSize?: number;
+    now?: Date;
+  } = {}
+) => {
+  const startedAt = Date.now();
+  const client = requireSupabaseAdmin();
+  const now = options.now ?? new Date();
+  const nowIso = now.toISOString();
+  const batchSize = Math.max(1, Math.min(options.batchSize ?? SCHEDULER_PROCESS_BATCH_SIZE, 20));
+  const stuckCutoff = new Date(
+    now.getTime() - SCHEDULER_PROCESSING_TIMEOUT_MS
+  ).toISOString();
+
+  logOperationalEvent('scheduler_started', {
+    batchSize,
+    source: 'internal_endpoint',
+  });
+
+  const recovered = await recoverStuckProcessingPosts(client, stuckCutoff, nowIso);
+
+  if (recovered > 0) {
+    logOperationalEvent('stuck_post_recovered', {
+      recovered,
+      cutoff: stuckCutoff,
+    }, 'warn');
+  }
+
+  const posts = await getDueScheduledPosts(
+    client,
+    batchSize,
+    nowIso,
+    SCHEDULER_MAX_RETRY_ATTEMPTS
+  );
+  let claimed = 0;
+
+  for (const post of posts) {
+    try {
+      if (await processScheduledPost(post.id, post.userId)) {
+        claimed += 1;
+      }
+    } catch (error) {
+      logFailure('post_failed', error, {
+        userId: post.userId,
+        scheduledPostId: post.id,
+        platform: post.platform,
+      });
+    }
+  }
+
+  const durationMs = Date.now() - startedAt;
+  logOperationalEvent('scheduler_completed', {
+    checked: posts.length,
+    claimed,
+    recovered,
+    durationMs,
+  });
+
+  return {
+    checked: posts.length,
+    claimed,
+    recovered,
+    durationMs,
+  };
 };
 
 const hydrateScheduledPublishJobs = async () => {

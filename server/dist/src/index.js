@@ -18,6 +18,7 @@ const billing_routes_1 = __importDefault(require("./routes/billing.routes"));
 const content_routes_1 = __importDefault(require("./routes/content.routes"));
 const generate_routes_1 = __importDefault(require("./routes/generate.routes"));
 const image_routes_1 = __importDefault(require("./routes/image.routes"));
+const internal_routes_1 = __importDefault(require("./routes/internal.routes"));
 const runtime_routes_1 = __importDefault(require("./routes/runtime.routes"));
 const scheduler_routes_1 = __importDefault(require("./routes/scheduler.routes"));
 const constants_1 = require("./config/constants");
@@ -33,6 +34,7 @@ const package_json_1 = require("../package.json");
 const redis_1 = require("./lib/redis");
 const superAdmin_1 = require("./lib/superAdmin");
 const requestContext_1 = require("./lib/requestContext");
+const health_1 = require("./lib/health");
 const app = (0, express_1.default)();
 const PORT = constants_1.APP_PORT;
 const clientDistCandidates = [
@@ -118,12 +120,7 @@ app.get('/', (req, res) => {
 });
 // 2. Health Check Endpoint
 app.get('/health', (req, res) => {
-    res.status(200).json({
-        status: "UP",
-        message: "Server is healthy and running",
-        timestamp: (0, timezone_1.formatIstTimestamp)(),
-        environment: process.env.NODE_ENV || 'development'
-    });
+    res.status(200).json((0, health_1.getHealthPayload)());
 });
 app.use('/api/auth', auth_routes_1.default);
 app.use('/api/admin-health', adminHealth_routes_1.default);
@@ -132,6 +129,7 @@ app.use('/api/billing', billing_routes_1.default);
 app.use('/api/content', content_routes_1.default);
 app.use('/api/generate', generate_routes_1.default);
 app.use('/api/images', image_routes_1.default);
+app.use('/api/internal', internal_routes_1.default);
 app.use('/api/runtime', runtime_routes_1.default);
 app.use('/api/scheduler', scheduler_routes_1.default);
 if (clientDistPath && clientIndexPath) {

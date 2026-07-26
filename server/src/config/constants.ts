@@ -51,6 +51,16 @@ export const START_BACKGROUND_WORKERS_ON_BOOT = readBoolean(
   process.env.START_BACKGROUND_WORKERS_ON_BOOT,
   !LOW_REDIS_COMMAND_MODE && NODE_ENV === 'production'
 );
+export const CRON_SECRET = process.env.CRON_SECRET || '';
+export const SCHEDULER_PROCESS_BATCH_SIZE = Number(
+  process.env.SCHEDULER_PROCESS_BATCH_SIZE || 10
+);
+export const SCHEDULER_PROCESSING_TIMEOUT_MS = Number(
+  process.env.SCHEDULER_PROCESSING_TIMEOUT_MS || 15 * 60_000
+);
+export const SCHEDULER_MAX_RETRY_ATTEMPTS = Number(
+  process.env.SCHEDULER_MAX_RETRY_ATTEMPTS || 3
+);
 export const GENERATION_WORKER_IDLE_SHUTDOWN_MS = Number(
   process.env.GENERATION_WORKER_IDLE_SHUTDOWN_MS ||
     (LOW_REDIS_COMMAND_MODE ? 15_000 : 0)
@@ -454,6 +464,7 @@ export const SUPABASE_SOURCE_IMAGE_BUCKET =
 export const SCHEDULED_POST_STATUSES = [
   'pending',
   'scheduled',
+  'processing',
   'published',
   'failed',
   'cancelled',

@@ -13,6 +13,7 @@ import billingRouter from "./routes/billing.routes";
 import contentRouter from "./routes/content.routes";
 import generateRouter from "./routes/generate.routes";
 import imageRouter from "./routes/image.routes";
+import internalRouter from "./routes/internal.routes";
 import runtimeRouter from "./routes/runtime.routes";
 import schedulerRouter from "./routes/scheduler.routes";
 import {
@@ -37,6 +38,7 @@ import { version } from '../package.json';
 import { isRedisConfigured } from './lib/redis';
 import { ensureConfiguredSuperAdminAccount } from './lib/superAdmin';
 import { runWithRequestContext } from './lib/requestContext';
+import { getHealthPayload } from './lib/health';
 
 
 const app = express();
@@ -144,12 +146,7 @@ app.get('/', (req, res) => {
 
 // 2. Health Check Endpoint
 app.get('/health', (req, res) => {
-  res.status(200).json({
-    status: "UP",
-    message: "Server is healthy and running",
-    timestamp: formatIstTimestamp(),
-    environment: process.env.NODE_ENV || 'development'
-  });
+  res.status(200).json(getHealthPayload());
 });
 
 app.use('/api/auth', authRouter);
@@ -159,6 +156,7 @@ app.use('/api/billing', billingRouter);
 app.use('/api/content', contentRouter);
 app.use('/api/generate', generateRouter);
 app.use('/api/images', imageRouter);
+app.use('/api/internal', internalRouter);
 app.use('/api/runtime', runtimeRouter);
 app.use('/api/scheduler', schedulerRouter);
 

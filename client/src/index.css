@@ -5961,6 +5961,7 @@ img {
   background: rgba(143, 216, 255, 0.08);
 }
 
+.queue-status-badge--processing,
 .queue-status-badge--publishing {
   color: #fff1d1;
   border-color: rgba(255, 205, 120, 0.24);

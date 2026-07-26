@@ -4,6 +4,7 @@ import type { ScheduledItemStatus, ScheduledPostStatus } from '../../types';
 const STATUS_LABELS: Record<ScheduledPostStatus | ScheduledItemStatus, string> = {
   pending: 'Pending',
   scheduled: 'Scheduled',
+  processing: 'Processing',
   publishing: 'Publishing',
   published: 'Published',
   failed: 'Failed',
