@@ -2,18 +2,18 @@ import {
   motion,
   useReducedMotion,
   useScroll,
+  useSpring,
   useTransform,
+  type MotionValue,
 } from 'framer-motion';
 import {
   ArrowRight,
   BarChart3,
   CalendarClock,
-  Camera,
   Check,
   CircleX,
   ImagePlus,
   Play,
-  Quote,
   Sparkles,
   Star,
   Upload,
@@ -33,14 +33,6 @@ import { useAuth } from '../../hooks/useAuth';
 import { APP_NAME } from '../../lib/constants';
 import { cn } from '../../lib/utils';
 
-const socialProofItems = [
-  'Clothing Brands',
-  'Restaurants',
-  'Salons',
-  'Ecommerce Sellers',
-  'Gyms',
-  'Home Decor',
-] as const;
 
 type HeroOutputId =
   | 'strategy'
@@ -268,8 +260,8 @@ const buildHeroInputMotion = ({
     } else {
       times.push(
         holdRatio +
-          ((index - holdFrameCount) / Math.max(travelFrameCount - 1, 1)) *
-            (1 - holdRatio),
+        ((index - holdFrameCount) / Math.max(travelFrameCount - 1, 1)) *
+        (1 - holdRatio),
       );
     }
 
@@ -312,47 +304,709 @@ const buildHeroInputMotion = ({
   };
 };
 
-const problemCards = [
-  {
-    icon: Camera,
-    title: 'Expensive Shoots',
-    copy:
-      'Professional product shoots cost Rs 15,000 to Rs 40,000 per session. Too expensive for most small businesses.',
-  },
-  {
-    icon: CalendarClock,
-    title: 'No Time to Post',
-    copy:
-      'You run the business, manage staff, and serve customers. Who has time to write captions every single day?',
-  },
-  {
-    icon: BarChart3,
-    title: 'Poor Engagement',
-    copy:
-      'Posting random content with no strategy gets zero reach and zero customers. Your competitors keep growing while you stay invisible.',
-  },
+const noisePills = [
+  { height: 5, grow: 1 },
+  { height: 14, grow: 1 },
+  { height: 5, grow: 1 },
+  { height: 26, grow: 1.15 },
+  { height: 5, grow: 1 },
+  { height: 14, grow: 1 },
+  { height: 5, grow: 1 },
+  { height: 14, grow: 1 },
+  { height: 26, grow: 1.15 },
+  { height: 5, grow: 1 },
+  { height: 14, grow: 1 },
+  { height: 5, grow: 1 },
+  { height: 14, grow: 1 },
+  { height: 5, grow: 1 },
+  { height: 14, grow: 1 },
+  { height: 5, grow: 1 },
+  { height: 26, grow: 1.15 },
+  { height: 5, grow: 1 },
+  { height: 14, grow: 1 },
+  { height: 5, grow: 1 },
 ] as const;
 
-const howItWorksSteps = [
-  {
-    icon: Upload,
-    title: 'Upload Your Product',
-    copy:
-      'Take a photo of your product on your phone. Upload it to PrixmoAI. Tell us your brand tone and what you want to achieve.',
-  },
-  {
-    icon: WandSparkles,
-    title: 'AI Creates Everything',
-    copy:
-      'PrixmoAI generates 3 caption options, 15 realtime trending hashtags, a reel script, a professional product image and a professional video instantly.',
-  },
-  {
-    icon: CalendarClock,
-    title: 'Schedule and Relax',
-    copy:
-      'Pick your favourite caption, choose a date, and PrixmoAI posts directly to Instagram and Facebook at the perfect time.',
-  },
+const signalPills = [
+  { height: 5, grow: 1 },
+  { height: 6, grow: 1 },
+  { height: 7, grow: 1 },
+  { height: 9, grow: 1 },
+  { height: 11, grow: 1 },
+  { height: 13, grow: 1 },
+  { height: 15, grow: 1 },
+  { height: 18, grow: 1 },
+  { height: 21, grow: 1 },
+  { height: 25, grow: 1 },
+  { height: 29, grow: 1 },
+  { height: 34, grow: 1 },
+  { height: 40, grow: 1 },
+  { height: 46, grow: 1.05 },
+  { height: 52, grow: 1.25 },
+  { height: 52, grow: 1.25 },
 ] as const;
+
+const SignalGapPill = ({
+  height,
+  grow,
+  index,
+  total,
+  progress,
+  prefersReducedMotion,
+}: {
+  height: number;
+  grow: number;
+  index: number;
+  total: number;
+  progress: MotionValue<number>;
+  prefersReducedMotion: boolean;
+}) => {
+  // Cascading sequential fill window across 0.06 to 0.88 of pinned scroll progress
+  const startRange = 0.06;
+  const endRange = 0.88;
+  const step = (endRange - startRange) / total;
+  const start = startRange + index * step;
+  const end = Math.min(1, start + step * 1.6);
+
+  // Vertical fill of the cyan color inside the pill
+  const fillScaleY = useTransform(progress, [start, end], [0, 1]);
+  const fillOpacity = useTransform(
+    progress,
+    [start, Math.min(1, start + step * 0.3), end],
+    [0, 0.95, 1]
+  );
+
+  // Glow aura blooms as each bar gets filled
+  const glowOpacity = useTransform(
+    progress,
+    [start + step * 0.4, end],
+    [0, 1]
+  );
+
+  const isHighBar = index >= total - 4;
+  const glowClass = isHighBar
+    ? 'signal-gap-pill__glow--high'
+    : 'signal-gap-pill__glow--standard';
+
+  if (prefersReducedMotion) {
+    return (
+      <span
+        className="signal-gap-pill signal-gap-pill--signal-wrap"
+        style={{
+          height: `${height}px`,
+          flexGrow: grow,
+        }}
+      >
+        <span className="signal-gap-pill__base">
+          <span className="signal-gap-pill__fill signal-gap-pill__fill--static" />
+        </span>
+        <span
+          className={`signal-gap-pill__glow ${glowClass} signal-gap-pill__glow--static`}
+          aria-hidden="true"
+        />
+      </span>
+    );
+  }
+
+  return (
+    <span
+      className="signal-gap-pill signal-gap-pill--signal-wrap"
+      style={{
+        height: `${height}px`,
+        flexGrow: grow,
+      }}
+    >
+      {/* Unfilled dark silhouette container with inner clip */}
+      <span className="signal-gap-pill__base">
+        <motion.span
+          className="signal-gap-pill__fill"
+          style={{
+            scaleY: fillScaleY,
+            opacity: fillOpacity,
+          }}
+        />
+      </span>
+
+      {/* Cyan luminous bloom when bar is filled */}
+      <motion.span
+        className={`signal-gap-pill__glow ${glowClass}`}
+        style={{
+          opacity: glowOpacity,
+        }}
+        aria-hidden="true"
+      />
+    </span>
+  );
+};
+
+const SignalGapCard = ({
+  progress,
+  prefersReducedMotion,
+}: {
+  progress: MotionValue<number>;
+  prefersReducedMotion: boolean;
+}) => {
+  // Simultaneously illuminate "THE SIGNAL" word and caption in sync with the bars
+  const signalGlowOpacity = useTransform(progress, [0.06, 0.85], [0, 1]);
+  const signalCaptionOpacity = useTransform(progress, [0.08, 0.85], [0.55, 0.95]);
+
+  return (
+    <Card className="landing-card signal-gap-card">
+      <h3 className="signal-gap-card__title">
+        Being active online isn't the same as growing.
+      </h3>
+      <div className="signal-gap-card__divider" />
+
+      {/* THE NOISE */}
+      <div className="signal-gap-row signal-gap-row--noise">
+        <span className="signal-gap-row__eyebrow">THE NOISE</span>
+        <div
+          className="signal-gap-track signal-gap-track--noise"
+          aria-hidden="true"
+        >
+          {noisePills.map((pill, i) => (
+            <span
+              key={`noise-${i}`}
+              className="signal-gap-pill signal-gap-pill--noise"
+              style={{
+                height: `${pill.height}px`,
+                flexGrow: pill.grow,
+              }}
+            />
+          ))}
+        </div>
+        <p className="signal-gap-row__caption">
+          Random posts. Repeated ideas. No clear direction.
+        </p>
+      </div>
+
+      {/* THE SIGNAL */}
+      <div className="signal-gap-row signal-gap-row--signal">
+        <div className="signal-gap-row__eyebrow-wrap">
+          <span className="signal-gap-row__eyebrow signal-gap-row__eyebrow--base">
+            THE SIGNAL
+          </span>
+          <motion.span
+            className="signal-gap-row__eyebrow signal-gap-row__eyebrow--lit"
+            style={{
+              opacity: prefersReducedMotion ? 1 : signalGlowOpacity,
+            }}
+            aria-hidden="true"
+          >
+            THE SIGNAL
+          </motion.span>
+        </div>
+
+        <div
+          className="signal-gap-track signal-gap-track--signal"
+          aria-hidden="true"
+        >
+          {signalPills.map((pill, i) => (
+            <SignalGapPill
+              key={`signal-${i}`}
+              height={pill.height}
+              grow={pill.grow}
+              index={i}
+              total={signalPills.length}
+              progress={progress}
+              prefersReducedMotion={prefersReducedMotion}
+            />
+          ))}
+        </div>
+        <motion.p
+          className="signal-gap-row__caption"
+          style={{
+            opacity: prefersReducedMotion ? 0.92 : signalCaptionOpacity,
+          }}
+        >
+          Consistent messaging. Intentional content. Measured improvement.
+        </motion.p>
+      </div>
+    </Card>
+  );
+};
+
+const SignalGapSection = () => {
+  const sectionRef = useRef<HTMLElement>(null);
+  const prefersReducedMotion = useReducedMotion() ?? false;
+
+  const { scrollYProgress } = useScroll({
+    target: sectionRef,
+    offset: ['start start', 'end end'],
+  });
+
+  const smoothProgress = useSpring(scrollYProgress, {
+    stiffness: 110,
+    damping: 24,
+    mass: 0.12,
+  });
+
+  return (
+    <section ref={sectionRef} className="signal-gap-section">
+      <div className="signal-gap-section__sticky">
+        <SectionHeading
+          className="landing-section__header--problem"
+          title="Stop struggling to post."
+          subtitle={
+            <span className="subtitle-presence">
+              <span className="subtitle-presence__glow" aria-hidden="true" />
+              <span className="subtitle-presence__text">Start showing up.</span>
+            </span>
+          }
+        />
+
+        <SignalGapCard
+          progress={smoothProgress}
+          prefersReducedMotion={prefersReducedMotion}
+        />
+      </div>
+    </section>
+  );
+};
+
+const HowItWorksConnectedSequenceSection = () => {
+  const sectionRef = useRef<HTMLElement>(null);
+  const prefersReducedMotion = useReducedMotion() ?? false;
+
+  const { scrollYProgress } = useScroll({
+    target: sectionRef,
+    offset: ['start start', 'end end'],
+  });
+
+  const smoothProgress = useSpring(scrollYProgress, {
+    stiffness: 140,
+    damping: 24,
+    mass: 0.1,
+    restDelta: 0.001,
+  });
+
+  // Step 1: Upload activation (activates around 0.18)
+  const step1NumberColor = useTransform(smoothProgress, [0.06, 0.18], ['#414F60', '#78CFFF']);
+  const step1HeadingColor = useTransform(
+    smoothProgress,
+    [0.06, 0.18],
+    ['rgba(241, 244, 248, 0.45)', '#F1F4F8']
+  );
+  const step1DescOpacity = useTransform(smoothProgress, [0.06, 0.18], [0.45, 1]);
+  const node1Border = useTransform(smoothProgress, [0.12, 0.18], ['#26313D', '#78CFFF']);
+  const node1Scale = useTransform(smoothProgress, [0.12, 0.18], [1, 1.15]);
+  const node1DotBg = useTransform(smoothProgress, [0.12, 0.18], ['#26313D', '#78CFFF']);
+  const node1Shadow = useTransform(
+    smoothProgress,
+    [0.12, 0.18],
+    ['0 0 0px rgba(120, 207, 255, 0)', '0 0 16px rgba(120, 207, 255, 0.45)']
+  );
+
+  // Step 2: Create activation (activates around 0.48)
+  const step2NumberColor = useTransform(smoothProgress, [0.34, 0.48], ['#414F60', '#78CFFF']);
+  const step2HeadingColor = useTransform(
+    smoothProgress,
+    [0.34, 0.48],
+    ['rgba(241, 244, 248, 0.45)', '#F1F4F8']
+  );
+  const step2DescOpacity = useTransform(smoothProgress, [0.34, 0.48], [0.45, 1]);
+  const step2ClipInset = useTransform(smoothProgress, [0.30, 0.48], [100, 0]);
+  const step2ClipPath = useTransform(step2ClipInset, (val) => `inset(0 ${val}% 0 0)`);
+  const node2Border = useTransform(smoothProgress, [0.42, 0.48], ['#26313D', '#78CFFF']);
+  const node2Scale = useTransform(smoothProgress, [0.42, 0.48], [1, 1.15]);
+  const node2DotBg = useTransform(smoothProgress, [0.42, 0.48], ['#26313D', '#78CFFF']);
+  const node2Shadow = useTransform(
+    smoothProgress,
+    [0.42, 0.48],
+    ['0 0 0px rgba(120, 207, 255, 0)', '0 0 16px rgba(120, 207, 255, 0.45)']
+  );
+
+  // Step 3: Publish activation (activates around 0.78, where line completes to the end of 3)
+  const step3NumberColor = useTransform(smoothProgress, [0.64, 0.78], ['#414F60', '#78CFFF']);
+  const step3HeadingColor = useTransform(
+    smoothProgress,
+    [0.64, 0.78],
+    ['rgba(241, 244, 248, 0.45)', '#F1F4F8']
+  );
+  const step3DescOpacity = useTransform(smoothProgress, [0.64, 0.78], [0.45, 1]);
+  const node3Border = useTransform(smoothProgress, [0.72, 0.78], ['#26313D', '#78CFFF']);
+  const node3Scale = useTransform(smoothProgress, [0.72, 0.78], [1, 1.15]);
+  const node3DotBg = useTransform(smoothProgress, [0.72, 0.78], ['#26313D', '#78CFFF']);
+  const node3Shadow = useTransform(
+    smoothProgress,
+    [0.72, 0.78],
+    ['0 0 0px rgba(120, 207, 255, 0)', '0 0 16px rgba(120, 207, 255, 0.45)']
+  );
+
+  // Stroke completes exactly at Node 3 (the end of 3) at 0.78
+  const horizontalStrokeDashoffset = useTransform(
+    smoothProgress,
+    [0.15, 0.78],
+    [666.6, 0]
+  );
+  const horizontalDashoffset = prefersReducedMotion ? 0 : horizontalStrokeDashoffset;
+
+  const verticalStrokeDashoffset = useTransform(
+    smoothProgress,
+    [0.15, 0.78],
+    [976, 0]
+  );
+  const verticalDashoffset = prefersReducedMotion ? 0 : verticalStrokeDashoffset;
+  const strokeOpacity = useTransform(smoothProgress, [0.12, 0.15], [0, 1]);
+
+  // Symphony & Success Sparkle Flow (blooms from 0.76 to 0.94 at the end of 3)
+  const sparkleOpacity = useTransform(smoothProgress, [0.76, 0.82, 0.97, 1.0], [0, 1, 1, 1]);
+  const sparkleScale = useTransform(smoothProgress, [0.76, 0.84, 0.92], [0.2, 1.25, 1.0]);
+  const sparkleRotate = useTransform(smoothProgress, [0.76, 0.94], [-25, 25]);
+  const sparkleAuraScale = useTransform(smoothProgress, [0.78, 0.86, 0.94], [0.8, 1.9, 1.5]);
+  const sparkleAuraOpacity = useTransform(smoothProgress, [0.78, 0.85, 0.94], [0, 0.85, 0.55]);
+  const sparkleSat1X = useTransform(smoothProgress, [0.78, 0.90], [0, 18]);
+  const sparkleSat1Y = useTransform(smoothProgress, [0.78, 0.90], [0, -18]);
+  const sparkleSat1Scale = useTransform(smoothProgress, [0.78, 0.86, 0.94], [0, 0.85, 0.7]);
+  const sparkleSat2X = useTransform(smoothProgress, [0.80, 0.92], [0, 24]);
+  const sparkleSat2Y = useTransform(smoothProgress, [0.80, 0.92], [0, 12]);
+  const sparkleSat2Scale = useTransform(smoothProgress, [0.80, 0.88, 0.94], [0, 0.65, 0.55]);
+  const symphonyGlowOpacity = useTransform(smoothProgress, [0.76, 0.86, 0.96], [0, 0.85, 0.5]);
+
+  return (
+    <section id="how-it-works" ref={sectionRef} className="how-it-works-section">
+      <div className="how-it-works-section__sticky">
+        <SectionHeading
+          className="landing-section__header--sequence"
+          eyebrow="HOW IT WORKS"
+          title="From product to published."
+          subtitle="Three simple steps. One complete content workflow."
+        />
+
+        <div className="connected-sequence">
+        {/* Horizontal connecting rail for desktop & tablet */}
+        <div className="connected-sequence__rail-wrap connected-sequence__rail-wrap--horizontal" aria-hidden="true">
+          <svg
+            className="connected-sequence__svg connected-sequence__svg--horizontal"
+            viewBox="0 0 1000 24"
+            preserveAspectRatio="none"
+            fill="none"
+          >
+            <defs>
+              <radialGradient id="sparkleGradientMain" cx="50%" cy="50%" r="50%">
+                <stop offset="0%" stopColor="#FFFFFF" />
+                <stop offset="45%" stopColor="#78CFFF" />
+                <stop offset="100%" stopColor="#73F0D5" />
+              </radialGradient>
+              <radialGradient id="sparkleGradientAurora" cx="50%" cy="50%" r="50%">
+                <stop offset="0%" stopColor="#FFFFFF" />
+                <stop offset="50%" stopColor="#73F0D5" />
+                <stop offset="100%" stopColor="#4DE0B8" />
+              </radialGradient>
+              <radialGradient id="sparkleGradientCyan" cx="50%" cy="50%" r="50%">
+                <stop offset="0%" stopColor="#FFFFFF" />
+                <stop offset="60%" stopColor="#78CFFF" />
+                <stop offset="100%" stopColor="#38B6FF" />
+              </radialGradient>
+              <linearGradient id="symphonyGlow" x1="0%" y1="0%" x2="100%" y2="0%">
+                <stop offset="0%" stopColor="#78CFFF" stopOpacity="0.2" />
+                <stop offset="50%" stopColor="#73F0D5" stopOpacity="0.7" />
+                <stop offset="100%" stopColor="#FFFFFF" stopOpacity="0.95" />
+              </linearGradient>
+            </defs>
+
+            {/* Inactive base line ending at Node 3 (833.3) */}
+            <path
+              d="M 166.7 12 L 833.3 12"
+              stroke="#26313D"
+              strokeWidth="1.5"
+              vectorEffect="non-scaling-stroke"
+            />
+            {/* Active cyan stroke starting at Node 1 (166.7) and ending at Node 3 (833.3) */}
+            <motion.path
+              d="M 166.7 12 L 833.3 12"
+              stroke="#78CFFF"
+              strokeWidth="1.5"
+              strokeDasharray="666.6 3000"
+              strokeLinecap="butt"
+              vectorEffect="non-scaling-stroke"
+              style={{
+                strokeDashoffset: horizontalDashoffset,
+                opacity: prefersReducedMotion ? 1 : strokeOpacity,
+              }}
+            />
+            {/* Symphony fluorescent pulse wave along completed line */}
+            <motion.path
+              d="M 166.7 12 L 833.3 12"
+              stroke="url(#symphonyGlow)"
+              strokeWidth="3"
+              strokeDasharray="666.6 3000"
+              strokeLinecap="butt"
+              vectorEffect="non-scaling-stroke"
+              style={{
+                strokeDashoffset: horizontalDashoffset,
+                opacity: prefersReducedMotion ? 0.6 : symphonyGlowOpacity,
+              }}
+            />
+          </svg>
+        </div>
+
+        {/* Vertical connecting rail for mobile */}
+        <div className="connected-sequence__rail-wrap connected-sequence__rail-wrap--vertical" aria-hidden="true">
+          <svg
+            className="connected-sequence__svg connected-sequence__svg--vertical"
+            viewBox="0 0 24 1000"
+            preserveAspectRatio="none"
+            fill="none"
+          >
+            <path
+              d="M 12 12 L 12 988"
+              stroke="#26313D"
+              strokeWidth="1.5"
+              vectorEffect="non-scaling-stroke"
+            />
+            <motion.path
+              d="M 12 12 L 12 988"
+              stroke="#78CFFF"
+              strokeWidth="1.5"
+              strokeDasharray="976 4000"
+              strokeLinecap="butt"
+              vectorEffect="non-scaling-stroke"
+              style={{
+                strokeDashoffset: verticalDashoffset,
+                opacity: prefersReducedMotion ? 1 : strokeOpacity,
+              }}
+            />
+            <motion.path
+              d="M 12 12 L 12 988"
+              stroke="url(#symphonyGlow)"
+              strokeWidth="3"
+              strokeDasharray="976 4000"
+              strokeLinecap="butt"
+              vectorEffect="non-scaling-stroke"
+              style={{
+                strokeDashoffset: verticalDashoffset,
+                opacity: prefersReducedMotion ? 0.6 : symphonyGlowOpacity,
+              }}
+            />
+          </svg>
+        </div>
+
+        <div className="connected-sequence__grid">
+          {/* Step 01 — Upload Your Product */}
+          <div className="connected-sequence__step">
+            <motion.div
+              className="connected-sequence__number"
+              style={{ color: prefersReducedMotion ? '#78CFFF' : step1NumberColor }}
+            >
+              01
+            </motion.div>
+
+            <div className="connected-sequence__node-anchor">
+              <motion.div
+                className="connected-sequence__node"
+                style={{
+                  borderColor: prefersReducedMotion ? '#78CFFF' : node1Border,
+                  scale: prefersReducedMotion ? 1.15 : node1Scale,
+                  boxShadow: prefersReducedMotion
+                    ? '0 0 16px rgba(120, 207, 255, 0.45)'
+                    : node1Shadow,
+                }}
+              >
+                <motion.span
+                  className="connected-sequence__node-core"
+                  style={{
+                    backgroundColor: prefersReducedMotion ? '#78CFFF' : node1DotBg,
+                  }}
+                />
+              </motion.div>
+            </div>
+
+            <div className="connected-sequence__content">
+              <motion.h3
+                className="connected-sequence__heading"
+                style={{ color: prefersReducedMotion ? '#F1F4F8' : step1HeadingColor }}
+              >
+                Upload Your Product
+              </motion.h3>
+
+              <motion.p
+                className="connected-sequence__desc"
+                style={{
+                  opacity: prefersReducedMotion ? 1 : step1DescOpacity,
+                }}
+              >
+                Start with a product photo. Tell PrixmoAI about your brand and what you want to achieve.
+              </motion.p>
+            </div>
+          </div>
+
+          {/* Step 02 — Create Your Content */}
+          <div className="connected-sequence__step">
+            <motion.div
+              className="connected-sequence__number"
+              style={{ color: prefersReducedMotion ? '#78CFFF' : step2NumberColor }}
+            >
+              02
+            </motion.div>
+
+            <div className="connected-sequence__node-anchor">
+              <motion.div
+                className="connected-sequence__node"
+                style={{
+                  borderColor: prefersReducedMotion ? '#78CFFF' : node2Border,
+                  scale: prefersReducedMotion ? 1.15 : node2Scale,
+                  boxShadow: prefersReducedMotion
+                    ? '0 0 16px rgba(120, 207, 255, 0.45)'
+                    : node2Shadow,
+                }}
+              >
+                <motion.span
+                  className="connected-sequence__node-core"
+                  style={{
+                    backgroundColor: prefersReducedMotion ? '#78CFFF' : node2DotBg,
+                  }}
+                />
+              </motion.div>
+            </div>
+
+            <div className="connected-sequence__content">
+              <motion.h3
+                className="connected-sequence__heading"
+                style={{ color: prefersReducedMotion ? '#F1F4F8' : step2HeadingColor }}
+              >
+                Create Your Content
+              </motion.h3>
+
+              <div className="connected-sequence__desc-wrap">
+                <p className="connected-sequence__desc connected-sequence__desc--base">
+                  Generate professional product visuals, captions, trending hashtags, reel scripts and videos.
+                </p>
+                <motion.p
+                  className="connected-sequence__desc connected-sequence__desc--reveal"
+                  style={{
+                    clipPath: prefersReducedMotion ? 'none' : step2ClipPath,
+                    opacity: prefersReducedMotion ? 1 : step2DescOpacity,
+                  }}
+                  aria-hidden="true"
+                >
+                  Generate professional product visuals, captions, trending hashtags, reel scripts and videos.
+                </motion.p>
+              </div>
+            </div>
+          </div>
+
+          {/* Step 03 — Schedule & Publish */}
+          <div className="connected-sequence__step">
+            <motion.div
+              className="connected-sequence__number"
+              style={{ color: prefersReducedMotion ? '#78CFFF' : step3NumberColor }}
+            >
+              03
+            </motion.div>
+
+            <div className="connected-sequence__node-anchor">
+              <motion.div
+                className="connected-sequence__node"
+                style={{
+                  borderColor: prefersReducedMotion ? '#78CFFF' : node3Border,
+                  scale: prefersReducedMotion ? 1.15 : node3Scale,
+                  boxShadow: prefersReducedMotion
+                    ? '0 0 16px rgba(120, 207, 255, 0.45)'
+                    : node3Shadow,
+                }}
+              >
+                <motion.span
+                  className="connected-sequence__node-core"
+                  style={{
+                    backgroundColor: prefersReducedMotion ? '#78CFFF' : node3DotBg,
+                  }}
+                />
+              </motion.div>
+
+              {/* Symphony & Success Sparkle Flow Blooming from the End of 3 */}
+              <motion.div
+                className="connected-sequence__sparkle-cluster"
+                style={{
+                  opacity: prefersReducedMotion ? 1 : sparkleOpacity,
+                  scale: prefersReducedMotion ? 1 : sparkleScale,
+                }}
+                aria-hidden="true"
+              >
+                {/* Fluorescent Aura Glow */}
+                <motion.div
+                  className="connected-sequence__sparkle-aura"
+                  style={{
+                    scale: prefersReducedMotion ? 1.5 : sparkleAuraScale,
+                    opacity: prefersReducedMotion ? 0.6 : sparkleAuraOpacity,
+                  }}
+                />
+
+                {/* Primary Diamond Sparkle Star */}
+                <motion.svg
+                  className="connected-sequence__sparkle-star connected-sequence__sparkle-star--main"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  style={{
+                    rotate: prefersReducedMotion ? 0 : sparkleRotate,
+                  }}
+                >
+                  <path
+                    d="M12 0 C12 7.2 16.8 12 24 12 C16.8 12 12 16.8 12 24 C12 16.8 7.2 12 0 12 C7.2 12 12 7.2 12 0 Z"
+                    fill="url(#sparkleGradientMain)"
+                  />
+                </motion.svg>
+
+                {/* Satellite Micro-Sparkle Top-Right */}
+                <motion.svg
+                  className="connected-sequence__sparkle-star connected-sequence__sparkle-star--sat1"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  style={{
+                    x: prefersReducedMotion ? 18 : sparkleSat1X,
+                    y: prefersReducedMotion ? -18 : sparkleSat1Y,
+                    scale: prefersReducedMotion ? 0.75 : sparkleSat1Scale,
+                  }}
+                >
+                  <path
+                    d="M12 0 C12 7.2 16.8 12 24 12 C16.8 12 12 16.8 12 24 C12 16.8 7.2 12 0 12 C7.2 12 12 7.2 12 0 Z"
+                    fill="url(#sparkleGradientAurora)"
+                  />
+                </motion.svg>
+
+                {/* Satellite Micro-Sparkle Bottom-Right */}
+                <motion.svg
+                  className="connected-sequence__sparkle-star connected-sequence__sparkle-star--sat2"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  style={{
+                    x: prefersReducedMotion ? 24 : sparkleSat2X,
+                    y: prefersReducedMotion ? 12 : sparkleSat2Y,
+                    scale: prefersReducedMotion ? 0.6 : sparkleSat2Scale,
+                  }}
+                >
+                  <path
+                    d="M12 0 C12 7.2 16.8 12 24 12 C16.8 12 12 16.8 12 24 C12 16.8 7.2 12 0 12 C7.2 12 12 7.2 12 0 Z"
+                    fill="url(#sparkleGradientCyan)"
+                  />
+                </motion.svg>
+              </motion.div>
+            </div>
+
+            <div className="connected-sequence__content">
+              <motion.h3
+                className="connected-sequence__heading"
+                style={{ color: prefersReducedMotion ? '#F1F4F8' : step3HeadingColor }}
+              >
+                Schedule & Publish
+              </motion.h3>
+
+              <motion.p
+                className="connected-sequence__desc"
+                style={{
+                  opacity: prefersReducedMotion ? 1 : step3DescOpacity,
+                }}
+              >
+                Review your content, choose your publishing time and manage your social media workflow.
+              </motion.p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+);
+};
 
 const featureCards = [
   {
@@ -431,7 +1085,7 @@ const pricingPlans: Array<{
     features: [
       { label: '25 AI captions for engagement / day', included: true },
       { label: '15 product image generations / day', included: true },
-       {label: 'No watermark', included: true },
+      { label: 'No watermark', included: true },
       { label: 'Trending Hashtag generator', included: true },
       { label: '15 Reel script generator / day', included: true },
       { label: 'Schedule 2 social account', included: true },
@@ -448,72 +1102,19 @@ const pricingPlans: Array<{
     features: [
       { label: '60 AI captions for engagement / day', included: true },
       { label: '35 high-speed image generations / day', included: true },
-      
+
       { label: 'Trending Hashtag generator', included: true },
       { label: '30 Reel scripts / day', included: true },
       { label: 'Schedule 5 social accounts', included: true },
       { label: 'Advanced analytics dashboard', included: true },
       { label: 'Caption keyword optimizer', included: true },
       { label: 'Priority support', included: true },
-      
+
     ],
   },
 ] as const;
 
-const testimonials = [
-  {
-    name: 'Priya S.',
-    role: 'Clothing Brand Owner, Jaipur',
-    quote:
-      'Pehle product shoot ke liye Rs 20,000 kharch karte the. Ab PrixmoAI se 10 minutes mein professional photos aur captions ready ho jaate hain. Best investment for my boutique.',
-  },
-  {
-    name: 'Rahul M.',
-    role: 'Restaurant Owner, Mumbai',
-    quote:
-      'My Instagram reach went from 200 to 5,000 in one month just by using PrixmoAI consistently. The captions feel natural and Indian, not like a robot wrote them.',
-  },
-  {
-    name: 'Anjali K.',
-    role: 'Salon Owner, Bangalore',
-    quote:
-      'As a salon owner I have zero time for social media. PrixmoAI schedules everything for me. I just upload photos on Sunday and the whole week is sorted automatically.',
-  },
-] as const;
 
-const audienceCards = [
-  {
-    title: 'Clothing & Fashion',
-    copy: 'Launch new drops faster with polished images, festival-ready captions, and stronger daily consistency.',
-  },
-  {
-    title: 'Restaurants & Food',
-    copy: 'Turn new dishes and offers into high-frequency posts without spending every evening writing content.',
-  },
-  {
-    title: 'Salons & Beauty',
-    copy: 'Showcase transformations, book more appointments, and keep your Instagram active even during busy weeks.',
-  },
-  {
-    title: 'Ecommerce Sellers',
-    copy: 'Upgrade plain catalogue photos into premium-looking assets that convert better on social and marketplaces.',
-  },
-  {
-    title: 'Gyms & Fitness',
-    copy: 'Create daily motivation, offer-led campaigns, and clean before-after storytelling without a content team.',
-  },
-  {
-    title: 'Home Decor',
-    copy: 'Present collections with premium styling and captions that feel aspirational, not copied from competitors.',
-  },
-] as const;
-
-const stats = [
-  { value: '500+', label: 'Businesses Using PrixmoAI' },
-  { value: '4.8 / 5', label: 'Average Rating' },
-  { value: '10x', label: 'Faster Content Creation' },
-  { value: '₹0', label: 'To Start Today' },
-] as const;
 
 const faqItems = [
   {
@@ -586,15 +1187,23 @@ const SectionHeading = ({
   eyebrow,
   title,
   description,
+  subtitle,
+  className,
 }: {
-  eyebrow: string;
-  title: string;
-  description: string;
+  eyebrow?: string;
+  title: React.ReactNode;
+  description?: React.ReactNode;
+  subtitle?: React.ReactNode;
+  className?: string;
 }) => (
-  <div className="landing-section__header">
-    <Badge className="landing-pill landing-pill--section">{eyebrow}</Badge>
+  <div className={cn('landing-section__header', className)}>
+    {eyebrow ? <Badge className="landing-pill landing-pill--section">{eyebrow}</Badge> : null}
     <h2>{title}</h2>
-    <p className="landing-copy landing-copy--center">{description}</p>
+    {subtitle ? (
+      <p className="landing-section__subtitle">{subtitle}</p>
+    ) : description ? (
+      <p className="landing-copy landing-copy--center">{description}</p>
+    ) : null}
   </div>
 );
 
@@ -806,9 +1415,9 @@ const HeroWhiteHolePulse = ({
             ? { opacity: [0.28, 0.94, 0.82], scale: [1, 1.38, 1.56] }
             : phase === 'whiteHoleFlash'
               ? { opacity: [0, 0.52, 0.36], scale: [0.76, 1.14, 1.28] }
-            : phase === 'returnToBlackhole'
-              ? { opacity: 0, scale: 0.88 }
-            : { opacity: 0, scale: 0.76 }
+              : phase === 'returnToBlackhole'
+                ? { opacity: 0, scale: 0.88 }
+                : { opacity: 0, scale: 0.76 }
         }
         transition={{
           duration:
@@ -827,9 +1436,9 @@ const HeroWhiteHolePulse = ({
             ? { opacity: [0.16, 0.72, 0.34, 0.08], scale: [0.9, 1.28, 1.54, 1.7] }
             : phase === 'whiteHoleFlash'
               ? { opacity: [0, 0.34, 0.12, 0], scale: [0.58, 1.04, 1.28, 1.42] }
-            : phase === 'returnToBlackhole'
-              ? { opacity: 0, scale: 0.96 }
-            : { opacity: 0, scale: 0.58 }
+              : phase === 'returnToBlackhole'
+                ? { opacity: 0, scale: 0.96 }
+                : { opacity: 0, scale: 0.58 }
         }
         transition={{
           duration:
@@ -852,9 +1461,9 @@ const HeroWhiteHolePulse = ({
             ? { opacity: [0.14, 0.7, 0.16], scale: [0.84, 1.36, 1.78] }
             : phase === 'whiteHoleFlash'
               ? { opacity: [0, 0.42, 0], scale: [0.42, 1.18, 1.56] }
-            : phase === 'returnToBlackhole'
-              ? { opacity: 0, scale: 1.02 }
-            : { opacity: 0, scale: 0.42 }
+              : phase === 'returnToBlackhole'
+                ? { opacity: 0, scale: 1.02 }
+                : { opacity: 0, scale: 0.42 }
         }
         transition={{
           duration:
@@ -976,16 +1585,16 @@ const HeroUserInputCard = ({
       }}
       animate={
         isActive
-            ? {
-              opacity: motionPath.opacity,
-              x: motionPath.x,
-              y: motionPath.y,
-              scale: motionPath.scale,
-              scaleX: motionPath.scaleX,
-              scaleY: motionPath.scaleY,
-              rotate: motionPath.rotate,
-              filter: motionPath.filter,
-            }
+          ? {
+            opacity: motionPath.opacity,
+            x: motionPath.x,
+            y: motionPath.y,
+            scale: motionPath.scale,
+            scaleX: motionPath.scaleX,
+            scaleY: motionPath.scaleY,
+            rotate: motionPath.rotate,
+            filter: motionPath.filter,
+          }
           : isAbsorbed
             ? absorbedState
             : isVisibleAtRest && phase === 'idle'
@@ -994,9 +1603,9 @@ const HeroUserInputCard = ({
                 ? restingState
                 : hiddenQueuedState
       }
-        transition={
-          isActive
-            ? activeTransition
+      transition={
+        isActive
+          ? activeTransition
           : phase === 'idle'
             ? {
               duration: 5.8 + index * 0.35,
@@ -1004,7 +1613,7 @@ const HeroUserInputCard = ({
               repeat: Number.POSITIVE_INFINITY,
               ease: 'easeInOut',
             }
-          : { duration: 0.32, ease: heroEase }
+            : { duration: 0.32, ease: heroEase }
       }
       style={{ transformOrigin: inputPullsFromRight ? '84% 50%' : '16% 50%' }}
     >
@@ -1018,17 +1627,17 @@ const HeroUserInputCard = ({
         animate={
           isActive
             ? {
-                opacity: motionPath.tailOpacity,
-                scaleX: motionPath.tailScaleX,
-                scaleY: motionPath.tailScaleY,
-                filter: motionPath.tailFilter,
-              }
+              opacity: motionPath.tailOpacity,
+              scaleX: motionPath.tailScaleX,
+              scaleY: motionPath.tailScaleY,
+              filter: motionPath.tailFilter,
+            }
             : {
-                opacity: 0,
-                scaleX: 0.88,
-                scaleY: 0.88,
-                filter: 'blur(8px)',
-              }
+              opacity: 0,
+              scaleX: 0.88,
+              scaleY: 0.88,
+              filter: 'blur(8px)',
+            }
         }
         transition={isActive ? activeTransition : { duration: 0.2, ease: heroEase }}
       />
@@ -1039,15 +1648,15 @@ const HeroUserInputCard = ({
         animate={
           isActive
             ? {
-                opacity: motionPath.spiralOpacity,
-                scale: motionPath.spiralScale,
-                rotate: motionPath.spiralRotate,
-              }
+              opacity: motionPath.spiralOpacity,
+              scale: motionPath.spiralScale,
+              rotate: motionPath.spiralRotate,
+            }
             : {
-                opacity: 0,
-                scale: 0.72,
-                rotate: 0,
-              }
+              opacity: 0,
+              scale: 0.72,
+              rotate: 0,
+            }
         }
         transition={isActive ? activeTransition : { duration: 0.2, ease: heroEase }}
       />
@@ -1062,15 +1671,15 @@ const HeroUserInputCard = ({
         animate={
           isActive
             ? {
-                borderRadius: ['16px', '16px', '22px', '999px', '999px'],
-                opacity: [1, 0.98, 0.6, 0.14, 0],
-                filter: ['blur(0px)', 'blur(0px)', 'blur(0.6px)', 'blur(2px)', 'blur(4px)'],
-              }
+              borderRadius: ['16px', '16px', '22px', '999px', '999px'],
+              opacity: [1, 0.98, 0.6, 0.14, 0],
+              filter: ['blur(0px)', 'blur(0px)', 'blur(0.6px)', 'blur(2px)', 'blur(4px)'],
+            }
             : {
-                borderRadius: '16px',
-                opacity: 1,
-                filter: 'blur(0px)',
-              }
+              borderRadius: '16px',
+              opacity: 1,
+              filter: 'blur(0px)',
+            }
         }
         transition={
           isActive
@@ -1087,7 +1696,6 @@ const HeroUserInputCard = ({
 
 export const HomePage = () => {
   const heroRef = useRef<HTMLDivElement | null>(null);
-  const showcaseRef = useRef<HTMLElement | null>(null);
   const { session } = useAuth();
   const prefersReducedMotion = useReducedMotion() ?? false;
   const [heroSequencePhase, setHeroSequencePhase] = useState<HeroSequencePhase>('idle');
@@ -1153,49 +1761,7 @@ export const HomePage = () => {
     target: heroRef,
     offset: ['start start', 'end start'],
   });
-  const { scrollYProgress: showcaseScrollYProgress } = useScroll({
-    target: showcaseRef,
-    offset: ['start 96%', 'end 14%'],
-  });
-
   const heroVoidY = useTransform(scrollYProgress, [0, 1], ['0%', '6%']);
-  const showcaseScroll = showcaseScrollYProgress;
-  const showcaseY = useTransform(showcaseScroll, [0, 1], [22, -10]);
-  const showcaseShellScale = useTransform(showcaseScroll, [0, 1], [0.992, 1.008]);
-  const showcaseStageScale = useTransform(showcaseScroll, [0, 1], [0.985, 1.015]);
-  const showcaseStageY = useTransform(showcaseScroll, [0, 1], [18, -10]);
-
-  const showcaseSceneRawOpacity = useTransform(showcaseScroll, [0, 0.14, 0.34, 0.54], [0.22, 0.88, 0.4, 0.08]);
-  const showcaseSceneTransformOpacity = useTransform(
-    showcaseScroll,
-    [0.18, 0.4, 0.62, 0.82],
-    [0.02, 0.9, 0.42, 0.08]
-  );
-  const showcaseSceneStudioOpacity = useTransform(showcaseScroll, [0.52, 0.76, 1], [0.02, 0.76, 0.96]);
-
-  const showcaseRawOpacity = useTransform(showcaseScroll, [0, 0.3, 0.58, 1], [0.72, 0.66, 0.22, 0.06]);
-  const showcaseStudioOpacity = useTransform(showcaseScroll, [0.26, 0.56, 1], [0.04, 0.48, 0.84]);
-  const showcaseFogOpacity = useTransform(showcaseScroll, [0, 0.38, 0.76, 1], [0.12, 0.28, 0.24, 0.16]);
-
-  const showcaseInputSpotlightOpacity = useTransform(showcaseScroll, [0, 0.18, 0.46, 1], [0.24, 0.52, 0.18, 0.08]);
-  const showcaseTransferSpotlightOpacity = useTransform(
-    showcaseScroll,
-    [0.18, 0.42, 0.7, 1],
-    [0.04, 0.64, 0.28, 0.1]
-  );
-  const showcaseOutputSpotlightOpacity = useTransform(showcaseScroll, [0.34, 0.72, 1], [0.04, 0.62, 0.78]);
-
-  const showcaseInputOpacity = useTransform(showcaseScroll, [0, 0.32, 0.72, 1], [1, 1, 0.8, 0.7]);
-  const showcaseInputY = useTransform(showcaseScroll, [0, 1], [16, -8]);
-  const showcaseInputScale = useTransform(showcaseScroll, [0, 1], [0.988, 1.01]);
-  const showcaseInputMediaScale = useTransform(showcaseScroll, [0, 1], [0.99, 1.015]);
-  const showcaseTransferOpacity = useTransform(showcaseScroll, [0, 0.28, 0.5, 0.82, 1], [0.62, 0.76, 0.96, 0.78, 0.62]);
-  const showcaseTransferY = useTransform(showcaseScroll, [0, 1], [12, -8]);
-  const showcaseTransferScale = useTransform(showcaseScroll, [0, 1], [0.99, 1.012]);
-  const showcaseOutputOpacity = useTransform(showcaseScroll, [0, 0.4, 0.76, 1], [0.54, 0.66, 0.96, 0.98]);
-  const showcaseOutputY = useTransform(showcaseScroll, [0, 1], [18, -10]);
-  const showcaseOutputScale = useTransform(showcaseScroll, [0, 1], [0.988, 1.015]);
-  const showcaseOutputMediaScale = useTransform(showcaseScroll, [0, 1], [0.99, 1.02]);
 
   return (
     <div className="home-page home-page--marketing">
@@ -1275,7 +1841,7 @@ export const HomePage = () => {
                   heroSequencePhase === 'emittingOutputs' ||
                   heroSequencePhase === 'returnToBlackhole'
                 ) &&
-                  'hero-agent-engine--white-hole',
+                'hero-agent-engine--white-hole',
               )}
             >
               <div className="hero-agent-engine__ambient" aria-hidden="true" />
@@ -1360,10 +1926,10 @@ export const HomePage = () => {
                   transition={
                     hoveredHeroOutput
                       ? {
-                          duration: 2.4,
-                          ease: 'easeInOut',
-                          repeat: Number.POSITIVE_INFINITY,
-                        }
+                        duration: 2.4,
+                        ease: 'easeInOut',
+                        repeat: Number.POSITIVE_INFINITY,
+                      }
                       : { duration: 0.3, ease: heroEase }
                   }
                 >
@@ -1380,10 +1946,10 @@ export const HomePage = () => {
                     transition={
                       hoveredHeroOutput
                         ? {
-                            duration: 2.1,
-                            ease: 'easeInOut',
-                            repeat: Number.POSITIVE_INFINITY,
-                          }
+                          duration: 2.1,
+                          ease: 'easeInOut',
+                          repeat: Number.POSITIVE_INFINITY,
+                        }
                         : { duration: 0.3, ease: heroEase }
                     }
                   />
@@ -1403,76 +1969,33 @@ export const HomePage = () => {
 
       </section>
 
-      <section id="product-demo" ref={showcaseRef} className="section landing-showcase-section">
-        <div className="landing-showcase-section__sticky">
-          <motion.div
-            className="landing-hero__visual landing-hero__visual--showcase"
-            style={{ y: showcaseY, scale: showcaseShellScale }}
-          >
+      <section id="product-demo" className="section landing-showcase-section">
+        <div className="landing-showcase-section__content">
+          <div className="landing-hero__visual landing-hero__visual--showcase">
             <Card glow className="hero-showcase">
-              <motion.div
-                className="hero-showcase__scene hero-showcase__scene--raw"
-                style={{ opacity: prefersReducedMotion ? 0.5 : showcaseSceneRawOpacity }}
-              />
-              <motion.div
-                className="hero-showcase__scene hero-showcase__scene--transform"
-                style={{ opacity: prefersReducedMotion ? 0.44 : showcaseSceneTransformOpacity }}
-              />
-              <motion.div
-                className="hero-showcase__scene hero-showcase__scene--studio"
-                style={{ opacity: prefersReducedMotion ? 0.48 : showcaseSceneStudioOpacity }}
-              />
-              <motion.div
-                className="hero-showcase__ambient hero-showcase__ambient--raw"
-                style={{ opacity: prefersReducedMotion ? 0.4 : showcaseRawOpacity }}
-              />
-              <motion.div
-                className="hero-showcase__ambient hero-showcase__ambient--studio"
-                style={{ opacity: prefersReducedMotion ? 0.34 : showcaseStudioOpacity }}
-              />
-              <motion.div
-                className="hero-showcase__ambient hero-showcase__ambient--fog"
-                style={{ opacity: prefersReducedMotion ? 0.18 : showcaseFogOpacity }}
-              />
+              <div className="hero-showcase__scene hero-showcase__scene--raw" />
+              <div className="hero-showcase__scene hero-showcase__scene--transform" />
+              <div className="hero-showcase__scene hero-showcase__scene--studio" />
+              <div className="hero-showcase__ambient hero-showcase__ambient--raw" />
+              <div className="hero-showcase__ambient hero-showcase__ambient--studio" />
+              <div className="hero-showcase__ambient hero-showcase__ambient--fog" />
 
-              <motion.div
-                className="hero-showcase__stage"
-                style={{ y: showcaseStageY, scale: showcaseStageScale }}
-              >
-                <motion.div
-                  className="hero-showcase__spotlight hero-showcase__spotlight--input"
-                  style={{ opacity: prefersReducedMotion ? 0.18 : showcaseInputSpotlightOpacity }}
-                />
-                <motion.div
-                  className="hero-showcase__spotlight hero-showcase__spotlight--transfer"
-                  style={{ opacity: prefersReducedMotion ? 0.26 : showcaseTransferSpotlightOpacity }}
-                />
-                <motion.div
-                  className="hero-showcase__spotlight hero-showcase__spotlight--output"
-                  style={{ opacity: prefersReducedMotion ? 0.22 : showcaseOutputSpotlightOpacity }}
-                />
+              <div className="hero-showcase__stage">
+                <div className="hero-showcase__spotlight hero-showcase__spotlight--input" />
+                <div className="hero-showcase__spotlight hero-showcase__spotlight--transfer" />
+                <div className="hero-showcase__spotlight hero-showcase__spotlight--output" />
 
-                <motion.div
-                  className="showcase-card showcase-card--input"
-                  style={{
-                    opacity: showcaseInputOpacity,
-                    y: showcaseInputY,
-                    scale: showcaseInputScale,
-                  }}
-                >
+                <div className="showcase-card showcase-card--input">
                   <div className="showcase-card__header">
                     <Badge>YOUR UPLOAD</Badge>
                     <span>Before</span>
                   </div>
-                  <motion.div
-                    className="showcase-media showcase-media--input"
-                    style={{ scale: showcaseInputMediaScale }}
-                  >
+                  <div className="showcase-media showcase-media--input">
                     <img
                       src="/showcase-input-product.svg"
                       alt="Normal product photo uploaded by the business owner"
                     />
-                  </motion.div>
+                  </div>
                   <div className="showcase-description">
                     <strong>Raw. Real. Unedited</strong>
                     <p className="landing-copy">
@@ -1481,16 +2004,9 @@ export const HomePage = () => {
                       needs.
                     </p>
                   </div>
-                </motion.div>
+                </div>
 
-                <motion.div
-                  className="showcase-transfer"
-                  style={{
-                    opacity: showcaseTransferOpacity,
-                    y: showcaseTransferY,
-                    scale: showcaseTransferScale,
-                  }}
-                >
+                <div className="showcase-transfer">
                   <span className="showcase-transfer__eyebrow">PRIXMOAI ENGINE</span>
                   <div className="showcase-transfer__visual">
                     <div className="showcase-transfer__visual-glow" />
@@ -1500,29 +2016,19 @@ export const HomePage = () => {
                       quality="cinematic"
                     />
                   </div>
-                </motion.div>
+                </div>
 
-                <motion.div
-                  className="showcase-card showcase-card--output"
-                  style={{
-                    opacity: showcaseOutputOpacity,
-                    y: showcaseOutputY,
-                    scale: showcaseOutputScale,
-                  }}
-                >
+                <div className="showcase-card showcase-card--output">
                   <div className="showcase-card__header">
                     <Badge>READY TO POST</Badge>
                     <span>After</span>
                   </div>
-                  <motion.div
-                    className="showcase-media showcase-media--output"
-                    style={{ scale: showcaseOutputMediaScale }}
-                  >
+                  <div className="showcase-media showcase-media--output">
                     <img
                       src="/showcase-output-product.svg"
                       alt="Studio-ready ultra realistic product image generated by PrixmoAI"
                     />
-                  </motion.div>
+                  </div>
                   <div className="showcase-description showcase-description--output">
                     <strong>Clean. Sharp. Scheduled</strong>
                     <p className="landing-copy">
@@ -1531,70 +2037,16 @@ export const HomePage = () => {
                       directly from this screen.
                     </p>
                   </div>
-                </motion.div>
-              </motion.div>
-            </Card>
-          </motion.div>
-        </div>
-      </section>
-
-      <section className="section social-proof-section">
-        <p className="social-proof-section__label">Trusted by businesses across India</p>
-        <div className="social-proof-section__marquee" aria-hidden="true">
-          <div className="social-proof-section__rail">
-            {[0, 1, 2].map((copyIndex) => (
-              <div key={copyIndex} className="social-proof-section__track">
-                {socialProofItems.map((item, index) => (
-                  <span key={`${copyIndex}-${item}-${index}`}>{item}</span>
-                ))}
+                </div>
               </div>
-            ))}
+            </Card>
           </div>
         </div>
       </section>
 
-      <section className="section landing-section">
-        <SectionHeading
-          eyebrow="Problem"
-          title="Running a business is hard enough. Marketing should not be."
-          description="Most small businesses do not fail because the product is bad. They fail because consistent content is expensive, time-consuming, and hard to sustain."
-        />
+      <SignalGapSection />
 
-        <div className="landing-grid landing-grid--three">
-          {problemCards.map((card) => (
-            <ScrollScrub key={card.title}>
-              <Card className="landing-card problem-card">
-                <FeatureIcon icon={card.icon} />
-                <h3>{card.title}</h3>
-                <p className="landing-copy">{card.copy}</p>
-              </Card>
-            </ScrollScrub>
-          ))}
-        </div>
-      </section>
-
-      <section id="how-it-works" className="section landing-section">
-        <SectionHeading
-          eyebrow="How it Works"
-          title="How PrixmoAI Works"
-          description="Three steps. Thirty seconds. Done."
-        />
-
-        <div className="steps-stack">
-          {howItWorksSteps.map((step, index) => (
-            <ScrollScrub key={step.title}>
-              <Card className="landing-card step-card">
-                <div className="step-card__number">{`0${index + 1}`}</div>
-                <div className="step-card__body">
-                  <FeatureIcon icon={step.icon} />
-                  <h3>{step.title}</h3>
-                  <p className="landing-copy">{step.copy}</p>
-                </div>
-              </Card>
-            </ScrollScrub>
-          ))}
-        </div>
-      </section>
+      <HowItWorksConnectedSequenceSection />
 
       <section id="features" className="section landing-section">
         <SectionHeading
@@ -1722,65 +2174,7 @@ export const HomePage = () => {
         </p>
       </section>
 
-      <section className="section landing-section">
-        <SectionHeading
-          eyebrow="Testimonials"
-          title="What Indian Businesses Say About PrixmoAI"
-          description="These are the proof points that matter most: better output, faster posting, and more confidence without increasing team size."
-        />
 
-        <div className="landing-grid landing-grid--three">
-          {testimonials.map((testimonial) => (
-            <ScrollScrub key={testimonial.name}>
-              <Card className="landing-card testimonial-card">
-                <Quote size={20} />
-                <div className="testimonial-card__stars" aria-label="Five star rating">
-                  {Array.from({ length: 5 }).map((_, index) => (
-                    <Star key={index} size={14} fill="currentColor" />
-                  ))}
-                </div>
-                <p className="landing-copy">"{testimonial.quote}"</p>
-                <div className="testimonial-card__author">
-                  <strong>{testimonial.name}</strong>
-                  <span>{testimonial.role}</span>
-                </div>
-              </Card>
-            </ScrollScrub>
-          ))}
-        </div>
-      </section>
-
-      <section className="section landing-section">
-        <SectionHeading
-          eyebrow="Target Audience"
-          title="Built for Every Indian Business"
-          description="PrixmoAI is structured for businesses that need content consistency without hiring a creative team."
-        />
-
-        <div className="landing-grid landing-grid--audiences">
-          {audienceCards.map((audience) => (
-            <ScrollScrub key={audience.title}>
-              <Card className="landing-card audience-card">
-                <h3>{audience.title}</h3>
-                <p className="landing-copy">{audience.copy}</p>
-              </Card>
-            </ScrollScrub>
-          ))}
-        </div>
-      </section>
-
-      <section className="section landing-section landing-section--stats">
-        <div className="stats-grid">
-          {stats.map((stat) => (
-            <ScrollScrub key={stat.label}>
-              <Card className="landing-card stat-card">
-                <strong>{stat.value}</strong>
-                <span>{stat.label}</span>
-              </Card>
-            </ScrollScrub>
-          ))}
-        </div>
-      </section>
 
       <section id="faq" className="section landing-section">
         <SectionHeading
@@ -1801,7 +2195,7 @@ export const HomePage = () => {
 
       <section id="final-cta" className="section landing-section landing-section--final-cta">
         <Card glow className="final-cta-card">
-          
+
           <h2>Your Competitors Are Already Posting.</h2>
           <p className="landing-copy landing-copy--center">
             Start creating professional content today. Free forever. No credit card
@@ -1815,9 +2209,6 @@ export const HomePage = () => {
               Create Your Free Account
             </Link>
           </div>
-          <p className="final-cta-card__note">
-            Join 500+ Indian businesses growing with {APP_NAME}.
-          </p>
         </Card>
       </section>
 

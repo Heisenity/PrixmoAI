@@ -1,4 +1,4 @@
-import { AnimatePresence, motion } from 'framer-motion';
+import { AnimatePresence, LayoutGroup, motion } from 'framer-motion';
 import { Menu, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
@@ -14,7 +14,7 @@ export const Navbar = () => {
   const showSuperAdminBadge = isSuperAdminUser(user);
 
   useEffect(() => {
-    const onScroll = () => setIsScrolled(window.scrollY > 16);
+    const onScroll = () => setIsScrolled(window.scrollY > 30);
 
     onScroll();
     window.addEventListener('scroll', onScroll, { passive: true });
@@ -28,63 +28,108 @@ export const Navbar = () => {
     };
   }, [isOpen]);
 
+  const springTransition = {
+    type: 'spring' as const,
+    stiffness: 340,
+    damping: 30,
+    mass: 0.8,
+  };
+
+  const authItem = (
+    <motion.div
+      layoutId="topbar-auth-item"
+      transition={springTransition}
+      className="topbar__login-wrap"
+    >
+      {session ? (
+        <Link to="/app/generate" className="topbar__plain-link">
+          Workspace
+        </Link>
+      ) : (
+        <Link to="/login" className="topbar__plain-link">
+          Login
+        </Link>
+      )}
+    </motion.div>
+  );
+
   return (
     <>
-      <header className={`topbar ${isScrolled ? 'topbar--active' : ''}`}>
-        <Link to="/" className="topbar__brand">
-          <span className="topbar__brand-dot" />
-          {APP_NAME}
-        </Link>
-        <nav className="topbar__links">
-          {PRIMARY_NAV_ITEMS.map((item) => (
-            <a key={item.label} href={item.href}>
-              {item.label}
-            </a>
-          ))}
-        </nav>
-        <div className="topbar__actions">
-          {session ? (
-            <>
-              <Link to="/app/generate" className="topbar__plain-link">
-                Workspace
-              </Link>
-              {showSuperAdminBadge ? (
-                <span className="super-admin-chip super-admin-chip--topbar">
-                  SA (Super)
-                </span>
-              ) : null}
-              <button
-                type="button"
-                className={buttonClassName('secondary', 'md', 'topbar__cta')}
-                onClick={() => {
-                  void signOut();
-                }}
-              >
-                Log out
-              </button>
-            </>
-          ) : (
-            <>
-              <Link to="/login" className="topbar__plain-link">
-                Login
-              </Link>
+      <header
+        className={`topbar ${isScrolled ? 'topbar--divided' : 'topbar--merged'}`}
+      >
+        <LayoutGroup id="topbar-nav">
+          {/* PILL 1: Logo Pill (Left) */}
+          <motion.div
+            layout
+            transition={springTransition}
+            className="topbar-pill topbar-pill--brand"
+          >
+            <Link to="/" className="topbar__brand">
+              <span className="topbar__brand-dot" />
+              {APP_NAME}
+            </Link>
+          </motion.div>
+
+          {/* PILL 2: Center Long Pill (Features, Pricing, How it Works + Login when scrolled) */}
+          <motion.nav
+            layout
+            transition={springTransition}
+            className="topbar-pill topbar-pill--nav"
+          >
+            {PRIMARY_NAV_ITEMS.map((item) => (
+              <a key={item.label} href={item.href} className="topbar__nav-link">
+                {item.label}
+              </a>
+            ))}
+
+            {isScrolled ? authItem : null}
+          </motion.nav>
+
+          {/* PILL 3: Right CTA Pill (Get Started Free / Actions) */}
+          <motion.div
+            layout
+            transition={springTransition}
+            className="topbar-pill topbar-pill--actions"
+          >
+            {!isScrolled ? authItem : null}
+
+            {session ? (
+              <>
+                {showSuperAdminBadge ? (
+                  <span className="super-admin-chip super-admin-chip--topbar">
+                    SA
+                  </span>
+                ) : null}
+                <button
+                  type="button"
+                  className={buttonClassName('secondary', 'sm', 'topbar__cta')}
+                  onClick={() => {
+                    void signOut();
+                  }}
+                >
+                  Log out
+                </button>
+              </>
+            ) : (
               <Link
-                className={buttonClassName('primary', 'md', 'topbar__cta')}
+                className={buttonClassName('primary', 'sm', 'topbar__cta')}
                 to="/signup"
               >
                 Get Started Free
               </Link>
-            </>
-          )}
-          <button
-            className="topbar__menu-button"
-            onClick={() => setIsOpen((value) => !value)}
-            aria-label="Toggle navigation menu"
-            type="button"
-          >
-            {isOpen ? <X size={18} /> : <Menu size={18} />}
-          </button>
-        </div>
+            )}
+
+            <button
+              className="topbar__menu-button"
+              onClick={() => setIsOpen((value) => !value)}
+              aria-label="Toggle navigation menu"
+              type="button"
+            >
+              {isOpen ? <X size={16} /> : <Menu size={16} />}
+            </button>
+          </motion.div>
+        </LayoutGroup>
       </header>
 
       <AnimatePresence>

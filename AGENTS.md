@@ -62,3 +62,29 @@ Routing rules:
 13. The main agent must provide each subagent with exact task, relevant files, allowed write scope, required output, and verification expectations.
 14. Subagent summaries must return to the main agent before the next dependent phase begins.
 15. Never delegate secrets or secret values to agent prompts.
+
+## Supabase Instance & Database Rules
+
+- **Workspace Target**: Always use the **PrixmoAI** Supabase instance for this repository and all sessions:
+  - **Project Ref**: `wtrudxmxhjfsringfbxa`
+  - **Project Name**: `PrixmoAI`
+  - **Supabase URL**: `https://wtrudxmxhjfsringfbxa.supabase.co`
+  - **MCP Servers**: Use `supabase-prixmoai` or `supabase` (both are scoped directly to `wtrudxmxhjfsringfbxa`)
+- **Strict Isolation**: Never connect to, query, or apply migrations to `crrsgzhqbmkxnkkuwhrv` (Saswati's Kitchen) from this workspace.
+
+## GitHub Remote & Version Control
+
+- **Repository Target**: [https://github.com/Heisenity/PrixmoAI.git](https://github.com/Heisenity/PrixmoAI.git)
+- **Git Root**: `/Users/sayantansen/PrixmoAI/PrixmoAI`
+- **Default Branch**: `main`
+- **Workflow**: All project edits, commits, and pushes for PrixmoAI must be performed inside the git root (`PrixmoAI/`) targeting `origin/main` on `https://github.com/Heisenity/PrixmoAI.git`.
+
+## Doppler Environment & Secrets Configuration
+
+- **Workplace**: `2bd164f0d377297a4b90`
+- **Project**: `prixmaai`
+- **Config**: `dev`
+- **Dashboard**: [https://dashboard.doppler.com/workplace/2bd164f0d377297a4b90/projects/prixmaai/configs/dev](https://dashboard.doppler.com/workplace/2bd164f0d377297a4b90/projects/prixmaai/configs/dev)
+- **Usage**:
+  - Always use `doppler run -- <command>` for running dev servers, builds, typechecks, scripts, or tests.
+  - Local `.env` files are ignored fallbacks; Doppler is the single source of truth for secrets and env vars.
