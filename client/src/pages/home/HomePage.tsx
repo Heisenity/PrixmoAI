@@ -1008,44 +1008,75 @@ const HowItWorksConnectedSequenceSection = () => {
 );
 };
 
-const featureCards = [
+interface CapabilityItem {
+  id: string;
+  index: string;
+  title: string;
+  copy: string;
+}
+
+interface CapabilityChapter {
+  chapterIndex: string;
+  category: string;
+  items: CapabilityItem[];
+}
+
+const capabilityChapters: CapabilityChapter[] = [
   {
-    icon: WandSparkles,
-    title: 'AI Caption Generator',
-    copy:
-      'Get 3 caption variants in short, medium, and story format written in your exact brand voice for every single product.',
+    chapterIndex: '01',
+    category: 'CREATE',
+    items: [
+      {
+        id: 'captions',
+        index: '01',
+        title: 'AI Caption Generator',
+        copy: 'Captions written in your exact brand voice across short, medium, and story formats.',
+      },
+      {
+        id: 'reels',
+        index: '02',
+        title: 'Reel Script & Video Generator',
+        copy: 'Turn products into engaging, ready-to-post video scripts and short-form reels.',
+      },
+    ],
   },
   {
-    icon: ImagePlus,
-    title: 'Product Image Enhancer',
-    copy:
-      'Transform your phone photos into studio-quality product visuals with professional backgrounds instantly.',
+    chapterIndex: '02',
+    category: 'ENHANCE',
+    items: [
+      {
+        id: 'image-enhancer',
+        index: '03',
+        title: 'Product Image Enhancer',
+        copy: 'Turn ordinary phone photos into polished, studio-quality product visuals.',
+      },
+      {
+        id: 'hashtags',
+        index: '04',
+        title: 'Smart Hashtag Generator',
+        copy: 'Research high-intent, platform-optimized hashtags tailored to your audience for maximum reach.',
+      },
+    ],
   },
   {
-    icon: Sparkles,
-    title: 'Smart Hashtag Generator',
-    copy:
-      'Get 15 perfectly researched hashtags tailored to your industry, audience, and platform for maximum reach.',
+    chapterIndex: '03',
+    category: 'DISTRIBUTE & LEARN',
+    items: [
+      {
+        id: 'scheduler',
+        index: '05',
+        title: 'Auto Scheduler',
+        copy: 'Plan and schedule cross-platform social posts to publish at high-engagement peak times automatically.',
+      },
+      {
+        id: 'analytics',
+        index: '06',
+        title: 'Analytics Dashboard',
+        copy: 'Understand reach, audience velocity, and what content drives real business conversions.',
+      },
+    ],
   },
-  {
-    icon: ArrowRight,
-    title: 'Reel Script & Video Generator',
-    copy:
-      'Turn your product into ready to post reels that drive results.',
-  },
-  {
-    icon: CalendarClock,
-    title: 'Auto Scheduler',
-    copy:
-      'Connect Instagram and Facebook and schedule your posts to go live at the perfect time automatically.',
-  },
-  {
-    icon: BarChart3,
-    title: 'Analytics Dashboard',
-    copy:
-      'See which posts get the most reach, likes, and comments so you know exactly what content works for you.',
-  },
-] as const;
+];
 
 const pricingPlans: Array<{
   id: 'free' | 'basic' | 'pro';
@@ -2048,22 +2079,36 @@ export const HomePage = () => {
 
       <HowItWorksConnectedSequenceSection />
 
-      <section id="features" className="section landing-section">
+      <section id="features" className="section landing-section capability-section">
         <SectionHeading
-          eyebrow="Features"
-          title="Everything Your Brand Needs"
-          description="One platform. All your content. Zero stress."
+          className="landing-section__header--capabilities"
+          eyebrow="FEATURES / 01–06"
+          title="Everything your brand needs."
+          subtitle="One platform. All your content. Zero stress."
         />
 
-        <div className="landing-grid landing-grid--features">
-          {featureCards.map((feature) => (
-            <ScrollScrub key={feature.title}>
-              <Card className="landing-card feature-card feature-card--marketing">
-                <FeatureIcon icon={feature.icon} />
-                <h3>{feature.title}</h3>
-                <p className="landing-copy">{feature.copy}</p>
-              </Card>
-            </ScrollScrub>
+        <div className="capability-index">
+          {capabilityChapters.map((chapter) => (
+            <div key={chapter.category} className="capability-chapter">
+              <div className="capability-chapter__header">
+                <span className="capability-chapter__index">{chapter.chapterIndex}</span>
+                <span className="capability-chapter__slash">/</span>
+                <span className="capability-chapter__category">{chapter.category}</span>
+              </div>
+
+              <div className="capability-chapter__rows">
+                {chapter.items.map((item) => (
+                  <div key={item.id} className="capability-row">
+                    <span className="capability-row__index">{item.index}</span>
+                    <h3 className="capability-row__title">{item.title}</h3>
+                    <p className="capability-row__desc">{item.copy}</p>
+                    <span className="capability-row__arrow" aria-hidden="true">
+                      <ArrowRight size={15} strokeWidth={1.5} />
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
           ))}
         </div>
       </section>

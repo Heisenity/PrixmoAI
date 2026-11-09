@@ -3261,3 +3261,184 @@
   min-height: 60px;
   justify-self: stretch;
 }
+
+/* ==========================================================================
+   CAPABILITY CHAPTERS (Hybrid Concept 02 + 01)
+   ========================================================================== */
+
+.capability-section {
+  padding-top: 5rem;
+  padding-bottom: 6rem;
+  position: relative;
+}
+
+.landing-section__header--capabilities {
+  max-width: 820px;
+  margin: 0 auto 3.5rem auto;
+  text-align: center;
+}
+
+.landing-section__header--capabilities h2 {
+  font-size: clamp(1.85rem, 3.2vw, 2.35rem);
+  font-weight: 600;
+  letter-spacing: -0.025em;
+  line-height: 1.25;
+  color: #F1F4F8;
+  margin: 0.75rem 0 0.5rem 0;
+}
+
+.landing-section__header--capabilities .landing-section__subtitle {
+  font-size: 0.95rem;
+  color: #8B949E;
+  margin: 0;
+}
+
+.capability-index {
+  max-width: 1060px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 3.25rem;
+}
+
+/* Chapter */
+.capability-chapter {
+  display: flex;
+  flex-direction: column;
+}
+
+.capability-chapter__header {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding-bottom: 0.85rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #78CFFF;
+}
+
+.capability-chapter__slash {
+  color: rgba(255, 255, 255, 0.22);
+}
+
+.capability-chapter__category {
+  color: rgba(241, 244, 248, 0.88);
+  letter-spacing: 0.12em;
+}
+
+/* Rows */
+.capability-chapter__rows {
+  display: flex;
+  flex-direction: column;
+}
+
+.capability-row {
+  display: grid;
+  grid-template-columns: 56px 260px 1fr 32px;
+  align-items: baseline;
+  padding: 1.35rem 0.6rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  cursor: default;
+  transition: background-color 180ms ease, border-color 180ms ease;
+  position: relative;
+}
+
+.capability-row:last-child {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.capability-row:hover {
+  background-color: rgba(120, 207, 255, 0.02);
+  border-bottom-color: rgba(120, 207, 255, 0.16);
+}
+
+.capability-row__index {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: #78CFFF;
+  letter-spacing: 0.04em;
+}
+
+.capability-row__title {
+  margin: 0;
+  font-size: 1.125rem;
+  font-weight: 600;
+  color: #F1F4F8;
+  letter-spacing: -0.015em;
+  line-height: 1.4;
+  transition: color 180ms ease;
+}
+
+.capability-row:hover .capability-row__title {
+  color: #FFFFFF;
+}
+
+.capability-row__desc {
+  margin: 0;
+  font-size: 0.875rem;
+  font-weight: 400;
+  color: #8B949E;
+  line-height: 1.5;
+  padding-right: 1.5rem;
+  transition: color 180ms ease;
+}
+
+.capability-row:hover .capability-row__desc {
+  color: rgba(241, 244, 248, 0.78);
+}
+
+.capability-row__arrow {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  color: rgba(255, 255, 255, 0.28);
+  transition: color 180ms ease, transform 180ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.capability-row:hover .capability-row__arrow {
+  color: #78CFFF;
+  transform: translateX(4px);
+}
+
+/* Responsive Mobile & Tablet */
+@media (max-width: 860px) {
+  .capability-section {
+    padding-top: 3.5rem;
+    padding-bottom: 4rem;
+  }
+
+  .capability-index {
+    gap: 2.5rem;
+  }
+
+  .capability-row {
+    grid-template-columns: 44px 1fr 28px;
+    grid-template-areas:
+      "index title arrow"
+      ". desc .";
+    row-gap: 0.35rem;
+    padding: 1.15rem 0.25rem;
+  }
+
+  .capability-row__index {
+    grid-area: index;
+  }
+
+  .capability-row__title {
+    grid-area: title;
+  }
+
+  .capability-row__desc {
+    grid-area: desc;
+    padding-right: 0;
+  }
+
+  .capability-row__arrow {
+    grid-area: arrow;
+  }
+}
